@@ -1,0 +1,709 @@
+# architecture.md — ShopLab: Kiến trúc tổng quát
+
+| | |
+|---|---|
+| **Trạng thái** | `DRAFT v0.1` — cần review và chốt §11 Tech stack |
+| **Người thực hiện** | bạn + AI |
+| **Cập nhật lần cuối** | 2026-10-25 (Phase 0 — Foundation) |
+| **Liên quan** | `AGENTS.md`, `Backlog.md`, `docs/adr/` |
+
+---
+
+## 0. TL;DR — đọc nhanh trong 60 giây
+
+**ShopLab** là một sàn thương mại điện tử multi-seller (kiểu Shopee/Tiki) được dựng lại từ đầu
+theo kiến trúc **microservices**, mục đích là **học architecture** ở quy mô **high traffic**.
+
+- **Không** dựng hết một lượt. Đi theo **phase**, mỗi phase giải quyết 1 nhóm bài toán và phải
+  chạy được end-to-end mới đi tiếp. Xem §12 Roadmap và `Backlog.md`.
+- **Service đầu tiên** sẽ là `api-gateway` + `identity-service` + `catalog-service` (Phase 1),
+  sau đó mới mở rộng sang order / payment / inventory (Phase 2).
+- **Nguyên tắc xuyên suốt**: mỗi service sở hữu **database riêng**, giao tiếp qua **API + event**,
+  cross-service dùng **Saga** + **eventual consistency**, không share DB, không distributed transaction.
+- Khác với tutorial thông thường: mọi pattern đều được đặt trong **bài toán có số liệu**
+  (RPS, p99, error budget) để thấy rõ **trade-off**, không học pattern cho có.
+
+---
+
+## 1. Bối cảnh & mục tiêu học
+
+### 1.1. Vì sao chọn e-commerce
+
+E-commerce là domain "đủ khó": vừa **read-heavy** (xem sản phẩm), vừa **write-critical**
+(đặt hàng, thanh toán), vừa có **spike traffic** (flash sale), vừa cần **consistency** (không được
+oversell, không được trừ tiền 2 lần). Đây là bài toán mà gần như mọi pattern của microservices đều
+có đất dùng.
+
+### 1.2. Mục tiêu học (learning outcomes)
+
+Sau khi đi hết roadmap, cần nắm được:
+
+| # | Nhóm kiến thức | Nội dung cụ thể |
+|---|---|---|
+| 1 | Service decomposition | Chia theo **bounded context** / business capability, xác định service boundary, tránh distributed monolith |
+| 2 | Communication | Sync (REST/gRPC) vs Async (event), khi nào dùng cái nào, coupling & contract versioning |
+| 3 | Data consistency | Database per service, **Saga** (orchestration vs choreography), **transactional outbox**, idempotency, eventual consistency |
+| 4 | Scalability | Caching, **read replica**, **sharding / partitioning**, connection pool, **load balancing** L4/L7, horizontal scaling |
+| 5 | Resilience | Timeout, retry + backoff + jitter, **circuit breaker**, bulkhead, **backpressure**, **dead letter queue**, graceful degradation |
+| 6 | Observability & SRE | Structured log, metrics (RED/USE), **distributed tracing**, **SLO / SLI / error budget**, alerting, runbook |
+| 7 | Deployment | Containerize, CI/CD, K8s, HPA, **blue-green / canary**, config & secret management |
+| 8 | Trade-off thinking | Luôn trả lời được: đổi cái này lấy cái gì, chịu được tới đâu, khi nào revisit |
+
+### 1.3. Cách học
+
+Mỗi phase đi theo vòng: **hiểu vấn đề → dựng bản chạy được → đo → thấy nó vỡ → refactor bằng pattern**.
+
+Ví dụ Phase 4: cho `catalog-service` chạy **không cache**, load test bằng k6 thấy p99 tăng vọt
+→ mới thêm cache-aside → đo lại. Học bằng số liệu, không học bằng niềm tin.
+
+---
+
+## 2. Domain & phạm vi
+
+### 2.1. Actors
+
+| Actor | Mô tả |
+|---|---|
+| Guest | Xem sản phẩm, tìm kiếm, thêm vào giỏ |
+| Buyer | Đã đăng nhập — checkout, thanh toán, xem đơn, review |
+| Seller | Đăng sản phẩm, quản lý tồn kho, xem đơn của shop mình |
+| Admin | Quản lý user, duyệt seller, cấu hình campaign |
+
+### 2.2. Capability map (in scope)
+
+| # | Capability | Service phụ trách | Phase |
+|---|---|---|---|
+| 1 | Identity & Access | `identity-service` | 1 |
+| 2 | Product Catalog | `catalog-service` | 1 |
+| 3 | Cart | `cart-service` | 2 |
+| 4 | Inventory | `inventory-service` | 2 |
+| 5 | Promotion / Voucher / Flash sale | `promotion-service` | 2 |
+| 6 | Order | `order-service` | 2 |
+| 7 | Payment | `payment-service` | 2 |
+| 8 | Notification | `notification-service` | 3 |
+| 9 | Search | `search-service` | 3 |
+| 10 | Review & Rating | `review-service` | 8 |
+| 11 | Shipping / Fulfillment | `shipping-service` | 8 |
+| 12 | Analytics / Reporting | `analytics-service` | 8 |
+
+### 2.3. Out of scope (non-goals)
+
+- Recommendation / ML cá nhân hoá, ads, livestream, chat buyer-seller, affiliate.
+- Tích hợp payment provider thật → dùng **mock provider** mô phỏng đủ case
+  success / fail / timeout / **duplicate callback**.
+- Multi-region thật → chỉ làm **design doc** ở Phase 8, không dựng hạ tầng.
+- Mobile app / UI đẹp → chỉ cần REST client (curl / Postman / script) để test.
+
+---
+
+## 3. Yêu cầu phi chức năng (NFR) & mục tiêu scale
+
+Đây là **target để thiết kế và để load test**, không phải cam kết SLA. Số liệu chọn ở mức
+"startup đang lớn" — đủ lớn để pattern có ý nghĩa, đủ nhỏ để chạy được trên 1 máy dev.
+
+| Nhóm | Chỉ số | Target | Ghi chú |
+|---|---|---|---|
+| Traffic | DAU | 1.000.000 | peak concurrent ≈ 50.000 |
+| Traffic | Read RPS (peak) | 50.000 | normal ≈ 5.000; read:write ≈ 20:1 |
+| Traffic | Write RPS (peak) | 5.000 | flash sale spike ~10x trong 60s |
+| Latency | p99 read | < 150 ms | đo tại gateway |
+| Latency | p99 write (checkout) | < 500 ms | không tính thời gian user thanh toán ở provider |
+| Availability | Uptime | 99.95% / tháng | error budget ≈ 21 phút / tháng |
+| Consistency | Order & Payment | **Strong** | không oversell, không double charge |
+| Consistency | Catalog / Search / Notification | **Eventual** | trễ vài giây chấp nhận được |
+| Durability | Order / Payment | RPO = 0 | không được mất bản ghi đã ghi nhận |
+| Recovery | RTO / RPO | 15 phút / 5 phút | áp dụng cho service khác order/payment |
+| Cost | Chi phí hạ tầng | không tối ưu ở giai đoạn học | ghi nhận, không ràng buộc |
+
+**Bài toán spike traffic (flash sale)** — đây là "final boss" của hệ thống:
+
+- 1 SKU, 10.000 sản phẩm, 500.000 người bấm mua trong 60 giây.
+- Yêu cầu: **không oversell**, **không sập**, **không treo** những API khác.
+- Đây là lý do cần: rate limit ở gateway, queue + backpressure, cache pre-warm, reservation trong
+  inventory, và graceful degradation cho phần không critical.
+
+---
+
+## 4. Kiến trúc tổng quát
+
+### 4.1. C4 Level 1 — System Context
+
+```
+      ┌─────────────┐        ┌──────────────┐        ┌─────────────┐
+      │  Web (SPA)  │        │  Mobile App  │        │ Seller Tool │
+      └──────┬──────┘        └──────┬───────┘        └──────┬──────┘
+             │                      │                       │
+             └──────────────────────┼───────────────────────┘
+                                    │ HTTPS
+                                    ▼
+                    ┌───────────────────────────────┐
+                    │        CDN + WAF              │  static asset, chống bot/L7 attack
+                    └───────────────┬───────────────┘
+                                    ▼
+                    ┌───────────────────────────────┐
+                    │   Load Balancer (L7)          │  TLS termination, health check
+                    └───────────────┬───────────────┘
+                                    ▼
+        ╔═══════════════════════════════════════════════════════════════╗
+        ║                        ShopLab Platform                       ║
+        ║   API Gateway → domain services → data stores → broker        ║
+        ╚═══════════════════════════════════════════════════════════════╝
+             │                    │                        │
+             ▼                    ▼                        ▼
+   ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────┐
+   │ Payment Provider │  │ Email/SMS/Push   │  │ Shipping Partner   │
+   │     (mock)       │  │     (mock)       │  │      (mock)        │
+   └──────────────────┘  └──────────────────┘  └────────────────────┘
+```
+
+---
+
+### 4.2. C4 Level 2 — Container view
+
+```
+                        ┌────────────────────────────────┐
+   Client ──HTTPS──▶    │   api-gateway                  │
+                        │   authn · rate limit · routing │
+                        │   aggregation · correlation id │
+                        └───────────────┬────────────────┘
+                                        │  REST (sync) + gRPC (sync, internal)
+   ═════════════════════════════════════╪══════════════════════════════════════════
+    DOMAIN SERVICES  (mỗi service = 1 deployable unit + 1 database riêng)
+   ═════════════════════════════════════╪══════════════════════════════════════════
+        ┌───────────────┬───────────────┼───────────────┬───────────────┐
+        ▼               ▼               ▼               ▼               ▼
+  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌────────────┐  ┌────────────┐
+  │ identity  │  │  catalog  │  │   cart    │  │ inventory  │  │ promotion  │
+  │ -service  │  │ -service  │  │ -service  │  │ -service   │  │ -service   │
+  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬──────┘  └─────┬──────┘
+        │              │              │              │               │
+     (users)      (catalog)      (Redis TTL)   (inventory)      (promotion)
+
+  ┌───────────┐  ┌───────────┐  ┌────────────┐  ┌───────────┐  ┌────────────┐
+  │   order   │  │  payment  │  │notification│  │  search   │  │ shipping * │
+  │ -service  │  │ -service  │  │  -service  │  │ -service  │  │ -service   │
+  └─────┬─────┘  └─────┬─────┘  └──────┬─────┘  └─────┬─────┘  └─────┬──────┘
+        │              │               │              │              │
+     (orders)      (payments)      (notif log)   (OpenSearch)   (shipping)
+
+   ═════════════════════════════════════╪══════════════════════════════════════════
+    PLATFORM INFRASTRUCTURE              │
+   ═════════════════════════════════════╪══════════════════════════════════════════
+   ┌────────────┬─────────┬─────────────┴───┬────────────┬──────────────┬───────────┐
+   │ PostgreSQL │  Redis  │  Message Broker │ OpenSearch │ Object Store │Observabil.│
+   │ (per svc)  │         │ (event + queue) │            │ (MinIO/S3)   │ OTel+Prom │
+   └────────────┴─────────┴─────────────────┴────────────┴──────────────┴───────────┘
+
+   (*) service ở phase sau
+```
+
+**Nguyên tắc bất di bất dịch:**
+
+1. **Database per service** — không service nào đọc DB của service khác. Cần dữ liệu của nhau thì
+   gọi API, hoặc giữ **read model** riêng cập nhật qua event.
+2. **Sync cho đường cần kết quả ngay** (validate voucher, reserve stock), **async cho phần
+   không cần chặn user** (gửi email, update search index, ghi analytics).
+3. **Mọi service stateless** — state đẩy xuống DB/Redis, để scale ngang chỉ cần tăng replica.
+4. **Mọi service có `/health` (liveness) + `/ready` (readiness)** — phục vụ load balancer và K8s probe.
+5. **Không distributed transaction (2PC)** — cross-service dùng **Saga + compensating action**.
+
+### 4.3. Vì sao có API Gateway
+
+| Nếu không có gateway | Nếu có gateway |
+|---|---|
+| Client phải biết địa chỉ của từng service → coupling cứng | Client chỉ biết 1 endpoint |
+| Auth phải lặp lại ở mọi service | Authn/authz tập trung 1 chỗ |
+| Rate limit / CORS / logging phải làm lại N lần | Cross-cutting làm 1 lần |
+| Không có chỗ chống abuse / bot | Dễ thêm WAF, bot detection |
+
+**Trade-off**: gateway là **single point of failure** và có thể thành **bottleneck**. Giảm thiểu bằng
+cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutting, không chứa business logic).
+
+---
+
+## 5. Service catalog & data ownership
+
+| Service | Trách nhiệm chính | Sở hữu data (source of truth) | Storage | Giao tiếp | Phase |
+|---|---|---|---|---|---|
+| `api-gateway` | Edge: routing, verify JWT, rate limit, request aggregation, correlation id | không sở hữu business data | Redis (rate limit counter) | REST in / REST-gRPC out | 1 |
+| `identity-service` | Đăng ký, đăng nhập, phát & refresh JWT, profile, role | `users`, `credentials`, `refresh_tokens`, `roles` | PostgreSQL | REST | 1 |
+| `catalog-service` | Product, SKU, category, brand, media ref, giá niêm yết | `products`, `skus`, `categories`, `brands` | PostgreSQL + Redis cache | REST/gRPC | 1 |
+| `cart-service` | Giỏ hàng tạm, merge cart khi login, TTL | `carts`, `cart_items` | Redis (TTL) | REST | 2 |
+| `inventory-service` | Tồn kho theo SKU × warehouse; **reserve / commit / release** | `inventory`, `reservations`, `stock_ledger` | PostgreSQL + Redis lock | gRPC/REST + event | 2 |
+| `promotion-service` | Voucher, campaign, flash sale, rule tính giảm giá | `vouchers`, `campaigns`, `redemptions` | PostgreSQL + Redis | REST + event | 2 |
+| `order-service` | Vòng đời order, orchestrate checkout bằng **Saga** | `orders`, `order_items`, `order_status_history`, `outbox` | PostgreSQL | REST + event | 2 |
+| `payment-service` | Payment intent, nhận callback provider, refund, **idempotency** | `payments`, `transactions`, `refunds`, `idempotency_keys`, `outbox` | PostgreSQL | REST + webhook + event | 2 |
+| `notification-service` | Email / SMS / Push theo template | `notification_logs`, `templates` | PostgreSQL | **async consumer** | 3 |
+| `search-service` | Index & query sản phẩm (full-text, filter, sort) | search index (không phải source of truth) | OpenSearch | REST + consumer | 3 |
+| `review-service` | Review, rating, moderation | `reviews`, `ratings` | PostgreSQL | REST + event | 8 |
+| `shipping-service` | Tạo vận đơn, tracking status | `shipments`, `tracking_events` | PostgreSQL | REST + event | 8 |
+| `analytics-service` | Tổng hợp số liệu bán hàng / funnel | `fact_*`, `dim_*` | ClickHouse (hoặc Postgres) | **CDC / consumer** | 8 |
+
+**Quy tắc phụ thuộc (dependency rule):**
+
+- Service **không** gọi vòng (A → B → A). Nếu cần → tách qua event.
+- `order-service` là **orchestrator** của checkout, được phép gọi sync `inventory`, `promotion`,
+  `payment` — nhưng theo một chiều, và **bắt buộc** có timeout + circuit breaker.
+- `catalog-service` **không** biết gì về order. `inventory-service` **không** biết gì về user.
+  Cần biết → nhận event.
+
+---
+
+## 6. Luồng nghiệp vụ chính
+
+### 6.1. Checkout (happy path) — Saga orchestration
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant G as api-gateway
+    participant O as order-service
+    participant P as promotion-service
+    participant I as inventory-service
+    participant Pay as payment-service
+    participant B as Message Broker
+    participant N as notification-service
+
+    C->>G: POST /v1/checkout (Idempotency-Key)
+    G->>O: forward (userId lấy từ JWT)
+    O->>O: validate cart, tính tổng tiền
+    O->>P: POST /voucher/lock
+    P-->>O: 200 discount
+    O->>I: POST /stock/reserve (TTL 15m)
+    I-->>O: 200 reservationId
+    O->>O: INSERT order (PENDING_PAYMENT) + outbox
+    O->>Pay: POST /payment-intents
+    Pay-->>O: 201 paymentUrl
+    O-->>C: 201 {orderId, paymentUrl}
+    O->>B: order.created
+    B-->>N: (consume) gửi email "đơn đã tạo"
+    Note over C,Pay: user thanh toán ở provider (mock)
+    Pay->>B: payment.succeeded
+    B-->>O: (consume) payment.succeeded
+    O->>I: POST /stock/commit
+    O->>P: POST /voucher/commit
+    O->>O: status = CONFIRMED
+    O->>B: order.confirmed
+    B-->>N: (consume) gửi email "đặt hàng thành công"
+```
+
+**Compensating action (khi fail):**
+
+| Bước fail | Cần làm gì để "undo" |
+|---|---|
+| Lock voucher fail | Dừng, trả 4xx cho user, chưa tạo order |
+| Reserve stock fail | Release voucher đã lock, trả 4xx |
+| Tạo payment fail | Release stock + release voucher, order = `CANCELLED` |
+| User không thanh toán trong 15' | Job release stock + voucher, order = `EXPIRED` |
+| Payment fail / callback `failed` | Release stock + voucher, order = `CANCELLED`, thông báo user |
+
+> Vì sao **reserve** rồi mới **commit** thay vì trừ stock luôn? Vì giữa lúc đặt và lúc thanh toán
+> có thể mất vài phút — nếu trừ luôn thì user bỏ ngang sẽ làm "cháy" hàng ảo. Reserve giữ chỗ
+> có TTL, commit chỉ khi tiền đã về.
+
+### 6.2. Payment callback (webhook) — idempotency
+
+Provider có thể gọi webhook **nhiều lần** cho cùng 1 giao dịch (retry, timeout mạng). Nếu xử lý
+ngây thơ → xác nhận đơn 2 lần, cộng tiền 2 lần.
+
+Cách xử lý:
+
+1. `payment-service` lưu `provider_txn_id` + `idempotency_key` với **unique constraint**.
+2. Webhook đến → `INSERT ... ON CONFLICT DO NOTHING`. Nếu đã tồn tại → trả `200` ngay, không xử lý lại.
+3. Việc cập nhật order đi qua **event** (`payment.succeeded`), và consumer cũng idempotent
+   (dùng `eventId` để dedupe).
+
+### 6.3. Flash sale — bài toán spike
+
+Luồng "đọc" bình thường (cache) khác hẳn luồng "tranh mua":
+
+```
+500k request / 60s  ──▶  api-gateway  ──▶  [rate limit theo user + IP]
+                             │
+                             ├─ phần lớn bị chặn / xếp hàng → 429 hoặc "đang xếp hàng, thử lại sau"
+                             ▼
+                       promotion-service   ← cache pre-warm campaign,
+                                             check quota bằng atomic counter
+                             ▼
+                       inventory-service   ← reserve bằng atomic decrement / Lua script trên Redis,
+                                             chỉ ~10k request thực sự chạm DB
+                             ▼
+                       order-service       ← tạo order, đẩy phần còn lại sang queue xử lý async
+```
+
+Đòn bẩy chính (làm ở Phase 4–5): **cache pre-warm**, **atomic counter** (Redis `DECR` / Lua),
+**rate limit** nhiều tầng, **queue + backpressure**, **circuit breaker** để cắt tải chứ không sập,
+**graceful degradation** (tạm tắt review/rating/recommendation để giữ luồng checkout sống).
+
+---
+
+## 7. Bản đồ bài toán → pattern → phase
+
+| # | Bài toán | Pattern / kỹ thuật | Service | Phase |
+|---|---|---|---|---|
+| 1 | Auth lặp lại ở mọi service | API Gateway + verify JWT tập trung | gateway, identity | 1 |
+| 2 | Client coupling với nhiều service | Gateway routing + BFF aggregation | gateway | 1 |
+| 3 | Không share DB nhưng cần data của nhau | Database per service + read model qua event | all | 2 |
+| 4 | Checkout nhiều bước, không thể 2PC | **Saga (orchestration)** + compensating action | order | 2 |
+| 5 | Trừ tồn kho bị race → oversell | Atomic decrement + **distributed lock** + reservation TTL | inventory | 2 |
+| 6 | User bấm 2 lần / provider retry | **Idempotency-Key** + unique constraint + dedupe `eventId` | order, payment | 2 |
+| 7 | Ghi DB xong nhưng publish event fail | **Transactional outbox** + relay | order, payment | 3 |
+| 8 | Gửi email chặn luồng checkout | **Async message + worker** | notification | 3 |
+| 9 | Message lỗi mãi không xong, chặn queue | Retry có giới hạn + **dead letter queue** | notification, inventory | 3 |
+| 10 | Index search lệch với catalog | Event-driven index update + reconcile job | search, catalog | 3 |
+| 11 | Đọc sản phẩm nhiều, DB quá tải | **Cache-aside** + TTL + jitter | catalog | 4 |
+| 12 | Nhiều request cùng miss 1 key hot | **Cache stampede** → single-flight / mutex / early refresh | catalog | 4 |
+| 13 | 1 user/bot spam API | **Rate limit** (token bucket) theo user/IP | gateway | 4 |
+| 14 | DB read quá tải, read:write = 20:1 | **Read replica** + routing read/write | catalog, order | 4 |
+| 15 | Bảng order phình to, query chậm | **Partitioning / sharding** theo `user_id` hoặc thời gian | order | 4 |
+| 16 | Flash sale 500k request/60s | Pre-warm cache + atomic counter + queue + backpressure | promotion, inventory | 4–5 |
+| 17 | 1 dependency chậm → treo cả hệ | **Timeout + circuit breaker + bulkhead** | all | 5 |
+| 18 | Lỗi tạm thời làm fail request | **Retry + exponential backoff + jitter** (chỉ cho idempotent) | all | 5 |
+| 19 | Traffic tăng, service không theo kịp | **Backpressure** + queue depth limit + shed load | gateway, all | 5 |
+| 20 | Phần phụ chết kéo phần chính chết theo | **Graceful degradation** (feature flag) | gateway, all | 5 |
+| 21 | Không biết request chậm ở đâu | **Distributed tracing** (OpenTelemetry) + correlation id | all | 6 |
+| 22 | Không biết hệ có đang "khoẻ" không | Metrics (RED/USE) + dashboard + alert theo **SLO** | all | 6 |
+| 23 | Query phức tạp cho trang danh sách đơn | **CQRS** + read model denormalized | order, catalog | 8 |
+| 24 | Full-text search + filter linh hoạt | **Inverted index** (OpenSearch) | search | 8 |
+| 25 | Deploy không downtime | Probe + **blue-green / canary** + graceful shutdown | all | 7 |
+
+---
+
+## 8. Data architecture
+
+### 8.1. Nguyên tắc
+
+1. **Database per service** — mỗi service 1 database. Ở local có thể dùng chung 1 Postgres instance
+   nhưng **khác database**, và **không có foreign key xuyên service**.
+2. **Không join cross-service** — cần thì gọi API, hoặc maintain **read model** từ event.
+3. **Transaction boundary = 1 service.** Cross-service chỉ có **eventual consistency**.
+4. **Outbox pattern** cho mọi event phát ra từ service có ghi DB: ghi business data + outbox record
+   trong **cùng 1 transaction**, relay đọc outbox và publish. Đảm bảo **at-least-once**, phía consumer
+   **phải idempotent**.
+5. **Event envelope chuẩn:**
+
+```json
+{
+  "eventId": "01HQ8...",
+  "eventType": "order.confirmed",
+  "eventVersion": 1,
+  "occurredAt": "2026-01-15T10:20:30.123Z",
+  "producer": "order-service",
+  "correlationId": "req-abc-123",
+  "causationId": "evt-xyz-789",
+  "payload": {}
+}
+```
+
+   Naming topic/queue: `shoplab.<domain>.<entity>.<past_tense>` — ví dụ
+   `shoplab.order.order.confirmed`, `shoplab.payment.payment.succeeded`.
+
+6. **Versioning**: breaking change → tăng `eventVersion`, consumer cũ vẫn đọc được payload cũ trong
+   thời gian transition. Không sửa payload của version đã phát hành.
+
+### 8.2. Storage theo mục đích
+
+| Storage | Dùng cho | Không dùng cho |
+|---|---|---|
+| PostgreSQL | Source of truth, dữ liệu cần transaction & constraint | cache, session, counter throughput cao |
+| Redis | Cache, distributed lock, rate limit counter, cart (TTL), idempotency key, hot counter | source of truth (trừ cart vì chấp nhận mất) |
+| OpenSearch | Full-text search, filter/sort linh hoạt | transaction, source of truth |
+| Object Store (MinIO/S3) | Ảnh sản phẩm, file export | dữ liệu có query |
+| Message Broker | Event, task queue, retry, DLQ | lưu trữ dài hạn |
+
+### 8.3. Data lifecycle
+
+| Data | Retention | Ghi chú |
+|---|---|---|
+| `orders`, `payments` | 7 năm | yêu cầu kế toán; archive sau 2 năm |
+| `cart` | TTL 30 ngày | Redis TTL, không cần archive |
+| `notification_logs` | 90 ngày | có thể đẩy sang cold storage |
+| `stock_ledger` | append-only, giữ vĩnh viễn | dùng để reconcile tồn kho |
+| Event trên broker | 7 ngày (theo broker config) | dài hạn hơn → CDC vào DW |
+| Log | 30 ngày | Loki / cloud log |
+
+### 8.4. Mô hình dữ liệu sơ bộ (mức ý tưởng, chi tiết ở từng ticket)
+
+```
+users(id, email, password_hash, status, created_at)
+  └─ user_roles(user_id, role)          -- buyer | seller | admin
+
+products(id, seller_id, title, description, status, created_at)
+  └─ skus(id, product_id, code, price, currency, attributes_json)
+  └─ categories(id, parent_id, name, slug) + product_categories(product_id, category_id)
+
+inventory(id, sku_id, warehouse_id, on_hand, reserved, version)
+  └─ reservations(id, order_id, sku_id, qty, status, expires_at)
+  └─ stock_ledger(id, sku_id, delta, reason, ref_id, created_at)   -- append only
+
+carts  -- Redis hash: { sku_id: {qty, price_snapshot} }, key = user_id hoặc guest_token
+
+vouchers(id, code, type, value, min_order, quota, used, start_at, end_at)
+
+orders(id, user_id, status, subtotal, discount, total, currency, created_at)
+  └─ order_items(id, order_id, sku_id, qty, unit_price, line_total)
+  └─ order_status_history(id, order_id, from_status, to_status, reason, created_at)
+
+payments(id, order_id, provider, provider_txn_id UNIQUE, amount, status, idempotency_key UNIQUE)
+
+outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
+       status, created_at, published_at)
+```
+
+---
+
+## 9. Cross-cutting concerns
+
+### 9.1. Security
+
+| Hạng mục | Quyết định | Phase |
+|---|---|---|
+| Authn | JWT access token (TTL 15 phút) + refresh token (TTL 7 ngày), verify ở gateway | 1 |
+| Authz | RBAC theo `role` + resource ownership (buyer chỉ thấy đơn của mình) | 1–2 |
+| Password | Hash bằng bcrypt/argon2, không bao giờ log | 1 |
+| Secret | Đọc từ env / secret manager, không commit; `.env.example` chỉ có placeholder | 1 |
+| Transport | TLS ở LB; internal mTLS ở Phase 7 | 7 |
+| Input | Validate schema ở gateway + service, chống injection | 1 |
+| Abuse | Rate limit theo user/IP, bot detection ở WAF | 4 |
+
+### 9.2. Observability
+
+- **Log**: structured JSON, field bắt buộc `timestamp, level, service, traceId, spanId, msg`.
+  Không log PII / số thẻ / token.
+- **Metrics**: RED (Rate, Errors, Duration) cho mọi endpoint; USE (Utilization, Saturation, Errors)
+  cho hạ tầng.
+- **Tracing**: OpenTelemetry, propagate `traceparent` từ client → gateway → service → DB → broker.
+- **SLO**: đặt SLO cho 2 luồng critical — `checkout success rate ≥ 99.9%`,
+  `product read p99 < 150ms`. Có **error budget** → cháy budget thì freeze feature, ưu tiên reliability.
+- **Alert**: chỉ alert khi user bị ảnh hưởng (symptom-based), không alert theo CPU đơn thuần.
+
+### 9.3. Resilience
+
+| Kỹ thuật | Áp dụng ở đâu | Nguyên tắc |
+|---|---|---|
+| Timeout | mọi call ra ngoài service | luôn ngắn hơn timeout của caller |
+| Retry | chỉ với operation **idempotent** | exponential backoff + jitter, max 2–3 lần |
+| Circuit breaker | payment, inventory, provider | mở khi error rate vượt ngưỡng, half-open để thử lại |
+| Bulkhead | pool riêng cho từng dependency | 1 dependency chậm không chiếm hết thread |
+| Backpressure | consumer, gateway | queue đầy → reject sớm, không ôm vào rồi chết |
+| DLQ | mọi consumer | message lỗi không chặn queue chính |
+| Graceful degradation | gateway | tắt feature non-critical khi quá tải |
+
+### 9.4. API & contract
+
+- REST cho external, version qua path `/v1/...`; **OpenAPI là source of truth**.
+- gRPC cho internal call cần latency thấp / typed contract (inventory, catalog).
+- Event contract có version, schema registry từ Phase 3 trở đi.
+- Breaking change phải có **deprecation window**, không phá client đang chạy.
+
+### 9.5. Testing strategy
+
+| Loại | Mục đích | Công cụ | Chạy khi nào |
+|---|---|---|---|
+| Unit | business logic, không cần I/O | test runner của framework | mỗi commit |
+| Integration | service + DB/Redis/broker thật | Testcontainers | mỗi PR |
+| Contract | đảm bảo event/API không phá consumer | schema test / Pact | mỗi PR |
+| E2E smoke | luồng chính chạy được end-to-end | script + docker compose | trước khi merge |
+| Load test | p99, throughput, điểm vỡ | k6 | mỗi phase scale |
+| Chaos test | service/dependency chết thì hệ thế nào | script kill container / inject latency | Phase 5 |
+
+---
+
+## 10. Môi trường & deployment
+
+### 10.1. Môi trường
+
+| Môi trường | Chạy ở đâu | Mục đích |
+|---|---|---|
+| `local` | Docker Compose trên máy dev | dev + test hằng ngày |
+| `dev` | Docker Compose trên 1 VM (hoặc chính máy dev) | tích hợp nhiều service |
+| `staging` | K8s local (kind / minikube) | test deploy, canary, HPA |
+| `prod` | K8s local (mô phỏng) | chỉ để học, không phục vụ user thật |
+
+### 10.2. Yêu cầu máy dev (kiểm tra ngày 2026-10-25)
+
+| Công cụ | Trạng thái | Ghi chú |
+|---|---|---|
+| Docker | ✅ `29.5.2` | dùng cho toàn bộ infra local |
+| Python | ✅ `3.12.9` | chỉ dùng cho script phụ trợ (nếu cần) |
+| Node.js | ❌ chưa cài | **phải cài** nếu chốt stack Node — dùng Node 22 LTS |
+| .NET SDK | ❌ chưa có | chỉ cần nếu chốt stack .NET |
+| Git | cần kiểm tra | repo hiện **chưa** `git init` |
+
+→ Việc cài đặt được đưa vào ticket `SL-0.2`.
+
+### 10.3. Deployment
+
+- **Containerize**: mọi service có `Dockerfile` multi-stage, image nhỏ, chạy non-root.
+- **CI**: GitHub Actions — lint → unit test → integration test → build image → push.
+- **CD**: staging auto-deploy; prod deploy thủ công có approve.
+- **Zero-downtime**: readiness probe + rolling update; Phase 7 làm blue-green / canary.
+- **Rollback**: image tag theo commit SHA, rollback = deploy lại tag trước.
+
+---
+
+## 11. Tech stack đề xuất ⚠️ CẦN CHỐT
+
+> Mục này là **đề xuất**, chưa phải quyết định. Khi chốt sẽ ghi thành `docs/adr/0001-tech-stack.md`
+> và bỏ chữ "đề xuất" ở đây. Xem `Backlog.md` → `SL-0.1`.
+
+### 11.1. Ngôn ngữ & framework
+
+| Phương án | Ưu | Nhược | Phù hợp khi |
+|---|---|---|---|
+| **Node.js 22 + TypeScript + NestJS** | Có sẵn module cho microservices (transport, client proxy), DI rõ ràng, dev nhanh, dễ đọc, khớp kinh nghiệm sẵn có | Single-thread → phải chú ý CPU-bound; GC pause nhỏ | Muốn đi nhanh, tập trung vào **architecture** thay vì ngôn ngữ |
+| **Java 21 + Spring Boot** | Hệ sinh thái microservices trưởng thành nhất (Spring Cloud), virtual thread, tooling mạnh | Nặng, startup chậm, boilerplate nhiều, dev chậm hơn | Muốn học stack "enterprise" thật |
+| **Go** | Nhẹ, concurrency tốt, binary nhỏ, latency thấp | Ít framework "pin sẵn" cho microservices, phải tự dựng nhiều | Muốn học cả hạ tầng lẫn ngôn ngữ |
+
+**Đề xuất: NestJS + TypeScript** — vì mục tiêu là học architecture, không phải học framework.
+
+---
+
+### 11.2. Message broker
+
+| Phương án | Ưu | Nhược | Phù hợp khi |
+|---|---|---|---|
+| **RabbitMQ** | Dễ học, routing linh hoạt (exchange/queue/binding), UI quản trị tốt, retry + DLQ có sẵn | Throughput thấp hơn Kafka, không replay event theo offset | Học **task queue + event** ở quy mô vừa |
+| **Kafka** | Throughput rất cao, event log bền, **replay** được, hợp **CDC** | Vận hành phức tạp hơn, routing kém linh hoạt, phải tự làm retry/DLQ | Cần event streaming, event sourcing, CDC → DW |
+
+**Đề xuất:** Phase 3 dùng **RabbitMQ** (học concept nhanh), Phase 8 thêm **Kafka** cho luồng
+event streaming / CDC → analytics. Việc so sánh 2 broker chính là một bài học trade-off.
+
+### 11.3. API Gateway
+
+| Phương án | Ưu | Nhược |
+|---|---|---|
+| **Tự build (NestJS, bản mỏng)** | Học được routing/authn/rate limit làm thế nào; dễ debug | Không production-grade, phải tự làm nhiều thứ |
+| **Kong / APISIX / Envoy** | Production-like, plugin phong phú, học được cách cấu hình thật | Ít "học" về cơ chế, thêm 1 hệ thống phải vận hành |
+
+**Đề xuất:** Phase 1 **tự build** để hiểu bản chất → Phase 7 cân nhắc thay bằng Kong/APISIX.
+
+### 11.4. Các thành phần còn lại
+
+| Thành phần | Đề xuất | Alternative | Lý do |
+|---|---|---|---|
+| Database | PostgreSQL 16 | MySQL, MongoDB | Transaction, JSONB, `SKIP LOCKED` cho outbox relay |
+| Cache / lock | Redis 7 | Memcached | Cần cả cache, counter, lock, TTL |
+| Search | OpenSearch 2.x | Elasticsearch, Meilisearch | Miễn phí, API tương thích ES |
+| Object store | MinIO | S3, local FS | S3-compatible, chạy local được |
+| Observability | OpenTelemetry + Prometheus + Grafana + Loki | Datadog (tốn tiền) | Open-source, chuẩn industry |
+| Local orchestration | Docker Compose → kind (K8s) | minikube | kind nhẹ, chạy tốt trên Windows + WSL2 |
+| CI/CD | GitHub Actions | GitLab CI | Miễn phí cho repo public |
+| Test | Jest/Vitest + Testcontainers + k6 | — | Đủ cho unit → integration → load |
+| Lint/format | ESLint + Prettier | Biome | Phổ biến, nhiều rule |
+| Git hooks | Husky + lint-staged + commitlint | — | Enforce convention tự động |
+
+---
+
+## 12. Roadmap theo phase
+
+Nguyên tắc: **mỗi phase phải chạy được end-to-end trước khi sang phase sau**. Ticket chi tiết nằm
+trong `Backlog.md` — phase xa chỉ để ở mức epic.
+
+| Phase | Tên | Mục tiêu chính | Học được | Điều kiện hoàn thành |
+|---|---|---|---|---|
+| **0** | Foundation | Repo skeleton, convention, local infra, service template, CI | Repo/team convention, 12-factor config, Docker Compose | `docker compose up` chạy được toàn bộ infra; service template có `/health`; CI xanh |
+| **1** | Walking skeleton | `api-gateway` + `identity-service` + `catalog-service`, auth JWT, CRUD product | Service boundary, sync communication, API versioning, gateway pattern | Register → login → lấy token → gọi API product qua gateway, chạy end-to-end |
+| **2** | Core commerce flow | `cart`, `inventory` (reserve/commit/release), `order` (Saga), `payment` (mock + idempotency) | Database per service, Saga, idempotency, distributed lock, compensating action | Checkout thành công + checkout fail đều đúng trạng thái; không oversell khi bắn 100 request đồng thời |
+| **3** | Async & event-driven | Broker, outbox, event contract, `notification`, `search` index | Async messaging, outbox, DLQ, retry, eventual consistency | Order confirmed → email gửi async; search index cập nhật sau khi product đổi |
+| **4** | Scale & performance | Cache-aside, rate limit, read replica, partition, load test k6, flash sale | Caching, cache stampede, rate limiting, replica lag, partitioning | Báo cáo load test có before/after (p99, throughput); flash sale 500k req/60s không oversell |
+| **5** | Resilience | Timeout, retry+backoff+jitter, circuit breaker, bulkhead, backpressure, degradation, chaos test | Failure mode, resilience pattern, degradation strategy | Kill 1 dependency → hệ vẫn phục vụ luồng critical; có báo cáo chaos test |
+| **6** | Observability & SRE | OTel tracing, Prometheus/Grafana, log tập trung, SLO/SLI, alert, runbook | Observability, SLO, error budget, on-call thinking | Trace 1 request xuyên 5 service; dashboard + alert theo SLO; có runbook cho 3 sự cố |
+| **7** | Deployment & infra | K8s (kind), Helm, HPA, probe, blue-green/canary, secret, mTLS | Container orchestration, zero-downtime deploy, config/secret | Deploy lên K8s không downtime; HPA scale theo tải; rollback < 2 phút |
+| **8** | Advanced | CQRS read model, OpenSearch, sharding, CDC → analytics, Kafka, multi-region design | CQRS, event streaming, sharding, DR design | Trang danh sách đơn dùng read model; CDC đẩy được sang warehouse; có design doc multi-region |
+
+**Luồng học xuyên suốt (thread) — Flash sale:** manh nha ở Phase 2 (reservation), thành bài toán
+thật ở Phase 4–5 (rate limit, atomic counter, queue, degradation), và được chứng minh bằng số liệu
+ở Phase 4.
+
+---
+
+## 13. Non-goals (những gì cố tình KHÔNG làm)
+
+| Non-goal | Vì sao |
+|---|---|
+| ML recommendation, cá nhân hoá | Không dạy thêm được gì về distributed system architecture |
+| Payment provider thật | Cần pháp lý, PCI-DSS; mock đủ để học mọi edge case |
+| Multi-region active-active thật | Chi phí lớn, phần học được nằm ở design; làm design doc là đủ |
+| Mobile app / UI đẹp | Trọng tâm là backend architecture; client chỉ cần đủ để test |
+| Tối ưu chi phí hạ tầng | Ghi nhận, nhưng không phải mục tiêu học |
+| Service mesh (Istio) ở phase sớm | Thêm độ phức tạp khi chưa cần; cân nhắc ở Phase 7–8 |
+
+---
+
+## 14. Trade-off log
+
+Ghi lại các trade-off **đã chấp nhận** để sau này không phải tự hỏi "sao lại làm thế".
+
+| # | Quyết định | Được gì | Mất gì | Khi nào revisit |
+|---|---|---|---|---|
+| 1 | Microservices ngay từ đầu thay vì modular monolith | Học được đúng bài toán distributed (network, consistency, observability) | Phức tạp hơn hẳn, dev chậm, không có "đường lùi" dễ | Nếu tốn quá nhiều thời gian vào plumbing → thử nhánh monolith-first cho 1 service |
+| 2 | Database per service | Service độc lập, scale & deploy riêng | Không join được, phải làm read model, dữ liệu eventual | Khi 1 query cross-service bị gọi quá nhiều → thêm read model / CQRS |
+| 3 | Sync (REST/gRPC) cho checkout | Đơn giản, dễ debug, user thấy kết quả ngay | Coupling thời gian (cả 2 phải sống), dễ cascade failure | Khi checkout p99 vượt 500ms hoặc 1 dependency hay chết |
+| 4 | Tự build API gateway | Hiểu bản chất, dễ debug | Không production-grade | Phase 7 khi cần plugin thật |
+| 5 | RabbitMQ trước, Kafka sau | Học nhanh, vận hành nhẹ | Không có replay / event log | Phase 8 khi cần CDC / event streaming |
+| 6 | Số liệu NFR (§3) là giả định | Có mục tiêu để thiết kế & load test | Không phản ánh traffic thật | Sau Phase 4, hiệu chỉnh theo số đo thực tế |
+
+---
+
+## 15. Glossary
+
+| Thuật ngữ | Nghĩa ngắn |
+|---|---|
+| **API Gateway** | Cửa vào duy nhất cho client: routing, authn, rate limit, aggregation |
+| **Backpressure** | Cơ chế báo ngược "tôi không theo kịp" để phía gửi giảm tốc, thay vì ôm hết rồi sập |
+| **Bounded context** | Ranh giới nghiệp vụ mà trong đó một model có nghĩa nhất quán |
+| **Bulkhead** | Chia tài nguyên thành khoang riêng để 1 phần chết không kéo cả tàu chết |
+| **Cache stampede** | Nhiều request cùng lúc miss 1 key hot → dồn hết xuống DB |
+| **CDC** | Change Data Capture — đọc thay đổi từ DB (binlog/WAL) để đẩy sang hệ khác |
+| **Circuit breaker** | Cầu dao: khi dependency lỗi nhiều thì ngắt luôn, không gọi nữa |
+| **CQRS** | Tách model đọc và model ghi |
+| **DLQ** | Dead Letter Queue — nơi chứa message xử lý lỗi mãi không xong |
+| **Error budget** | Lượng "lỗi cho phép" còn lại theo SLO (100% − SLO) |
+| **Eventual consistency** | Các bản sao cuối cùng sẽ khớp nhau, nhưng có độ trễ |
+| **Idempotency** | Gọi nhiều lần kết quả vẫn như gọi 1 lần |
+| **Load balancing** | Chia request ra nhiều instance; L4 (TCP) hoặc L7 (HTTP, hiểu path/header) |
+| **Outbox** | Ghi event vào bảng cùng transaction với business data, relay publish sau |
+| **Partitioning / Sharding** | Chia dữ liệu thành nhiều phần để scale ghi và tăng tốc query |
+| **Read replica** | Bản sao chỉ-đọc của DB, dùng cho read-heavy workload |
+| **Saga** | Chuỗi local transaction + compensating action thay cho distributed transaction |
+| **SLO / SLI** | Service Level Objective (mục tiêu) / Indicator (chỉ số đo được) |
+| **Throughput** | Số việc xử lý được trong 1 đơn vị thời gian (RPS, msg/s) |
+| **Trade-off** | Đánh đổi: được cái gì thì phải mất cái gì |
+| **Vertical slice** | Cắt dọc theo 1 tính năng xuyên đủ các tầng, thay vì cắt ngang theo tầng |
+| **p99 latency** | 99% request nhanh hơn ngưỡng này — quan trọng hơn average |
+
+---
+
+## 16. Tham khảo
+
+| Nguồn | Dùng để |
+|---|---|
+| *Microservices Patterns* — Chris Richardson | Saga, outbox, API composition, service decomposition |
+| *Designing Data-Intensive Applications* — Martin Kleppmann | Consistency, replication, partitioning, streaming |
+| *Site Reliability Engineering* — Google | SLO, error budget, on-call |
+| C4 model (c4model.com) | Cách vẽ và phân tầng sơ đồ kiến trúc |
+| microservices.io | Pattern catalog |
+| AWS Well-Architected Framework | 6 trụ cột thiết kế |
+| k6 documentation | Load test |
+
+---
+
+## Changelog
+
+| Ngày | Thay đổi | Người |
+|---|---|---|
+| 2026-10-25 | Khởi tạo v0.1 — kiến trúc tổng quát, roadmap 9 phase, đề xuất tech stack | bạn + AI |
+
+
+
+
+
+
+
+
+
+
+
+
