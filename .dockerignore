@@ -1,0 +1,29 @@
+# .dockerignore — giữ build context nhỏ và tránh copy rác vào image (SL-0.4)
+# Lưu ý: KHÔNG ignore `packages/`, `services/`, `config/`, `pom.xml` — Dockerfile cần chúng.
+
+# Build output — build lại trong container, không dùng lại đồ của máy host
+**/target/
+
+# Git — không cần trong image (git sha truyền qua build arg)
+.git/
+.gitignore
+.gitattributes
+
+# Môi trường / secret local
+.env
+.env.*
+
+# Tài liệu & AI tooling — không ảnh hưởng runtime
+*.md
+.cline/
+.clinerules/
+docs/
+tools/
+infra/
+.github/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
