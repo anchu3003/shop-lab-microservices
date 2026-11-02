@@ -7,8 +7,8 @@
 | | |
 |---|---|
 | **Ticket đang làm** | — |
-| **Ticket tiếp theo** | `SL-0.1` |
-| **Số ticket chi tiết hiện có** | 5 (Phase 0) |
+| **Ticket tiếp theo** | `SL-0.2` |
+| **Số ticket chi tiết hiện có** | 8 (Phase 0) |
 
 ---
 
@@ -16,7 +16,7 @@
 
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
-| 0 | Foundation | 🔵 In Progress | 0 / 5 |
+| 0 | Foundation | 🔵 In Progress | 4 / 8 |
 | 1 | Walking skeleton | ⚪ Todo (epic) | — |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
@@ -85,11 +85,209 @@ Pattern / thư viện / trade-off đã chấp nhận.
 
 ---
 
+### SL-0.6 — Bootstrap AI tooling (rules / skills / workflows)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Done |
+| **Phase** | 0 — Foundation |
+| **Phụ thuộc** | — (làm **trước** `SL-0.1`) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+Repo đã có `AGENTS.md` (được Cline tự nạp như một Rule) + `architecture.md` + `Backlog.md`, nhưng
+**chưa có AI tooling**: không skill, không workflow, không rule phụ. Hệ quả: mỗi lượt phải nhắc lại
+cách làm, dễ trôi khỏi convention, và các quy trình lặp (viết ADR, chạy ticket, verify, đóng ticket)
+phải làm bằng tay. Chuẩn hoá trước khi bắt đầu `SL-0.1` để mọi ticket sau chạy nhất quán và
+tiết kiệm token.
+
+**Mục tiêu**
+Có bộ AI tooling tối thiểu, token-efficient: **rule** nạp context, **skill** chứa playbook tái dùng,
+**workflow** chạy quy trình nhiều bước bằng slash command — đủ để vòng
+Read → Plan → Build → Verify → Document (AGENTS.md §4) chạy trơn.
+
+**In scope**
+- `.clinerules/00-context.md` — rule nhỏ: nhắc đọc `architecture.md` + `Backlog.md` khi bắt đầu task
+  ("Memory Bank lite"), liệt kê skill/workflow đang có
+- 3 skills trong `.cline/skills/`:
+  - `shoplab-adr` — cách viết ADR (template 5 mục + quality bar), dùng cho `docs/adr/`
+  - `shoplab-ticket` — cấu trúc ticket BA-style + checklist DoR/DoD
+  - `shoplab-verify` — recipe verify (docker compose health, `curl /health`, `mvn`/`go test`) + quy tắc
+    "dán output thật, không nói suông"
+- 3 workflows trong `.clinerules/workflows/`:
+  - `run-ticket.md` — thực thi 1 ticket theo vòng §4
+  - `new-ticket.md` — breakdown epic → ticket chi tiết
+  - `close-ticket.md` — update `Backlog.md` (status + verify + learning note)
+- `AGENTS.md`: thêm mục "AI assets" (liệt kê + link) + ghi rõ hooks/plugins không áp dụng VS Code
+- `Backlog.md`: thêm ticket này + note thứ tự làm trước `SL-0.1`
+
+**Out of scope**
+- Chưa tạo skill/workflow cho phase sau (`compose`, `service-scaffold`, `loadtest`, `otel`, `k8s`) —
+  tạo khi tới lượt
+- Không dùng Cline Hooks/Plugins (không hỗ trợ VS Code extension)
+- Không dựng `memory-bank/` chuẩn (đã có `architecture.md` + `Backlog.md`)
+- Không cấu hình git hooks (thuộc `SL-0.2`)
+- Không viết code service
+
+**Acceptance Criteria**
+- [x] `.clinerules/00-context.md` tồn tại, trỏ `architecture.md` + `Backlog.md`, liệt kê skill/workflow hiện có
+- [x] 3 skills đúng format: `SKILL.md` có frontmatter `name` khớp tên thư mục + `description` cụ thể (≤ 1024 ký tự)
+- [x] 3 workflow gọi được bằng `/run-ticket.md`, `/new-ticket.md`, `/close-ticket.md` — *user xác nhận khi yêu cầu đóng ticket*
+- [x] `AGENTS.md` có mục "AI assets", nêu rõ hooks/plugins không áp dụng VS Code
+- [x] Verify: gõ `/run-ticket.md` → Cline nạp đúng nội dung workflow — *user xác nhận*
+- [x] Verify: yêu cầu "viết ADR cho tech stack" → skill `shoplab-adr` trigger — *đã trigger trong session này*
+- [x] Không có secret/API key trong `.cline/` (kiểm tra bằng grep)
+- [x] `Backlog.md` cập nhật trạng thái ticket
+
+**Ghi chú kỹ thuật**
+- Cline trên VS Code hỗ trợ: Rule (`.clinerules/`, `.cline/rules/`, `AGENTS.md`),
+  Skill (`.cline/skills/<name>/SKILL.md`), Workflow (`.clinerules/workflows/*.md`, gọi bằng `/<filename>.md`)
+- Skill dùng **progressive loading**: metadata ~100 token nạp sẵn, body < 5k token khi trigger
+  → dùng cho **kiến thức tái dùng**; workflow chỉ tốn token khi invoke → dùng cho **quy trình nhiều bước**
+- `description` của skill phải cụ thể, nếu chung chung sẽ không auto-trigger
+- Cline Hooks/Plugins chỉ chạy trên SDK/CLI/Kanban, **không** trên VS Code extension → thay bằng
+  git hooks (`SL-0.2`)
+- `.cline/` commit vào repo nhưng **không** chứa secret
+- Trade-off: tách nhiều file nhỏ giúp token-efficient nhưng tăng số file phải bảo trì; giữ
+  `AGENTS.md` làm single source of truth
+
+**Kết quả verify**
+- Đã tạo 7 file:
+  - `.clinerules/00-context.md`
+  - `.clinerules/workflows/{run-ticket,new-ticket,close-ticket}.md`
+  - `.cline/skills/{shoplab-adr,shoplab-ticket,shoplab-verify}/SKILL.md`
+- Frontmatter skill khớp tên thư mục:
+  `dir=shoplab-adr name=shoplab-adr match=True` / `...ticket match=True` / `...verify match=True`
+- Secret scan `.cline/` + `.clinerules/` → `no secret-like strings found`
+- `git status --short` → `M AGENTS.md`, `M Backlog.md`, `?? .cline/`, `?? .clinerules/`
+- 2026-11-02: user xác nhận 2 AC còn lại (slash command + skill trigger) và yêu cầu đóng ticket → `Done`.
+  Skill `shoplab-adr` đã trigger thật trong session (yêu cầu "viết ADR cho tech stack").
+
+**Learning note**
+- Cline **Hooks/Plugins không hỗ trợ VS Code extension** → không dùng được cho auto-format/lint; thay
+  bằng git hooks (**Lefthook**) ở `SL-0.2`.
+- Skill dùng progressive loading nên đặt kiến thức tái dùng vào skill (token rẻ), còn quy trình nhiều
+  bước để ở workflow (chỉ tốn token khi gọi).
+- `description` của skill quyết định auto-trigger — phải cụ thể, không viết chung chung.
+
+### SL-0.7 — Chốt môi trường dev (WSL2) và viết ADR-0002
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Done |
+| **Phase** | 0 — Foundation |
+| **Phụ thuộc** | SL-0.1 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+Stack đã chốt (ADR-0001) là **container-heavy** (Java + Go, nhiều container, Phase 7 có `kind`/K8s). Máy dev
+chạy Windows; bind mount source code từ Windows fs (`/mnt/d/...`) vào container **rất chậm**, inotify /
+permission / CRLF không đáng tin → ảnh hưởng trực tiếp dev loop. Cần chốt môi trường dev **trước khi**
+`SL-0.2` cài tooling.
+
+**Mục tiêu**
+Chốt môi trường dev + ghi lý do dưới dạng ADR-0002; cập nhật `architecture.md` §10; điều chỉnh `SL-0.2`.
+
+**In scope**
+- Tạo `docs/adr/0002-dev-environment.md` (Context / Options / Decision / Consequences / Revisit)
+- Cập nhật `architecture.md` §10 (môi trường + yêu cầu máy dev)
+- Điều chỉnh `SL-0.2` cho khớp (tooling Java/Go, Lefthook, WSL2)
+
+**Out of scope**
+- Chưa cài đặt WSL2/tooling thật (thuộc `SL-0.2`)
+- Chưa đổi code/service
+
+**Acceptance Criteria**
+- [x] `docs/adr/0002-dev-environment.md` tồn tại, đủ 5 mục, nêu rõ lý do loại Windows-native/hybrid
+- [x] `architecture.md` §10 nêu WSL2 + link ADR-0002; §10.1/§10.2 cập nhật
+- [x] `SL-0.2` điều chỉnh: bỏ tooling Node (ESLint/Prettier/Husky) → Spotless/gofmt + Lefthook; thêm WSL2
+- [x] Mục Revisit có điều kiện cụ thể
+
+**Ghi chú kỹ thuật**
+- Docker Desktop trên Windows **đã** dùng WSL2 backend → chỉ cần đưa source code sang Linux fs
+- Điều kiện sống còn: repo **trong** Linux fs (`~/`), không ở `/mnt/d/...`; WSL ≥ 2.1.5
+- Tham chiếu: Docker Desktop "WSL 2 best practices"; VS Code "Improve disk performance"
+
+**Kết quả verify**
+- `docs/adr/0002-dev-environment.md` tồn tại, đủ 5 mục: `# ADR-0002` → `## Context` → `## Options` →
+  `## Decision` → `## Consequences` → `## Revisit`; nêu rõ lý do loại Windows-native và hybrid
+- `architecture.md` §10: thêm dòng "Máy dev chạy WSL2" + link ADR-0002; §10.1 đổi "trong WSL2";
+  §10.2 thêm hàng WSL2 + ghi rõ "cài trong WSL2"
+- `SL-0.2` đã bỏ tham chiếu Node: `npm test`→`mvn -q verify`; `ESLint+Prettier`→`Spotless+Checkstyle`/
+  `gofmt+golangci-lint`; `Husky`→`Lefthook`; thêm bước chuyển dev env sang WSL2
+- Grep `Husky|ESLint|npm|pnpm|commitlint` toàn repo: chỉ còn trong mục **Options/lịch sử**
+  (ADR-0001 Options + SL-0.1 verify/learning) — không còn trong hướng dẫn thực thi
+- Cũng đã sửa `.clinerules/00-context.md` + skill `shoplab-verify` (bỏ `npm test` → `mvn`/`go test`)
+
+**Learning note**
+- Docker Desktop trên Windows **vốn đã** chạy trên WSL2 backend → "chuyển sang WSL2" thực chất là **đưa
+  source code sang Linux filesystem**, không phải đổi engine.
+- Điểm chậm nhất là bind mount qua `/mnt/c` — để repo ở `~` là điều kiện sống còn, không phải "nice to have".
+- Đổi ngôn ngữ (ADR-0001) kéo theo nhiều doc/skill phải sửa theo (tooling Node → Java/Go) — ADR ảnh
+  hưởng rộng hơn tưởng.
+
+### SL-0.8 — Git workflow: rule commit, workflow branch/PR, git flow doc
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Done |
+| **Phase** | 0 — Foundation |
+| **Phụ thuộc** | SL-0.1 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+`AGENTS.md` §6 mới chỉ nêu tên convention (Conventional Commits, `feat/<ticket-id>-slug`) nhưng chưa có
+cơ chế enforce và chưa có quy trình tách nhánh/PR. Repo hiện commit trực tiếp lên nhánh chính, chưa có
+remote, chưa có `gh` CLI. Cần chuẩn hoá git workflow trước khi code service để lịch sử sạch.
+
+**Mục tiêu**
+Có rule + workflow + tài liệu cho git flow: commit sau mỗi ticket, tách nhánh theo ticket, tạo PR vào `main`.
+
+**In scope**
+- Rule `.clinerules/10-git-workflow.md` (commit sau mỗi ticket, không commit thẳng `main`, không force-push `main`)
+- Workflow `.clinerules/workflows/git-branch-pr.md` — tách nhánh + commit + push + tạo PR
+- Tài liệu `docs/git-flow.md` — mô hình GitHub Flow, branch naming, commit, PR, lệnh mẫu, tiền đề
+- Cập nhật `AGENTS.md` §6 + §10 và `.clinerules/00-context.md` để trỏ tới artifact mới
+
+**Out of scope**
+- Chưa set remote GitHub / cài `gh` CLI (việc của người dùng; tài liệu sẽ hướng dẫn)
+- Chưa cấu hình branch protection trên GitHub
+- Chưa làm git hooks (thuộc SL-0.2)
+
+**Acceptance Criteria**
+- [x] `.clinerules/10-git-workflow.md` tồn tại, có quy tắc "commit sau khi hoàn thành mỗi ticket"
+- [x] `.clinerules/workflows/git-branch-pr.md` gọi được bằng `/git-branch-pr.md`
+- [x] `docs/git-flow.md` mô tả rõ mô hình + lệnh mẫu + tiền đề (remote, `gh`)
+- [x] `AGENTS.md` §6/§10 và `.clinerules/00-context.md` trỏ tới artifact mới
+- [x] Verify: gõ `/git-branch-pr.md` → Cline nạp đúng nội dung workflow (đã xác nhận)
+
+**Ghi chú kỹ thuật**
+- Mô hình: **GitHub Flow** (`main` + nhánh ngắn hạn + PR), **KHÔNG** dùng full GitFlow (develop/release/hotfix) — overkill cho lab 1 người
+- Base branch: `main`. Repo hiện ở `master` → rename bằng `git branch -m master main`
+- PR cần remote + `gh` CLI; workflow có nhánh dự phòng (push + tạo PR thủ công) khi thiếu
+- Trade-off: PR vào `main` thêm 1 bước so với commit thẳng, nhưng giữ `main` luôn chạy được + có chỗ review
+
+**Kết quả verify**
+- `.clinerules/10-git-workflow.md` tồn tại — có mục "Commit sau khi hoàn thành mỗi ticket", mô hình GitHub Flow,
+  quy tắc branch `<type>/<ticket-id>-<slug>`, an toàn (không force-push/commit thẳng `main`)
+- `.clinerules/workflows/git-branch-pr.md` tồn tại — có `<task_objective>` + `<detailed_sequence_of_steps>` (9 bước)
+- `docs/git-flow.md` tồn tại — bảng so sánh GitHub Flow vs GitFlow vs trunk-based + lệnh mẫu + tiền đề
+- `AGENTS.md` §6 thêm bullet "Git workflow" + link; §10 thêm 2 hàng (rule + workflow)
+- `.clinerules/00-context.md` thêm 2 hàng vào bảng AI assets
+- 2026-11-02: user gọi `/git-branch-pr.md` → Cline nạp đúng nội dung workflow (đã xác nhận) → `Done`
+
+**Learning note**
+- Repo đang ở `master`, **chưa** có remote, **chưa** có `gh` → "PR vào `main`" cần 1 lần setup
+  (rename + remote + `gh`); workflow phải có nhánh dự phòng khi thiếu `gh`.
+- Chọn **GitHub Flow** thay vì GitFlow vì lab 1 người, không có release train → GitFlow chỉ thêm ma sát.
+
+---
+
 ### SL-0.1 — Chốt tech stack và viết ADR-0001
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done |
 | **Phase** | 0 — Foundation |
 | **Phụ thuộc** | — |
 | **Ước lượng** | S |
@@ -112,16 +310,36 @@ dưới dạng ADR để sau này không phải tranh luận lại.
 - Chưa cài đặt công cụ, chưa tạo service, chưa viết code
 
 **Acceptance Criteria**
-- [ ] `docs/adr/0001-tech-stack.md` tồn tại, có đủ 5 mục, có bảng trade-off cho từng hạng mục
-- [ ] ADR nêu rõ **lý do loại** phương án không chọn, không chỉ nêu lý do chọn
-- [ ] ADR có mục "Revisit khi nào" với điều kiện cụ thể (không ghi chung chung "khi cần")
-- [ ] `architecture.md` §11 khớp 100% với ADR, không còn từ "đề xuất" ở phần quyết định
-- [ ] `architecture.md` §10.2 cập nhật lại danh sách công cụ cần cài theo stack đã chốt
+- [x] `docs/adr/0001-tech-stack.md` tồn tại, có đủ 5 mục, có bảng trade-off cho từng hạng mục
+- [x] ADR nêu rõ **lý do loại** phương án không chọn, không chỉ nêu lý do chọn
+- [x] ADR có mục "Revisit khi nào" với điều kiện cụ thể (không ghi chung chung "khi cần")
+- [x] `architecture.md` §11 khớp 100% với ADR, không còn từ "đề xuất" ở phần quyết định
+- [x] `architecture.md` §10.2 cập nhật lại danh sách công cụ cần cài theo stack đã chốt
 
 **Ghi chú kỹ thuật**
 - Broker: cân nhắc RabbitMQ (dễ học, routing linh hoạt, có DLQ sẵn) vs Kafka (throughput cao, replay, hợp CDC)
 - Gateway: tự build (học được cơ chế) vs Kong/APISIX/Envoy (production-like, ít học được)
 - Đây là **ADR đầu tiên** → đồng thời chốt luôn format ADR cho các ADR sau
+
+**Kết quả verify**
+- `docs/adr/0001-tech-stack.md` tồn tại (115 dòng), đủ 5 mục:
+  `# ADR-0001` → `## Context` → `## Options` → `## Decision` → `## Consequences` → `## Revisit`
+- ADR có mục "Lý do loại phương án khác" (Node/NestJS, Go-only, Java-only) + lý do loại Kafka-first và
+  Kong/APISIX-ngay
+- Mục Revisit có 4 điều kiện định lượng (ví dụ "> 30% thời gian mỗi ticket dành cho plumbing 2 ngôn ngữ")
+- `architecture.md` §11 đổi thành "Tech stack (đã chốt — ADR-0001)"; §11.2/§11.3 đổi "Đề xuất" → "Quyết định";
+  §11.4 header "Đề xuất" → "Chọn"; hết chữ "CẦN CHỐT"
+- `architecture.md` §10.2 cập nhật: JDK 21 + Maven/Gradle + Go toolchain (bỏ Node/.NET); Git đánh dấu đã `git init`
+- Grep xác nhận `architecture.md` không còn "CẦN CHỐT"; "NestJS/Node" chỉ còn trong bảng Options (giữ để so sánh)
+- 2026-11-02: user **confirm** điều chỉnh §11.4 — Test/Lint/Git hooks dùng tooling theo ngôn ngữ
+  (JUnit 5 + Testcontainers / Spotless + Checkstyle / Lefthook) thay cho tooling Node (Jest/ESLint/Husky)
+
+**Learning note**
+- Polyglot là hợp lệ nhưng có giá: 2 service template, 2 shared lib, 2 toolchain CI → chọn **staged** để
+  không gánh phức tạp ngay Phase 1.
+- Đổi ngôn ngữ kéo theo đổi **tooling phụ trợ**: ESLint/Prettier/Husky (Node) không dùng được cho Java/Go →
+  phải chuyển sang Spotless/gofmt + Lefthook. Bài học: tooling theo stack, không theo thói quen.
+- ADR buộc phải ghi **lý do loại** phương án không chọn — phần này khó viết hơn tưởng nhưng mới là giá trị.
 
 ---
 
@@ -131,26 +349,28 @@ dưới dạng ADR để sau này không phải tranh luận lại.
 |---|---|
 | **Trạng thái** | Todo |
 | **Phase** | 0 — Foundation |
-| **Phụ thuộc** | SL-0.1 |
+| **Phụ thuộc** | SL-0.1, SL-0.7 |
 | **Ước lượng** | M |
 
 **Bối cảnh**
-Repo hiện chỉ có 3 file markdown, chưa `git init`, chưa có cấu trúc thư mục, chưa có tooling.
-Máy dev cũng chưa cài runtime theo stack sẽ chốt ở SL-0.1. Cần bộ khung chuẩn trước khi viết
-dòng code đầu tiên để tránh mỗi service một kiểu.
+Repo đã có tài liệu (`AGENTS.md`, `architecture.md`, `Backlog.md`, `docs/adr/`, `.clinerules/`) và đã
+`git init`, nhưng **chưa có cấu trúc thư mục, chưa có tooling**, và dev env **chưa** chuyển sang WSL2
+(ADR-0002). Stack đã chốt ở SL-0.1 (ADR-0001). Cần bộ khung chuẩn trước khi viết dòng code đầu tiên để
+tránh mỗi service một kiểu.
 
 **Mục tiêu**
 Có repo skeleton chạy được: cấu trúc thư mục rõ, lint/format/commit convention được enforce tự động,
 và máy dev sẵn sàng build service đầu tiên.
 
 **In scope**
-- `git init` + `.gitignore` (bỏ `node_modules`, `.env`, `dist`, `coverage`, log, volume data)
+- `.gitignore` (bỏ `target/`, `build/`, `bin/`, `.env`, log, volume data) + `.editorconfig` + `.gitattributes` (`* text=auto eol=lf`)
 - Cấu trúc thư mục: `services/`, `packages/` (shared lib), `infra/`, `docs/adr/`, `tools/` (script)
-- `.editorconfig` + lint/format (ESLint + Prettier nếu chốt Node)
-- Git hooks: Husky + lint-staged + commitlint (Conventional Commits)
+- Lint/format: **Spotless + Checkstyle** (Java) · **gofmt + golangci-lint** (Go)
+- Git hooks: **Lefthook** + check Conventional Commits
 - `README.md`: giới thiệu, yêu cầu môi trường, cách chạy, link tới `AGENTS.md` / `architecture.md` / `Backlog.md`
 - `.env.example` với các biến chung (không có secret thật)
-- Cài runtime/tooling còn thiếu trên máy dev (theo stack ở SL-0.1) + ghi lại version vào README
+- **Chuyển dev env sang WSL2** (ADR-0002): repo nằm trong Linux fs (`~/`), cài tooling **trong WSL**; set `git config core.autocrlf false` + `git config core.fileMode false`
+- Cài runtime/tooling còn thiếu **trong WSL** (theo ADR-0001): JDK 21 + Maven/Gradle + Lefthook; ghi version vào README
 
 **Out of scope**
 - Chưa viết service nào
@@ -161,15 +381,21 @@ và máy dev sẵn sàng build service đầu tiên.
 - [ ] `git status` sạch, commit đầu tiên theo Conventional Commits
 - [ ] Cấu trúc thư mục khớp mô tả, có `.gitkeep` cho thư mục rỗng
 - [ ] Lệnh lint + format chạy được và pass trên skeleton rỗng
-- [ ] Commit sai convention bị commitlint chặn (đã thử và bị chặn thật)
-- [ ] `README.md` có mục "Yêu cầu môi trường" ghi rõ version runtime + lệnh cài
+- [ ] Commit sai convention bị **Lefthook** chặn (đã thử và bị chặn thật)
+- [ ] `README.md` có mục "Yêu cầu môi trường" ghi rõ version runtime + lệnh cài (chạy trong WSL2)
 - [ ] `.env.example` đủ biến cho Phase 1, `.env` đã nằm trong `.gitignore`
 - [ ] Không có secret thật nào trong repo (đã kiểm tra bằng grep)
+- [ ] `.gitattributes` có `* text=auto eol=lf`; `git status` **sạch** sau khi chuyển sang WSL (không nhiễu line-ending/mode)
+- [ ] Repo nằm trong Linux fs của WSL2 (`~/...`), không ở `/mnt/d/...` (kiểm tra `pwd` + `df -T`)
 
 **Ghi chú kỹ thuật**
-- Nếu chốt Node: dùng npm workspaces hoặc pnpm workspace để share `packages/` giữa các service
+- Java: **Maven multi-module** (hoặc Gradle) để share `packages/` (shared lib hạ tầng); Go dùng `go modules`
+  khi tới Phase 2–3 (xem ADR-0001)
 - Không dùng Nx/Turborepo ở phase này — thêm công cụ khi chưa cần là over-engineer
 - Convention đặt tên service: `kebab-case` + hậu tố `-service`, riêng gateway là `api-gateway`
+- Dev env trong **WSL2** (ADR-0002): repo ở `~/`, giới hạn RAM qua `%UserProfile%\.wslconfig`
+- Chuyển Windows → WSL dễ làm `git status` **bẩn** vì line endings (CRLF↔LF) và file mode (executable bit).
+  Xử lý bằng `.gitattributes` (`* text=auto eol=lf`) + `git config core.autocrlf false` + `git config core.fileMode false`
 
 ---
 
@@ -273,7 +499,7 @@ phần hạ tầng dùng chung — đủ để Phase 1 copy ra thành service th
 - [ ] Thiếu env bắt buộc → service fail lúc boot với message rõ ràng, không chạy nửa vời
 - [ ] Log ra JSON có `traceId`, và `traceId` xuất hiện trong response lỗi
 - [ ] `docker stop` → service shutdown êm, log ghi rõ đang chờ request nào, không bị kill cứng
-- [ ] `npm test` (hoặc lệnh tương đương) pass, coverage phần config/health ≥ 80%
+- [ ] `mvn -q verify` (Java) pass, coverage phần config/health ≥ 80%
 - [ ] Image size ghi lại trong ticket (để so sánh khi optimize sau)
 - [ ] `README.md` có hướng dẫn tạo service mới từ template, đã thử làm theo và chạy được
 
@@ -425,6 +651,10 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | Ngày | Ticket | Học được |
 |---|---|---|
 | 2026-10-25 | — | Khởi tạo repo, viết `AGENTS.md`, `architecture.md`, `Backlog.md`. Chốt cách làm: cuốn chiếu theo ticket, không build một loạt. |
+| 2026-11-02 | SL-0.6 | Cline Hooks/Plugins không chạy trên VS Code extension → dùng Rule + Skill + Workflow; skill auto-trigger nhờ `description` cụ thể. |
+| 2026-11-02 | SL-0.1 | Chốt polyglot staged (Java-first + Go); trade-off rõ: 2 template/shared lib/CI. Lint/test/git-hooks phải đổi theo ngôn ngữ, không dùng tooling Node. |
+| 2026-11-02 | SL-0.7 | Dev env = WSL2: Docker Desktop vốn đã dùng WSL2 backend → cần đưa source sang Linux fs (`~`), không để `/mnt/d/...`. |
+| 2026-11-02 | SL-0.8 | Chọn GitHub Flow (không GitFlow) cho lab 1 người; repo đang ở `master` cần rename → `main`; PR cần remote + `gh`. |
 
 ---
 
@@ -433,6 +663,14 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | Ngày | Thay đổi |
 |---|---|
 | 2026-10-25 | Tạo backlog. Phase 0 có 5 ticket chi tiết, Phase 1–8 ở mức epic. |
+| 2026-11-02 | Thêm `SL-0.6` — Bootstrap AI tooling (rules/skills/workflows), đặt làm trước `SL-0.1`. |
+| 2026-11-02 | Implement `SL-0.6`: tạo `.clinerules/00-context.md`, 3 skills `.cline/skills/`, 3 workflows `.clinerules/workflows/`; update `AGENTS.md` §10. Trạng thái `Review` (chờ user test slash command). |
+| 2026-11-02 | Đóng `SL-0.6` → `Done` (user xác nhận slash command + skill trigger). |
+| 2026-11-02 | Đóng `SL-0.1` → `Done`: tạo `docs/adr/0001-tech-stack.md`, cập nhật `architecture.md` §10.2/§11. |
+| 2026-11-02 | Thêm `SL-0.7` → `Done`: ADR-0002 (dev env = WSL2); cập nhật `architecture.md` §10; điều chỉnh `SL-0.2`. |
+| 2026-11-02 | `SL-0.2`: bổ sung `.gitattributes` + git config (`core.autocrlf`/`core.fileMode`) để tránh nhiễu khi chuyển sang WSL. |
+| 2026-11-02 | Thêm `SL-0.8` (Review): git workflow — rule `.clinerules/10-git-workflow.md`, workflow `/git-branch-pr.md`, `docs/git-flow.md`. |
+| 2026-11-02 | Đóng `SL-0.8` → `Done` (user gọi `/git-branch-pr.md` xác nhận workflow nạp đúng). |
 
 
 

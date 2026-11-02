@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Trạng thái** | `DRAFT v0.1` — cần review và chốt §11 Tech stack |
+| **Trạng thái** | `DRAFT v0.2` — §11 Tech stack đã chốt (ADR-0001) |
 | **Người thực hiện** | bạn + AI |
-| **Cập nhật lần cuối** | 2026-10-25 (Phase 0 — Foundation) |
+| **Cập nhật lần cuối** | 2026-11-02 (Phase 0 — chốt tech stack, ADR-0001) |
 | **Liên quan** | `AGENTS.md`, `Backlog.md`, `docs/adr/` |
 
 ---
@@ -512,26 +512,32 @@ outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
 
 ## 10. Môi trường & deployment
 
+> **Máy dev chạy WSL2** — repo trong Linux filesystem (`~/`), **không** để ở `/mnt/d/...`. Lý do + trade-off:
+> [`docs/adr/0002-dev-environment.md`](docs/adr/0002-dev-environment.md).
+
 ### 10.1. Môi trường
 
 | Môi trường | Chạy ở đâu | Mục đích |
 |---|---|---|
-| `local` | Docker Compose trên máy dev | dev + test hằng ngày |
-| `dev` | Docker Compose trên 1 VM (hoặc chính máy dev) | tích hợp nhiều service |
-| `staging` | K8s local (kind / minikube) | test deploy, canary, HPA |
+| `local` | Docker Compose trong **WSL2** trên máy dev | dev + test hằng ngày |
+| `dev` | Docker Compose trong **WSL2** (hoặc 1 VM) | tích hợp nhiều service |
+| `staging` | K8s local (kind / minikube) trong WSL2 | test deploy, canary, HPA |
 | `prod` | K8s local (mô phỏng) | chỉ để học, không phục vụ user thật |
 
-### 10.2. Yêu cầu máy dev (kiểm tra ngày 2026-10-25)
+### 10.2. Yêu cầu máy dev (cập nhật 2026-11-02 — ADR-0001 + ADR-0002)
 
 | Công cụ | Trạng thái | Ghi chú |
 |---|---|---|
+| WSL2 | cần kiểm tra | **bắt buộc** — môi trường dev (ADR-0002), version ≥ 2.1.5 |
 | Docker | ✅ `29.5.2` | dùng cho toàn bộ infra local |
 | Python | ✅ `3.12.9` | chỉ dùng cho script phụ trợ (nếu cần) |
-| Node.js | ❌ chưa cài | **phải cài** nếu chốt stack Node — dùng Node 22 LTS |
-| .NET SDK | ❌ chưa có | chỉ cần nếu chốt stack .NET |
-| Git | cần kiểm tra | repo hiện **chưa** `git init` |
+| JDK 21 | ❌ chưa cài | **phải cài** — ngôn ngữ chính (Java 21 + Spring Boot) |
+| Maven / Gradle | ❌ chưa cài | build tool cho service Java |
+| Go toolchain | ❌ chưa cài | cài trước Phase 2–3 (ngôn ngữ thứ hai, xem ADR-0001) |
+| Git | ✅ đã `git init` | commit đầu: `5918e0b "init project"` |
 
-→ Việc cài đặt được đưa vào ticket `SL-0.2`.
+→ Tất cả công cụ trên cài **trong WSL2** (không cài trên Windows). Việc cài đặt đưa vào ticket `SL-0.2`.
+→ **Không** cần Node.js/.NET (đã chốt bỏ trong ADR-0001).
 
 ### 10.3. Deployment
 
@@ -543,10 +549,10 @@ outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
 
 ---
 
-## 11. Tech stack đề xuất ⚠️ CẦN CHỐT
+## 11. Tech stack (đã chốt — ADR-0001)
 
-> Mục này là **đề xuất**, chưa phải quyết định. Khi chốt sẽ ghi thành `docs/adr/0001-tech-stack.md`
-> và bỏ chữ "đề xuất" ở đây. Xem `Backlog.md` → `SL-0.1`.
+> Đã chốt ngày 2026-11-02. Lý do + trade-off + điều kiện revisit xem
+> [`docs/adr/0001-tech-stack.md`](docs/adr/0001-tech-stack.md). Xem `Backlog.md` → `SL-0.1`.
 
 ### 11.1. Ngôn ngữ & framework
 
@@ -555,8 +561,12 @@ outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
 | **Node.js 22 + TypeScript + NestJS** | Có sẵn module cho microservices (transport, client proxy), DI rõ ràng, dev nhanh, dễ đọc, khớp kinh nghiệm sẵn có | Single-thread → phải chú ý CPU-bound; GC pause nhỏ | Muốn đi nhanh, tập trung vào **architecture** thay vì ngôn ngữ |
 | **Java 21 + Spring Boot** | Hệ sinh thái microservices trưởng thành nhất (Spring Cloud), virtual thread, tooling mạnh | Nặng, startup chậm, boilerplate nhiều, dev chậm hơn | Muốn học stack "enterprise" thật |
 | **Go** | Nhẹ, concurrency tốt, binary nhỏ, latency thấp | Ít framework "pin sẵn" cho microservices, phải tự dựng nhiều | Muốn học cả hạ tầng lẫn ngôn ngữ |
+| **Polyglot (Java + Go)** | Học polyglot, contract giữa service khác ngôn ngữ | 2 template + 2 shared lib + 2 toolchain CI | Muốn thử cả 2 ngôn ngữ |
 
-**Đề xuất: NestJS + TypeScript** — vì mục tiêu là học architecture, không phải học framework.
+**Quyết định: Polyglot có kỷ luật, staged.** Java 21 + Spring Boot là ngôn ngữ chính (Phase 1–2:
+`api-gateway`, `identity-service`, `catalog-service`, rồi `order`/`payment`/`inventory`); Go thêm từ
+Phase 2–3 cho service hạ tầng/high-throughput. Phase 1 dựng **toàn Java** để chốt template + shared lib
++ CI. Chi tiết: ADR-0001.
 
 ---
 
@@ -567,21 +577,21 @@ outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
 | **RabbitMQ** | Dễ học, routing linh hoạt (exchange/queue/binding), UI quản trị tốt, retry + DLQ có sẵn | Throughput thấp hơn Kafka, không replay event theo offset | Học **task queue + event** ở quy mô vừa |
 | **Kafka** | Throughput rất cao, event log bền, **replay** được, hợp **CDC** | Vận hành phức tạp hơn, routing kém linh hoạt, phải tự làm retry/DLQ | Cần event streaming, event sourcing, CDC → DW |
 
-**Đề xuất:** Phase 3 dùng **RabbitMQ** (học concept nhanh), Phase 8 thêm **Kafka** cho luồng
+**Quyết định:** Phase 3 dùng **RabbitMQ** (học concept nhanh), Phase 8 thêm **Kafka** cho luồng
 event streaming / CDC → analytics. Việc so sánh 2 broker chính là một bài học trade-off.
 
 ### 11.3. API Gateway
 
 | Phương án | Ưu | Nhược |
 |---|---|---|
-| **Tự build (NestJS, bản mỏng)** | Học được routing/authn/rate limit làm thế nào; dễ debug | Không production-grade, phải tự làm nhiều thứ |
+| **Tự build (bản mỏng, Java/Spring)** | Học được routing/authn/rate limit làm thế nào; dễ debug | Không production-grade, phải tự làm nhiều thứ |
 | **Kong / APISIX / Envoy** | Production-like, plugin phong phú, học được cách cấu hình thật | Ít "học" về cơ chế, thêm 1 hệ thống phải vận hành |
 
-**Đề xuất:** Phase 1 **tự build** để hiểu bản chất → Phase 7 cân nhắc thay bằng Kong/APISIX.
+**Quyết định:** Phase 1 **tự build** để hiểu bản chất → Phase 7 cân nhắc thay bằng Kong/APISIX.
 
 ### 11.4. Các thành phần còn lại
 
-| Thành phần | Đề xuất | Alternative | Lý do |
+| Thành phần | Chọn | Alternative | Lý do |
 |---|---|---|---|
 | Database | PostgreSQL 16 | MySQL, MongoDB | Transaction, JSONB, `SKIP LOCKED` cho outbox relay |
 | Cache / lock | Redis 7 | Memcached | Cần cả cache, counter, lock, TTL |
@@ -590,9 +600,9 @@ event streaming / CDC → analytics. Việc so sánh 2 broker chính là một b
 | Observability | OpenTelemetry + Prometheus + Grafana + Loki | Datadog (tốn tiền) | Open-source, chuẩn industry |
 | Local orchestration | Docker Compose → kind (K8s) | minikube | kind nhẹ, chạy tốt trên Windows + WSL2 |
 | CI/CD | GitHub Actions | GitLab CI | Miễn phí cho repo public |
-| Test | Jest/Vitest + Testcontainers + k6 | — | Đủ cho unit → integration → load |
-| Lint/format | ESLint + Prettier | Biome | Phổ biến, nhiều rule |
-| Git hooks | Husky + lint-staged + commitlint | — | Enforce convention tự động |
+| Test | JUnit 5 + Testcontainers (Java) · `go test` + testcontainers-go (Go) · k6 | — | Đủ cho unit → integration → load |
+| Lint/format | Spotless + Checkstyle (Java) · gofmt + golangci-lint (Go) | — | Chuẩn theo ngôn ngữ |
+| Git hooks | Lefthook + check Conventional Commits | pre-commit | Language-agnostic, không phụ thuộc Node |
 
 ---
 
@@ -695,6 +705,8 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | Ngày | Thay đổi | Người |
 |---|---|---|
 | 2026-10-25 | Khởi tạo v0.1 — kiến trúc tổng quát, roadmap 9 phase, đề xuất tech stack | bạn + AI |
+| 2026-11-02 | Chốt §11 tech stack (ADR-0001: polyglot Java-first + Go; RabbitMQ→Kafka; tự build gateway); cập nhật §10.2 | bạn + AI |
+| 2026-11-02 | Chốt môi trường dev = **WSL2** (ADR-0002); cập nhật §10.1/§10.2 | bạn + AI |
 
 
 
