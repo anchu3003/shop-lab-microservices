@@ -32,6 +32,12 @@
     <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
     <spotless-maven-plugin.version>3.10.4</spotless-maven-plugin.version>
     <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
+    <!--
+      Checkstyle version PHẢI khai báo tường minh (dependency của plugin), vì plugin
+      3.6.0 mặc định kéo checkstyle 9.3 (2022) — khá cũ. Override bằng -Dcheckstyle.version
+      trên CLI KHÔNG có tác dụng (Maven resolve dependency của plugin từ POM của plugin).
+    -->
+    <checkstyle.version>12.3.1</checkstyle.version>
   </properties>
 
   <build>
@@ -82,6 +88,13 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-checkstyle-plugin</artifactId>
         <version>${maven-checkstyle-plugin.version}</version>
+        <dependencies>
+          <dependency>
+            <groupId>com.puppycrawl.tools</groupId>
+            <artifactId>checkstyle</artifactId>
+            <version>${checkstyle.version}</version>
+          </dependency>
+        </dependencies>
         <configuration>
           <configLocation>config/checkstyle/checkstyle.xml</configLocation>
           <consoleOutput>true</consoleOutput>

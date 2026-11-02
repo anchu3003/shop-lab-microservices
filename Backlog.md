@@ -356,7 +356,7 @@ dưới dạng ADR để sau này không phải tranh luận lại.
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | In Progress |
+| **Trạng thái** | Review |
 | **Phase** | 0 — Foundation |
 | **Phụ thuộc** | SL-0.1, SL-0.7 |
 | **Ước lượng** | M |
@@ -387,15 +387,15 @@ và máy dev sẵn sàng build service đầu tiên.
 - Chưa cấu hình CI (đó là SL-0.5)
 
 **Acceptance Criteria**
-- [ ] `git status` sạch, commit đầu tiên theo Conventional Commits
-- [ ] Cấu trúc thư mục khớp mô tả, có `.gitkeep` cho thư mục rỗng
-- [ ] Lệnh lint + format chạy được và pass trên skeleton rỗng
-- [ ] Commit sai convention bị **Lefthook** chặn (đã thử và bị chặn thật)
-- [ ] `README.md` có mục "Yêu cầu môi trường" ghi rõ version runtime + lệnh cài (chạy trong WSL2)
-- [ ] `.env.example` đủ biến cho Phase 1, `.env` đã nằm trong `.gitignore`
-- [ ] Không có secret thật nào trong repo (đã kiểm tra bằng grep)
-- [ ] `.gitattributes` có `* text=auto eol=lf`; `git status` **sạch** sau khi chuyển sang WSL (không nhiễu line-ending/mode)
-- [ ] Repo nằm trong Linux fs của WSL2 (`~/...`), không ở `/mnt/d/...` (kiểm tra `pwd` + `df -T`)
+- [x] `git status` sạch, commit đầu tiên theo Conventional Commits
+- [x] Cấu trúc thư mục khớp mô tả, có `.gitkeep` cho thư mục rỗng
+- [x] Lệnh lint + format chạy được và pass trên skeleton rỗng
+- [x] Commit sai convention bị **Lefthook** chặn (đã thử và bị chặn thật)
+- [x] `README.md` có mục "Yêu cầu môi trường" ghi rõ version runtime + lệnh cài (chạy trong WSL2)
+- [x] `.env.example` đủ biến cho Phase 1, `.env` đã nằm trong `.gitignore`
+- [x] Không có secret thật nào trong repo (đã kiểm tra bằng grep)
+- [x] `.gitattributes` có `* text=auto eol=lf`; `git status` **sạch** sau khi chuyển sang WSL (không nhiễu line-ending/mode)
+- [x] Repo nằm trong Linux fs của WSL2 (`~/...`), không ở `/mnt/d/...` (kiểm tra `pwd` + `df -T`)
 
 **Ghi chú kỹ thuật**
 - Java: **Maven multi-module** (hoặc Gradle) để share `packages/` (shared lib hạ tầng); Go dùng `go modules`
@@ -405,6 +405,40 @@ và máy dev sẵn sàng build service đầu tiên.
 - Dev env trong **WSL2** (ADR-0002): repo ở `~/`, giới hạn RAM qua `%UserProfile%\.wslconfig`
 - Chuyển Windows → WSL dễ làm `git status` **bẩn** vì line endings (CRLF↔LF) và file mode (executable bit).
   Xử lý bằng `.gitattributes` (`* text=auto eol=lf`) + `git config core.autocrlf false` + `git config core.fileMode false`
+
+**Kết quả verify** *(2026-11-02 — output thật)*
+
+- `lefthook install` → `sync hooks: ✔️(pre-commit, pre-push, commit-msg)`
+- **Commit sai convention bị chặn thật** (AC): `git commit -m "update code"` →
+  `🥊 lefthook hook: commit-msg` → `❌ Commit message KHÔNG đúng Conventional Commits.` → `exit status 1`
+  (commit không được tạo). pre-commit cũng chạy: `secret-scan ✔️`, `java-format (skip) no files for inspection`.
+- `bash tools/protect-main.sh` (test trong repo tạm đang ở nhánh `main`) →
+  `❌ Không push trực tiếp lên 'main'.` → exit code `1`; ở nhánh feature → exit `0`.
+- `bash tools/secret-scan.sh $(git ls-files --others --exclude-standard)` → exit `0` (không false-positive,
+  kể cả trên chính `tools/secret-scan.sh`); với file chứa `ghp_***` giả → exit `1` và in ra dòng vi phạm.
+- `mvn verify` (JDK **21.0.13 Temurin** + Maven **3.9.16**, cài tạm không cần sudo chỉ để verify) →
+  `spotless:3.10.4:check` + `checkstyle:12.3.1:check` → `You have 0 Checkstyle violations.` → **BUILD SUCCESS**.
+- **Test âm** (chứng minh config không vô nghĩa): tạo `src/main/java/com/shoplab/demo/Demo.java` viết xấu →
+  `mvn spotless:check` → **BUILD FAILURE** `The following files had format violations`; sau `spotless:apply`
+  file được format đúng chuẩn google-java-format; thêm `import java.util.List;` thừa → `checkstyle:check` →
+  **BUILD FAILURE** `Unused import - java.util.List. [UnusedImports]`. Đã xoá `src/` sau khi test.
+- `pwd` → `/home/anchu/shop-lab-microservices`; `df -T .` → `/dev/sdd  ext4` (Linux fs → đạt ADR-0002)
+- `git status --short` → rỗng (không nhiễu line-ending/mode)
+- **Còn lại (cần sudo của user)**: cài JDK 21 + Maven **vào WSL** để `java`/`mvn` có trên PATH:
+  `sudo apt update && sudo apt install -y openjdk-21-jdk maven`. Trước đó `which mvn` trỏ vào bản **Windows**
+  `/mnt/d/Programs/Maven/apache-maven-3.8.6/bin/mvn` (trái ADR-0002) và `java` MISSING.
+
+**Learning note**
+
+- `maven-checkstyle-plugin` resolve **dependency của plugin từ POM của plugin** → `-Dcheckstyle.version`
+  trên CLI **không** có tác dụng; muốn pin version phải khai báo `<plugin><dependencies>`. Mặc định của
+  plugin 3.6.0 là checkstyle **9.3 (2022)** → đã pin **12.3.1** (verify lại: 0 violations, BUILD SUCCESS).
+- Verify "pass" trên repo **rỗng là vô nghĩa** — phải làm **test âm** (cố tình viết sai) mới biết config có
+  thật sự tác dụng. Đây là cách phân biệt "xanh vì không có gì để check" và "xanh vì đúng".
+- Lefthook `pre-push` chỉ là phương án **local** thay branch protection: người khác clone repo **không** được
+  bảo vệ → khi repo chuyển public / nâng Pro thì nên bật lại branch protection thật.
+- `lefthook` **không** có trong apt repo Ubuntu → cài bằng binary release vào `~/.local/bin` (không cần sudo).
+- `mvn` bị lẫn bản Windows qua PATH kế thừa của WSL → cài tooling **trong WSL** rồi kiểm tra `which mvn`.
 
 ---
 
@@ -665,6 +699,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | SL-0.7 | Dev env = WSL2: Docker Desktop vốn đã dùng WSL2 backend → cần đưa source sang Linux fs (`~`), không để `/mnt/d/...`. |
 | 2026-11-02 | SL-0.8 | Chọn GitHub Flow (không GitFlow) cho lab 1 người; repo đang ở `master` cần rename → `main`; PR cần remote + `gh`. |
 | 2026-11-02 | SL-0.8 | Diff nhiễu **CRLF** (1253/1253 dòng) do thiếu `.gitattributes` + `core.autocrlf` unset → chuẩn hoá LF. **Branch protection/rulesets không dùng được trên repo private + GitHub Free (403)** → phải thay bằng git hook local. |
+| 2026-11-02 | SL-0.2 | Verify trên repo **rỗng là vô nghĩa** — phải làm **test âm** mới biết config có tác dụng. `maven-checkstyle-plugin` **không** nhận `-Dcheckstyle.version` (dependency của plugin resolve từ POM của plugin) → phải khai báo `<plugin><dependencies>`; mặc định là checkstyle 9.3 (2022). Lefthook `pre-push` chỉ bảo vệ **local**. |
 
 ---
 
@@ -684,6 +719,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | Tạo PR [#1](https://github.com/anchu3003/shop-lab-microservices/pull/1) cho `SL-0.1/0.6/0.7/0.8` (đã merge vào `main` bằng **merge commit** `368009e` — lệch quy ước **squash** của `docs/git-flow.md`, ghi nhận để lần sau merge đúng). Commit `a881a01` chuẩn hoá line-ending bằng `.gitattributes` (`* text=auto eol=lf`) — sớm hơn `SL-0.2`. |
 | 2026-11-02 | Ghi learning note `SL-0.8`: diff nhiễu CRLF + kết quả thử branch protection (**403 — private + GitHub Free**, không bật được). |
 | 2026-11-02 | `SL-0.2` → `In Progress`: tạo nhánh `chore/sl-0.2-repo-skeleton`; thêm `.editorconfig`, `.gitignore` (mở rộng), `.env.example`, `README.md`, `lefthook.yml`, `tools/*.sh`, `pom.xml` + `config/checkstyle/checkstyle.xml`, thư mục `services/ packages/ infra/`. |
+| 2026-11-02 | `SL-0.2` → `Review`: pin checkstyle **12.3.1** (plugin mặc định kéo 9.3); verify thật `mvn verify` BUILD SUCCESS + test âm cho cả Spotless và Checkstyle; PR [#2](https://github.com/anchu3003/shop-lab-microservices/pull/2). Còn chờ user cài JDK 21 + Maven trong WSL (sudo). |
 
 
 
