@@ -573,6 +573,21 @@ xem `README.md` → *Cách chạy* (ticket `SL-0.3`).
 Phase 2–3 cho service hạ tầng/high-throughput. Phase 1 dựng **toàn Java** để chốt template + shared lib
 + CI. Chi tiết: ADR-0001.
 
+**Version đã pin (`SL-0.4`)**: **Spring Boot 4.1.2** trên Java 21. Parent POM giữ convention riêng
+(Spotless/Checkstyle) và **import BOM** `spring-boot-dependencies` thay vì dùng
+`spring-boot-starter-parent`. Lý do + trade-off + điều kiện revisit:
+[`docs/adr/0003-spring-boot-version-and-module-layout.md`](docs/adr/0003-spring-boot-version-and-module-layout.md).
+
+**Hạ tầng dùng chung giữa các service (`SL-0.4`)** — Maven multi-module:
+
+| Module | Vai trò |
+|---|---|
+| `packages/service-commons` | Shared lib **chỉ hạ tầng**: log JSON (`traceId`/`service`/`level`/`msg`), error response thống nhất, correlation id, health check helper, fail-fast env validator. Auto-configuration — service chỉ cần khai dependency |
+| `services/service-template` | Service mẫu (`/health` · `/ready` · `/version`, graceful shutdown) — copy ra để tạo service mới |
+
+Nguyên tắc: shared lib **tuyệt đối không** chứa domain logic/entity/database (AGENTS.md §6). Chi tiết +
+phạm vi + điều kiện revisit: [`docs/adr/0004-service-commons-shared-library.md`](docs/adr/0004-service-commons-shared-library.md).
+
 ---
 
 ### 11.2. Message broker
@@ -713,6 +728,7 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-02 | Chốt §11 tech stack (ADR-0001: polyglot Java-first + Go; RabbitMQ→Kafka; tự build gateway); cập nhật §10.2 | bạn + AI |
 | 2026-11-02 | Chốt môi trường dev = **WSL2** (ADR-0002); cập nhật §10.1/§10.2 | bạn + AI |
 | 2026-11-02 | `SL-0.3`: dựng hạ tầng local bằng Docker Compose (Postgres 16 · Redis 7 · RabbitMQ 4 · Adminer); cập nhật §10.1 (port + RAM baseline ≈ 150 MiB) | bạn + AI |
+| 2026-11-02 | `SL-0.4`: chốt **Spring Boot 4.1.2** + Maven multi-module (ADR-0003); thêm shared lib `packages/service-commons` + `services/service-template` (ADR-0004); cập nhật §11.1 | bạn + AI |
 
 
 
