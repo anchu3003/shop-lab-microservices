@@ -1,0 +1,42 @@
+# lefthook.yml — git hooks cho ShopLab
+#
+# Cài (1 lần, trong WSL):   lefthook install
+# Bỏ qua khi thật cần:       LEFTHOOK=0 git commit -m "..."
+#
+# Liên quan: docs/git-flow.md · .clinerules/10-git-workflow.md · ticket SL-0.2
+
+min_version: 1.6.0
+
+# ---------------------------------------------------------------------------
+# commit-msg — enforce Conventional Commits (AGENTS.md §6)
+# ---------------------------------------------------------------------------
+commit-msg:
+  commands:
+    conventional-commit:
+      run: bash tools/check-commit-msg.sh {1}
+
+# ---------------------------------------------------------------------------
+# pre-commit — format + quét secret sơ bộ
+# ---------------------------------------------------------------------------
+pre-commit:
+  parallel: true
+  commands:
+    # Java: Spotless apply trên file .java đã staged.
+    # Tự bỏ qua nếu chưa có JDK/Maven trong WSL (xem README.md).
+    java-format:
+      glob: "*.java"
+      run: bash tools/java-format.sh {staged_files}
+      stage_fixed: true
+    # Chặn commit file giống secret (regex thô, phòng hờ)
+    secret-scan:
+      run: bash tools/secret-scan.sh {staged_files}
+
+# ---------------------------------------------------------------------------
+# pre-push — chặn push trực tiếp lên 'main'
+# Thay cho branch protection: repo private + gói GitHub Free không bật được
+# (xem Backlog.md → SL-0.8 learning note).
+# ---------------------------------------------------------------------------
+pre-push:
+  commands:
+    protect-main:
+      run: bash tools/protect-main.sh

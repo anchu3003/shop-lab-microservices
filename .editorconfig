@@ -1,0 +1,39 @@
+# .editorconfig — convention format cơ bản cho mọi editor
+# Lý do: giữ format nhất quán giữa các máy/editor (WSL2 + VS Code). Xem ticket SL-0.2.
+# Lưu ý: line-ending do `.gitattributes` quyết định (LF) — không đổi ở đây.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.md]
+# Markdown: 2 space ở cuối dòng là ngắt dòng có nghĩa → không trim
+trim_trailing_whitespace = false
+
+[*.{java,kt}]
+indent_size = 4
+max_line_length = 120
+
+[*.go]
+indent_style = tab
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+[*.xml]
+indent_size = 4
+
+[*.sh]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
