@@ -4,10 +4,10 @@
 > `Trạng thái` + điền `Kết quả verify` + `Learning note`, rồi mới sang ticket tiếp theo.
 > **Không** breakdown các phase xa thành ticket chi tiết khi chưa tới lượt.
 
-| | |
-|---|---|
-| **Ticket đang làm** | `SL-0.2` |
-| **Ticket tiếp theo** | `SL-0.3` |
+| | | |
+|---|---|---|
+| **Ticket đang làm** | `SL-0.4` |
+| **Ticket tiếp theo** | `SL-0.5` |
 | **Số ticket chi tiết hiện có** | 8 (Phase 0) |
 
 ---
@@ -16,7 +16,7 @@
 
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
-| 0 | Foundation | 🔵 In Progress | 4 / 8 |
+| 0 | Foundation | 🔵 In Progress | 6 / 8 |
 | 1 | Walking skeleton | ⚪ Todo (epic) | — |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
@@ -356,7 +356,7 @@ dưới dạng ADR để sau này không phải tranh luận lại.
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Review |
+| **Trạng thái** | Done |
 | **Phase** | 0 — Foundation |
 | **Phụ thuộc** | SL-0.1, SL-0.7 |
 | **Ước lượng** | M |
@@ -424,9 +424,28 @@ và máy dev sẵn sàng build service đầu tiên.
   **BUILD FAILURE** `Unused import - java.util.List. [UnusedImports]`. Đã xoá `src/` sau khi test.
 - `pwd` → `/home/anchu/shop-lab-microservices`; `df -T .` → `/dev/sdd  ext4` (Linux fs → đạt ADR-0002)
 - `git status --short` → rỗng (không nhiễu line-ending/mode)
-- **Còn lại (cần sudo của user)**: cài JDK 21 + Maven **vào WSL** để `java`/`mvn` có trên PATH:
-  `sudo apt update && sudo apt install -y openjdk-21-jdk maven`. Trước đó `which mvn` trỏ vào bản **Windows**
-  `/mnt/d/Programs/Maven/apache-maven-3.8.6/bin/mvn` (trái ADR-0002) và `java` MISSING.
+- **Đóng ticket — verify lần cuối (2026-11-02, sau khi cài tooling trong WSL)**: điều kiện còn lại đã đạt.
+
+  ```console
+  $ java -version            → openjdk version "21.0.12.1" 2026-08-18      (which java: /usr/bin/java)
+  $ mvn -v                   → Apache Maven 3.9.12                         (which mvn:  /usr/bin/mvn)
+  $ lefthook version         → 2.2.2                                       (~/.local/bin/lefthook)
+  $ mvn -B verify            → spotless:3.10.4:check + checkstyle:3.6.0:check
+                               "You have 0 Checkstyle violations." → BUILD SUCCESS (1.085 s)
+  $ pwd ; df -T .            → /home/anchu/shop-lab-microservices · /dev/sdd ext4
+  $ git status --short       → rỗng (sạch)
+  $ git check-ignore -v .env → .gitignore:10:.env
+  ```
+
+  ⇒ `which mvn` giờ là `/usr/bin/mvn`, **không** còn lẫn bản Windows `/mnt/d/Programs/Maven/...` → đạt ADR-0002.
+- **Test âm lặp lại trên bản Lefthook đã cài thật** (chứng minh hook có tác dụng, không phải "xanh vì rỗng"):
+  `git commit -m "update stuff"` → `🥊 lefthook v2.2.2 hook: commit-msg` →
+  `❌ Commit message KHÔNG đúng Conventional Commits.` → `exit status 1`, số commit **không đổi** (10 → 10).
+  File chứa `AKIA***` giả → `secret-scan` chặn: `❌ Nghi vấn secret trong: negtest-sl02b.txt`.
+  `bash tools/protect-main.sh` trên nhánh feature → `exit 0`.
+- **Hook chạy thật trên commit thật**: `eef58a3`, `ff54587` (ticket `SL-0.3`) đi qua đủ 3 hook —
+  `pre-commit` (`secret-scan ✔️`, `java-format skip`) → `commit-msg` (`conventional-commit ✔️`) →
+  `pre-push` (`protect-main ✔️`).
 
 **Learning note**
 
@@ -439,6 +458,16 @@ và máy dev sẵn sàng build service đầu tiên.
   bảo vệ → khi repo chuyển public / nâng Pro thì nên bật lại branch protection thật.
 - `lefthook` **không** có trong apt repo Ubuntu → cài bằng binary release vào `~/.local/bin` (không cần sudo).
 - `mvn` bị lẫn bản Windows qua PATH kế thừa của WSL → cài tooling **trong WSL** rồi kiểm tra `which mvn`.
+- **Verify bằng tooling cài tạm là chưa đủ** (bài học khi đóng ticket): lần verify đầu dùng Temurin 21.0.13 +
+  Maven 3.9.16 cài tạm **không nằm trên PATH**, nên `which mvn` vẫn trỏ bản Windows ⇒ kết luận "đạt ADR-0002"
+  lúc đó là **chưa** chứng minh được gì. Phải cài thật trong WSL rồi `which mvn` ra `/usr/bin/mvn` mới tính.
+  → **Verify phải chạy bằng đúng công cụ mà dev sẽ dùng, không phải bản dựng tạm.**
+- **Git hook nằm trong `.git/hooks/` — không được commit.** Người clone mới **phải** tự chạy `lefthook install`
+  thì hook mới có; nếu không, mọi bảo vệ (Conventional Commits, secret-scan, chặn push `main`) đều **im lặng
+  mất tác dụng**. Đây là lỗ hổng đã biết của phương án "dùng hook local thay branch protection" — cần nhắc
+  trong README (đã có) và nên kiểm tra ở `SL-0.5` (CI) vì CI mới là chốt chặn thật.
+- Test âm với file `.tmp` **không** chạy được vì `.gitignore` đã ignore `*.tmp` → `git add` báo
+  "paths are ignored", test vô hiệu. Dùng đuôi file **không** bị ignore mới test đúng.
 
 ---
 
@@ -446,9 +475,9 @@ và máy dev sẵn sàng build service đầu tiên.
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done |
 | **Phase** | 0 — Foundation |
-| **Phụ thuộc** | SL-0.2 |
+| **Phụ thuộc** | SL-0.2 (skeleton đã merge ở PR #2 — repo skeleton dùng được dù SL-0.2 còn `Review` vì lý do cài tooling) |
 | **Ước lượng** | M |
 
 **Bối cảnh**
@@ -480,19 +509,154 @@ script reset sạch dữ liệu.
 - Chưa dựng K8s — để Phase 7
 
 **Acceptance Criteria**
-- [ ] `docker compose up -d` → tất cả container `healthy` (chứng minh bằng `docker compose ps`)
-- [ ] Kết nối được từ host: `psql` vào từng database, `redis-cli ping` trả `PONG`
-- [ ] Broker UI mở được trên browser, thấy được exchange/queue
-- [ ] Chạy `tools/reset-infra.ps1` → dữ liệu về trạng thái ban đầu, không lỗi
-- [ ] `docker compose down` rồi `up` lại → dữ liệu cũ vẫn còn (chứng minh volume hoạt động)
-- [ ] Không có port nào trùng nhau, danh sách port được ghi trong `README.md`
-- [ ] Không hard-code password trong file compose — đọc từ `.env`
+- [x] `docker compose up -d` → tất cả container `healthy` (chứng minh bằng `docker compose ps`)
+- [x] Kết nối được từ host: `psql` vào từng database, `redis-cli ping` trả `PONG`
+      *(điều chỉnh: Redis bật `requirepass` nên phải `redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping`;
+      `redis-cli ping` trần trả `NOAUTH Authentication required.` — xem Learning note)*
+- [x] Broker UI mở được trên browser, thấy được exchange/queue
+- [x] Chạy `tools/reset-infra.sh` → dữ liệu về trạng thái ban đầu, không lỗi
+      *(đổi tên từ `tools/reset-infra.ps1` → `.sh`: ADR-0002 chốt dev env = WSL2, mọi script trong `tools/` là bash)*
+- [x] `docker compose down` rồi `up` lại → dữ liệu cũ vẫn còn (chứng minh volume hoạt động)
+- [x] Không có port nào trùng nhau, danh sách port được ghi trong `README.md`
+- [x] Không hard-code password trong file compose — đọc từ `.env`
 
 **Ghi chú kỹ thuật**
 - Ưu tiên image **alpine/slim** để nhẹ, nhưng đảm bảo có healthcheck tool (`pg_isready`, `redis-cli`)
 - Đặt tên container có prefix `shoplab-` để dễ filter khi debug
 - Trên Windows + Docker Desktop: dùng **named volume** thay vì bind mount cho data
 - Ghi lại dung lượng RAM mà cả stack chiếm — dùng làm baseline cho Phase 7 (K8s resource request)
+
+**Quyết định khi implement** *(chốt với user 2026-11-02)*
+- `tools/reset-infra.sh` (bash) thay `tools/reset-infra.ps1` — khớp ADR-0002 (WSL2).
+- Broker = **RabbitMQ 4** (`rabbitmq:4-management-alpine`), theo ADR-0001 §11.2 ("Phase 3 dùng RabbitMQ").
+- DB UI = **Adminer** (`adminer:4-standalone`) thay pgAdmin — nhẹ, 1 container.
+- **Bỏ MinIO + OpenSearch** ở ticket này (MinIO là "tuỳ chọn", OpenSearch không nằm trong In scope;
+  cả hai nặng RAM) → dựng khi phase cần thật. Đã ghi baseline RAM để Phase 7 tính.
+- Biến nhạy cảm dùng `${VAR:?}` (**required**) thay vì `${VAR:-default}` → thiếu `.env` là compose
+  **fail-fast**, không âm thầm chạy bằng password mặc định yếu. Biến không nhạy cảm (port, tên DB, user)
+  mới có `:-default`.
+- Init script là `.sh` (đọc env `POSTGRES_DB_*`) thay vì `.sql` cứng → không lặp tên database ở 2 nơi.
+
+**Kết quả verify** *(2026-11-02 — output thật; WSL2 · Docker 29.9.2 · Compose v5.6.1 · RAM host 15 GiB)*
+
+File tạo/sửa: `infra/docker-compose.yml` · `infra/init/01-create-databases.sh` · `tools/reset-infra.sh`
+· `.env.example` (thêm `POSTGRES_DB`, `ADMINER_PORT`) · `README.md` · `Backlog.md` · `architecture.md`.
+
+```console
+# --- AC1: up + ps → tất cả healthy ---
+$ docker compose -f infra/docker-compose.yml --env-file .env up -d
+ Container shoplab-postgres Healthy
+ Container shoplab-adminer Started
+
+$ docker compose -f infra/docker-compose.yml --env-file .env ps
+NAME               SERVICE    STATUS                    PORTS
+shoplab-adminer    adminer    Up 43 seconds (healthy)   0.0.0.0:8085->8080/tcp, [::]:8085->8080/tcp
+shoplab-postgres   postgres   Up 49 seconds (healthy)   0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp
+shoplab-rabbitmq   rabbitmq   Up 49 seconds (healthy)   0.0.0.0:5672->5672/tcp, 0.0.0.0:15672->15672/tcp
+shoplab-redis      redis      Up 49 seconds (healthy)   0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp
+
+# --- AC2a: psql vào TỪNG database (client chạy --network host ⇒ đi đúng port đã publish) ---
+$ for db in identity catalog inventory promotion order payment notification; do
+    docker run --rm --network host -e PGPASSWORD="$POSTGRES_PASSWORD" postgres:16-alpine \
+      psql -h 127.0.0.1 -U shoplab -d "$db" -tAc 'select current_database()'; done
+identity      → identity
+catalog       → catalog
+inventory     → inventory
+promotion     → promotion
+order         → order        # tên DB là reserved word → init script dùng format('%I') để quote
+payment       → payment
+notification  → notification
+
+# --- AC2b: redis ---
+$ docker run --rm --network host redis:7-alpine redis-cli -h 127.0.0.1 ping
+NOAUTH Authentication required.            # đúng như dự kiến (có requirepass)
+$ docker run --rm --network host redis:7-alpine \
+    redis-cli -h 127.0.0.1 -a "$REDIS_PASSWORD" --no-auth-warning ping
+PONG
+
+# --- AC3: UI ---
+$ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:15672/                     → 200 (RabbitMQ UI)
+$ curl -s -o /dev/null -w '%{http_code}\n' -u shoplab:****** http://localhost:15672/api/overview → 200
+$ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8085/                      → 200 (Adminer)
+```
+```console
+# --- AC4: reset script ---
+$ bash tools/reset-infra.sh
+→ Dừng container + xoá volume (mất sạch dữ liệu local)...
+→ Dựng lại hạ tầng...
+→ Chờ container healthy (tối đa 180s)...
+✅ Tất cả container đã healthy.
+$ # kiểm chứng: bảng test tạo trước đó đã biến mất
+$ psql ... -tAc "select count(*) from information_schema.tables where table_name='smoke_persist'"
+0
+
+# --- AC5: volume bền qua down/up ---
+$ # tạo bảng + 1 dòng trong DB catalog, rồi:
+$ docker compose -f infra/docker-compose.yml --env-file .env down     # KHÔNG dùng -v
+$ docker compose -f infra/docker-compose.yml --env-file .env up -d
+$ psql ... -d catalog -tAc 'select count(*) from smoke_persist'
+1                                    # dữ liệu còn nguyên ⇒ named volume hoạt động
+
+# --- AC6: port listen, không trùng ---
+$ ss -ltn | grep -E ':(5432|6379|5672|15672|8085)\b'
+*:5432   *:6379   *:5672   *:15672   *:8085          # 5 port riêng biệt
+
+# --- AC7: không hard-code password (test âm, môi trường SẠCH) ---
+$ env -i PATH="$PATH" HOME="$HOME" docker compose -f infra/docker-compose.yml config   # KHÔNG --env-file
+error while interpolating services.postgres.environment.POSTGRES_PASSWORD:
+  required variable POSTGRES_PASSWORD is missing a value: POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại
+error while interpolating services.rabbitmq.environment.RABBITMQ_DEFAULT_PASS: ...
+error while interpolating services.redis.environment.REDIS_PASSWORD: ...
+$ env -i PATH="$PATH" HOME="$HOME" docker compose -f infra/docker-compose.yml --env-file .env config
+compose config OK
+```
+
+**RAM baseline** (`docker stats --no-stream`, lúc idle — dùng cho Phase 7):
+
+| Container | RAM idle |
+|---|---|
+| `shoplab-postgres` | ~25 MiB |
+| `shoplab-redis` | ~4.4 MiB |
+| `shoplab-rabbitmq` | ~106 MiB |
+| `shoplab-adminer` | ~13 MiB |
+| **Tổng** | **~149 MiB** (lần đo khác ~163 MiB → ghi nhận khoảng 145–165 MiB) |
+
+*Chưa gồm OpenSearch + MinIO (chưa dựng) — hai cái này nặng hơn nhiều.*
+
+**Learning note**
+
+- 🔴 **`docker compose` KHÔNG đọc `.env` ở thư mục đang đứng** khi file compose nằm ở thư mục khác.
+  Nó nạp `.env` theo **project directory** = thư mục chứa file compose (`infra/`). `.env` để ở gốc repo
+  ⇒ **buộc** phải `--env-file .env`. Đã kiểm chứng 2 chiều: CWD = repo root → không resolve được;
+  thêm `--env-file .env` → OK.
+- 🔴 **Test âm phải chạy trong môi trường sạch.** Lần đầu tôi test "bỏ `--env-file` xem có lỗi không"
+  và thấy **không lỗi** → suýt kết luận sai. Nguyên nhân: trước đó tôi đã `set -a && . ./.env && set +a`
+  trong cùng shell ⇒ biến đã **export vào environment**, Compose resolve từ env chứ không từ file.
+  Chạy lại bằng `env -i PATH=... HOME=...` mới thấy lỗi thật. **Đây là bẫy chung khi verify compose.**
+- **Postgres init script chỉ chạy khi data dir rỗng.** Sửa `infra/init/*.sh` xong mà không `down -v`
+  thì script **không** chạy lại → tưởng sửa không có tác dụng. `tools/reset-infra.sh` tồn tại vì lý do này.
+- `order` là **reserved word** trong SQL ⇒ phải quote identifier. Dùng `format('CREATE DATABASE %I ...')`
+  thay vì nối chuỗi tay → an toàn với mọi tên DB.
+- `redis-cli ping` trần và `requirepass` **không thể cùng tồn tại**: AC gốc ("`redis-cli ping` trả `PONG`")
+  mâu thuẫn với việc Redis có password. Đã ưu tiên **có password** (đúng 12-factor, khớp `.env.example`)
+  và điều chỉnh lệnh verify. → **Bài học: AC cần ghi cả điều kiện auth, không chỉ "trả PONG".**
+- `${VAR:?message}` là cách tốt để **fail-fast** khi thiếu secret: lỗi hiện ngay lúc parse compose kèm
+  hướng dẫn, thay vì chạy với password mặc định yếu. Đánh đổi: không thể `up` "chay" mà không có `.env`.
+- Chọn image theo **healthcheck tool có sẵn**, không chỉ theo kích thước: `adminer:4-standalone` là Alpine
+  và có `wget`/`curl` ⇒ healthcheck được; `rabbitmq:4-management-alpine` (4.4.0) có `rabbitmq-diagnostics`
+  ⇒ `ping` sạch hơn là `curl` vào UI.
+- Nhiều lệnh trong **cùng 1 call thì chạy song song** → `docker compose ps` bắt được lúc container còn
+  `health: starting`, dễ kết luận sai là "chưa healthy". Verify phải **tuần tự** hoặc chờ đủ.
+- `docker compose down` giữ volume; `down -v` mới xoá → phân biệt rõ "restart" vs "reset".
+- **Exec bit không đáng tin trong repo này**: `core.fileMode false` (SL-0.2) nên git ghi `100644` dù file
+  trên máy là `755`. Với `infra/init/*.sh` điều này **không** sao: entrypoint của Postgres tự chọn
+  `exec` nếu file có `+x`, ngược lại thì `source`. Đã verify cả 2 đường đi (mode 644 → log
+  `sourcing /docker-entrypoint-initdb.d/...` → vẫn tạo đủ 7 DB). Các script khác trong `tools/` đều gọi
+  bằng `bash <file>` nên cũng không cần `+x`.
+
+
+
+
 
 ---
 
@@ -700,6 +864,10 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | SL-0.8 | Chọn GitHub Flow (không GitFlow) cho lab 1 người; repo đang ở `master` cần rename → `main`; PR cần remote + `gh`. |
 | 2026-11-02 | SL-0.8 | Diff nhiễu **CRLF** (1253/1253 dòng) do thiếu `.gitattributes` + `core.autocrlf` unset → chuẩn hoá LF. **Branch protection/rulesets không dùng được trên repo private + GitHub Free (403)** → phải thay bằng git hook local. |
 | 2026-11-02 | SL-0.2 | Verify trên repo **rỗng là vô nghĩa** — phải làm **test âm** mới biết config có tác dụng. `maven-checkstyle-plugin` **không** nhận `-Dcheckstyle.version` (dependency của plugin resolve từ POM của plugin) → phải khai báo `<plugin><dependencies>`; mặc định là checkstyle 9.3 (2022). Lefthook `pre-push` chỉ bảo vệ **local**. |
+| 2026-11-02 | SL-0.3 | `docker compose` nạp `.env` theo **project directory** (= thư mục chứa compose file), **không** theo CWD → compose ở `infra/` mà `.env` ở gốc thì **buộc** `--env-file .env`. |
+| 2026-11-02 | SL-0.3 | **Test âm chỉ đáng tin khi môi trường sạch**: biến đã export vào shell (`set -a; . ./.env`) làm Compose resolve từ env → test "bỏ `--env-file`" cho kết quả sai. Phải chạy `env -i`. |
+| 2026-11-02 | SL-0.3 | Postgres `docker-entrypoint-initdb.d` **chỉ chạy khi volume rỗng** → sửa init script phải `down -v` mới thấy tác dụng. Redis `requirepass` ⇒ `redis-cli ping` trần trả `NOAUTH` (AC gốc cần ghi rõ điều kiện auth). RAM baseline cả stack ≈ **150 MiB** (RabbitMQ chiếm ~106 MiB — nặng nhất). |
+| 2026-11-02 | SL-0.2 | Verify bằng tooling **cài tạm** không chứng minh được gì: `which mvn` vẫn trỏ bản Windows → phải cài trong WSL rồi kiểm tra `which mvn`. Git hook nằm trong `.git/hooks` (không commit) → người clone mới phải tự `lefthook install`, nếu không mọi bảo vệ **im lặng** mất tác dụng. Test âm bằng file bị `.gitignore` ignore là test **vô hiệu**. |
 
 ---
 
@@ -720,6 +888,12 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | Ghi learning note `SL-0.8`: diff nhiễu CRLF + kết quả thử branch protection (**403 — private + GitHub Free**, không bật được). |
 | 2026-11-02 | `SL-0.2` → `In Progress`: tạo nhánh `chore/sl-0.2-repo-skeleton`; thêm `.editorconfig`, `.gitignore` (mở rộng), `.env.example`, `README.md`, `lefthook.yml`, `tools/*.sh`, `pom.xml` + `config/checkstyle/checkstyle.xml`, thư mục `services/ packages/ infra/`. |
 | 2026-11-02 | `SL-0.2` → `Review`: pin checkstyle **12.3.1** (plugin mặc định kéo 9.3); verify thật `mvn verify` BUILD SUCCESS + test âm cho cả Spotless và Checkstyle; PR [#2](https://github.com/anchu3003/shop-lab-microservices/pull/2). Còn chờ user cài JDK 21 + Maven trong WSL (sudo). |
+| 2026-11-02 | `SL-0.3` → `In Progress`: tạo nhánh `feat/sl-0.3-local-infra-compose`. |
+| 2026-11-02 | `SL-0.3` → `Done`: `infra/docker-compose.yml` (Postgres 16 · Redis 7 · RabbitMQ 4 + management UI · Adminer), `infra/init/01-create-databases.sh` (7 DB per service, idempotent), `tools/reset-infra.sh` (bash, thay `reset-infra.ps1` theo ADR-0002), `.env.example` (+`POSTGRES_DB`, `ADMINER_PORT`), README (port table + RAM baseline + bẫy `--env-file`). Verify thật: 4/4 container `healthy`, psql 7/7 DB OK, `redis-cli -a … ping` → `PONG`, RabbitMQ UI + Adminer HTTP 200, reset script OK, volume bền qua `down`/`up`, test âm `${VAR:?}` fail-fast. RAM baseline ≈ **150 MiB**. |
+| 2026-11-02 | Ghi nhận (ngoài scope `SL-0.3`): JDK **21.0.12.1** + Maven **3.9.12** đã có trong WSL → `mvn -B verify` **BUILD SUCCESS** (0 Checkstyle violations) ⇒ điều kiện cuối của `SL-0.2` đã đạt, `SL-0.2` có thể chuyển `Done`. `lefthook` **2.2.2** cũng đã cài (`~/.local/bin`, hooks active — thấy chạy thật khi commit `eef58a3`). Sửa lại bảng "Yêu cầu môi trường" trong `README.md` cho khớp. |
+| 2026-11-02 | Commit `eef58a3` trên nhánh `feat/sl-0.3-local-infra-compose` (lefthook `pre-commit` + `commit-msg` chạy và pass). |
+| 2026-11-02 | Đóng `SL-0.2` → `Done`: điều kiện cuối đã đạt — JDK **21.0.12.1** + Maven **3.9.12** (`/usr/bin/mvn`, không còn bản Windows) + Lefthook **2.2.2** cài trong WSL; `mvn -B verify` **BUILD SUCCESS**; test âm lặp lại cho `commit-msg` + `secret-scan` đều **bị chặn thật**. Phase 0 → **6 / 8**. |
+| 2026-11-02 | Tạo PR [#3](https://github.com/anchu3003/shop-lab-microservices/pull/3) cho `SL-0.3` + đóng `SL-0.2` (nhánh `feat/sl-0.3-local-infra-compose`, 3 commit). **Nhắc lại quy ước**: merge bằng **squash** (PR #1 đã lệch — dùng merge commit). |
 
 
 

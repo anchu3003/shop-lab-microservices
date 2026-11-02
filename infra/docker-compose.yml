@@ -1,0 +1,147 @@
+# ==============================================================================
+# infra/docker-compose.yml — hạ tầng nền local của ShopLab  (ticket SL-0.3)
+#
+# Chạy (từ THƯ MỤC GỐC repo):
+#   cp .env.example .env                                            # 1 lần
+#   docker compose -f infra/docker-compose.yml --env-file .env up -d
+#   docker compose -f infra/docker-compose.yml --env-file .env ps
+#
+# Vì sao phải có --env-file:
+#   Compose nạp file `.env` từ *project directory*, mặc định là **thư mục chứa file
+#   compose** (`infra/`) — KHÔNG phải thư mục đang đứng. `.env` của repo nằm ở gốc
+#   nên phải chỉ định tường minh. (Đây là bẫy thật, xem Backlog.md → SL-0.3 learning note.)
+#
+# Nguyên tắc:
+#   - KHÔNG hard-code password trong file này: biến nhạy cảm dùng `${VAR:?}` (BẮT BUỘC),
+#     thiếu là compose báo lỗi ngay thay vì âm thầm chạy bằng password mặc định yếu
+#     (AGENTS.md §6, §9). Biến không nhạy cảm (port, tên DB, user) mới có `:-default`.
+#   - Tên container prefix `shoplab-` để dễ filter khi debug.
+#   - Dữ liệu dùng NAMED VOLUME, KHÔNG bind mount (ADR-0002 — WSL2/Windows perf).
+#   - Image alpine nhưng vẫn có healthcheck tool (pg_isready / redis-cli /
+#     rabbitmq-diagnostics / wget).
+# ==============================================================================
+
+name: shoplab
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — 1 instance, nhiều database (database per service, AGENTS.md §6)
+  # 7 DB được tạo bởi infra/init/01-create-databases.sh lần đầu khởi tạo volume.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: shoplab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shoplab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      POSTGRES_DB: ${POSTGRES_USER:-shoplab}
+      POSTGRES_DB_IDENTITY: ${POSTGRES_DB_IDENTITY:-identity}
+      POSTGRES_DB_CATALOG: ${POSTGRES_DB_CATALOG:-catalog}
+      POSTGRES_DB_INVENTORY: ${POSTGRES_DB_INVENTORY:-inventory}
+      POSTGRES_DB_PROMOTION: ${POSTGRES_DB_PROMOTION:-promotion}
+      POSTGRES_DB_ORDER: ${POSTGRES_DB_ORDER:-order}
+      POSTGRES_DB_PAYMENT: ${POSTGRES_DB_PAYMENT:-payment}
+      POSTGRES_DB_NOTIFICATION: ${POSTGRES_DB_NOTIFICATION:-notification}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - shoplab-pg-data:/var/lib/postgresql/data
+      # Init script: chỉ chạy khi data dir còn rỗng (lần đầu / sau reset -v).
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # `$$` để Compose không interpolate, shell trong container tự resolve.
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_USER\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - shoplab-net
+
+  # ---------------------------------------------------------------------------
+  # Redis — cache / lock / rate limit (Phase 4+)
+  # Có requirepass: `redis-cli ping` trần sẽ báo NOAUTH, phải `-a $REDIS_PASSWORD`.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: shoplab-redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - shoplab-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - shoplab-net
+
+  # ---------------------------------------------------------------------------
+  # RabbitMQ — message broker cho Phase 3 (ADR-0001: RabbitMQ trước, Kafka sau).
+  # Management UI ở cổng 15672.
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: shoplab-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-shoplab}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - shoplab-rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    networks:
+      - shoplab-net
+
+  # ---------------------------------------------------------------------------
+  # Adminer — UI xem dữ liệu Postgres (nhẹ, 1 container; thay cho pgAdmin).
+  # ---------------------------------------------------------------------------
+  adminer:
+    image: adminer:4-standalone
+    container_name: shoplab-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "${ADMINER_PORT:-8085}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    networks:
+      - shoplab-net
+
+volumes:
+  shoplab-pg-data:
+    name: shoplab-pg-data
+  shoplab-redis-data:
+    name: shoplab-redis-data
+  shoplab-rabbitmq-data:
+    name: shoplab-rabbitmq-data
+
+networks:
+  shoplab-net:
+    name: shoplab-net

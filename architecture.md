@@ -524,6 +524,11 @@ outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
 | `staging` | K8s local (kind / minikube) trong WSL2 | test deploy, canary, HPA |
 | `prod` | K8s local (mô phỏng) | chỉ để học, không phục vụ user thật |
 
+Hạ tầng local (PostgreSQL 16 · Redis 7 · RabbitMQ 4 + management UI · Adminer) dựng bằng `docker compose`
+ở `infra/docker-compose.yml`; init script tạo 7 database per service ở `infra/init/`; reset bằng
+`tools/reset-infra.sh`. Danh sách port, lệnh start/stop/reset và **RAM baseline (~150 MiB khi idle)**
+xem `README.md` → *Cách chạy* (ticket `SL-0.3`).
+
 ### 10.2. Yêu cầu máy dev (cập nhật 2026-11-02 — ADR-0001 + ADR-0002)
 
 | Công cụ | Trạng thái | Ghi chú |
@@ -531,8 +536,8 @@ outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
 | WSL2 | cần kiểm tra | **bắt buộc** — môi trường dev (ADR-0002), version ≥ 2.1.5 |
 | Docker | ✅ `29.5.2` | dùng cho toàn bộ infra local |
 | Python | ✅ `3.12.9` | chỉ dùng cho script phụ trợ (nếu cần) |
-| JDK 21 | ❌ chưa cài | **phải cài** — ngôn ngữ chính (Java 21 + Spring Boot) |
-| Maven / Gradle | ❌ chưa cài | build tool cho service Java |
+| JDK 21 | ✅ `21.0.12.1` | ngôn ngữ chính (Java 21 + Spring Boot) — đã cài trong WSL2 |
+| Maven / Gradle | ✅ `3.9.12` (`/usr/bin/mvn`) | build tool cho service Java |
 | Go toolchain | ❌ chưa cài | cài trước Phase 2–3 (ngôn ngữ thứ hai, xem ADR-0001) |
 | Git | ✅ đã `git init` | commit đầu: `5918e0b "init project"` |
 
@@ -707,6 +712,7 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-10-25 | Khởi tạo v0.1 — kiến trúc tổng quát, roadmap 9 phase, đề xuất tech stack | bạn + AI |
 | 2026-11-02 | Chốt §11 tech stack (ADR-0001: polyglot Java-first + Go; RabbitMQ→Kafka; tự build gateway); cập nhật §10.2 | bạn + AI |
 | 2026-11-02 | Chốt môi trường dev = **WSL2** (ADR-0002); cập nhật §10.1/§10.2 | bạn + AI |
+| 2026-11-02 | `SL-0.3`: dựng hạ tầng local bằng Docker Compose (Postgres 16 · Redis 7 · RabbitMQ 4 · Adminer); cập nhật §10.1 (port + RAM baseline ≈ 150 MiB) | bạn + AI |
 
 
 
