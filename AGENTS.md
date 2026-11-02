@@ -121,7 +121,9 @@ Chi tiết ngôn ngữ/framework xem `architecture.md` §11. Quy ước chung:
 
 - **Commit message**: Conventional Commits — `feat|fix|docs|refactor|test|chore(scope): mô tả`
   ví dụ `feat(order): add saga orchestration for checkout`.
-- **Branch**: `feat/<ticket-id>-slug` — ví dụ `feat/sl-2.4-order-saga`.
+- **Branch**: `<type>/<ticket-id>-slug` — ví dụ `feat/sl-2.4-order-saga`, `fix/sl-3.1-...`.
+- **Git workflow**: **GitHub Flow** (base `main` + nhánh ngắn hạn + PR). **Commit sau khi hoàn thành mỗi ticket**
+  (sau khi verify thật). Chi tiết: `docs/git-flow.md` + rule `.clinerules/10-git-workflow.md`.
 - **Folder**: service dùng `kebab-case` — `order-service`, `api-gateway`.
 - **Config**: 12-factor — đọc từ env, `.env.example` commit lên, `.env` **không** commit.
 - **Log**: structured JSON, luôn có `traceId`, `service`, `level`, `msg`.
@@ -164,5 +166,33 @@ Chi tiết ngôn ngữ/framework xem `architecture.md` §11. Quy ước chung:
 - ❌ Đánh dấu ticket `Done` khi chưa chạy verify thật
 - ❌ Viết doc dài dòng, không có ví dụ / số liệu cụ thể
 - ❌ Tự ý đổi scope của ticket đang làm — có gì mới thì tạo ticket mới
+
+---
+
+## 10. AI assets (rules / skills / workflows)
+
+Bộ công cụ giúp Cline làm việc nhất quán, tiết kiệm token. **File này vẫn là nguồn sự thật.**
+
+| Loại | Vị trí | Vai trò |
+|---|---|---|
+| Rule | `AGENTS.md` | Working agreement — luôn active |
+| Rule | `.clinerules/00-context.md` | Nạp context (Memory Bank lite), liệt kê AI assets |
+| Rule | `.clinerules/10-git-workflow.md` | Git workflow: commit sau mỗi ticket, nhánh, PR |
+| Skill | `.cline/skills/shoplab-adr` | Cách viết ADR (template + quality bar) |
+| Skill | `.cline/skills/shoplab-ticket` | Format ticket BA-style + DoR/DoD |
+| Skill | `.cline/skills/shoplab-verify` | Verify bằng lệnh thật + dán output |
+| Workflow | `.clinerules/workflows/run-ticket.md` | `/run-ticket.md` — thực thi 1 ticket |
+| Workflow | `.clinerules/workflows/new-ticket.md` | `/new-ticket.md` — breakdown epic |
+| Workflow | `.clinerules/workflows/close-ticket.md` | `/close-ticket.md` — đóng ticket |
+| Workflow | `.clinerules/workflows/git-branch-pr.md` | `/git-branch-pr.md` — tách nhánh + tạo PR |
+
+Quy ước:
+
+- **Rule** = behavioral, luôn active. **Skill** = kiến thức load on-demand. **Workflow** = quy trình
+  nhiều bước, gọi bằng `/filename.md` (chỉ tốn token khi invoke).
+- **Memory Bank lite**: dùng `architecture.md` + `Backlog.md`, **không** tạo `memory-bank/` riêng.
+- **Không** dùng Cline Hooks/Plugins trên VS Code (chỉ hỗ trợ SDK/CLI/Kanban). Git hooks → `SL-0.2`.
+- `.cline/` được commit vào repo nhưng **không** chứa secret/API key.
+- Thêm skill mới đặt tên `shoplab-*`; thêm workflow đặt tên `<verb>-<object>.md` — nhớ update bảng trên.
 
 
