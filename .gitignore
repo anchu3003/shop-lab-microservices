@@ -1,1 +1,47 @@
+# ==============================================================================
+# .gitignore — ShopLab
+# Nguyên tắc: ignore build output, secret, dữ liệu local, file IDE (AGENTS.md §6, §9)
+# ==============================================================================
+
+# --- Ghi chú làm việc cá nhân (không commit) ---
 AGENTS.txt
+
+# --- Secret / config local ---
+.env
+.env.*
+!.env.example
+
+# --- Java / Maven ---
+target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+hs_err_pid*
+replay_pid*
+
+# --- Go ---
+bin/
+*.exe
+*.test
+*.out
+
+# --- Logs / temp ---
+*.log
+logs/
+tmp/
+*.tmp
+*.pid
+
+# --- Dữ liệu / volume local của infra ---
+data/
+infra/data/
+
+# --- IDE / editor ---
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# --- OS ---
+.DS_Store
+Thumbs.db

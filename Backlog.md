@@ -6,8 +6,8 @@
 
 | | |
 |---|---|
-| **Ticket đang làm** | — |
-| **Ticket tiếp theo** | `SL-0.2` |
+| **Ticket đang làm** | `SL-0.2` |
+| **Ticket tiếp theo** | `SL-0.3` |
 | **Số ticket chi tiết hiện có** | 8 (Phase 0) |
 
 ---
@@ -356,7 +356,7 @@ dưới dạng ADR để sau này không phải tranh luận lại.
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | In Progress |
 | **Phase** | 0 — Foundation |
 | **Phụ thuộc** | SL-0.1, SL-0.7 |
 | **Ước lượng** | M |
@@ -681,8 +681,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | `SL-0.2`: bổ sung `.gitattributes` + git config (`core.autocrlf`/`core.fileMode`) để tránh nhiễu khi chuyển sang WSL. |
 | 2026-11-02 | Thêm `SL-0.8` (Review): git workflow — rule `.clinerules/10-git-workflow.md`, workflow `/git-branch-pr.md`, `docs/git-flow.md`. |
 | 2026-11-02 | Đóng `SL-0.8` → `Done` (user gọi `/git-branch-pr.md` xác nhận workflow nạp đúng). |
-| 2026-11-02 | Tạo PR [#1](https://github.com/anchu3003/shop-lab-microservices/pull/1) cho `SL-0.1/0.6/0.7/0.8` (squash vào `main`). Commit `a881a01` chuẩn hoá line-ending bằng `.gitattributes` (`* text=auto eol=lf`) — sớm hơn `SL-0.2`. |
+| 2026-11-02 | Tạo PR [#1](https://github.com/anchu3003/shop-lab-microservices/pull/1) cho `SL-0.1/0.6/0.7/0.8` (đã merge vào `main` bằng **merge commit** `368009e` — lệch quy ước **squash** của `docs/git-flow.md`, ghi nhận để lần sau merge đúng). Commit `a881a01` chuẩn hoá line-ending bằng `.gitattributes` (`* text=auto eol=lf`) — sớm hơn `SL-0.2`. |
 | 2026-11-02 | Ghi learning note `SL-0.8`: diff nhiễu CRLF + kết quả thử branch protection (**403 — private + GitHub Free**, không bật được). |
+| 2026-11-02 | `SL-0.2` → `In Progress`: tạo nhánh `chore/sl-0.2-repo-skeleton`; thêm `.editorconfig`, `.gitignore` (mở rộng), `.env.example`, `README.md`, `lefthook.yml`, `tools/*.sh`, `pom.xml` + `config/checkstyle/checkstyle.xml`, thư mục `services/ packages/ infra/`. |
 
 
 
