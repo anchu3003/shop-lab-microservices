@@ -1,0 +1,34 @@
+# .gitattributes — chuẩn hoá line-ending cho ShopLab
+# Lý do: repo chạy trên WSL2/Linux + CI Linux; ép LF để tránh diff nhiễu do CRLF
+# (xem `docs/git-flow.md`, ticket SL-0.8).
+
+# Mặc định: git tự nhận diện text, lưu LF trong repo và checkout ra LF.
+* text=auto eol=lf
+
+# Text rõ ràng (giữ LF kể cả khi editor set CRLF)
+*.md       text eol=lf
+*.txt      text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.json     text eol=lf
+*.toml     text eol=lf
+*.sh       text eol=lf
+*.sql      text eol=lf
+*.go       text eol=lf
+*.java     text eol=lf
+*.kt       text eol=lf
+*.xml      text eol=lf
+*.gradle   text eol=lf
+Dockerfile text eol=lf
+*.env*     text eol=lf
+
+# Binary — không đụng tới
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.zip  binary
+*.gz   binary
+*.jar  binary
