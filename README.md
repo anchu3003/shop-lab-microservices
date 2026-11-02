@@ -27,7 +27,7 @@ Repo phải nằm trong **Linux filesystem** (`~/...`), **không** ở `/mnt/d/.
 | Python | 3.12.x | ✅ `3.12.9` (chỉ dùng cho script phụ trợ) | có sẵn trong WSL |
 | **JDK 21** | Temurin/OpenJDK 21 | ✅ `21.0.12.1` | `sudo apt update && sudo apt install -y openjdk-21-jdk` |
 | **Maven** | 3.9.x | ✅ `3.9.12` (`/usr/bin/mvn`) | `sudo apt install -y maven` |
-| **Lefthook** | ≥ 2.0 | ❌ chưa cài | xem mục *Git hooks* bên dưới |
+| **Lefthook** | ≥ 2.0 | ✅ `2.2.2` (`~/.local/bin`) | xem mục *Git hooks* bên dưới |
 | Go | 1.2x | ⏸️ để Phase 2–3 (ADR-0001) | — |
 | Git | ≥ 2.4x | ✅ | có sẵn |
 
