@@ -1,0 +1,42 @@
+# ==============================================================================
+# application.yml — cấu hình service template (SL-0.4)
+#
+# Nguyên tắc 12-factor (AGENTS.md §6): mọi giá trị phụ thuộc môi trường đọc từ env,
+# file này chỉ giữ default hợp lý cho máy dev. Không hard-code secret.
+# ==============================================================================
+
+spring:
+  application:
+    name: service-template
+  lifecycle:
+    # Cho request đang chạy tối đa 30s để hoàn tất trước khi bị cắt — khớp AC graceful shutdown.
+    timeout-per-shutdown-phase: 30s
+
+server:
+  port: ${SERVER_PORT:8090}
+  # Ngừng nhận request mới, đợi request đang chạy xong rồi mới tắt (AC SL-0.4).
+  shutdown: graceful
+
+shoplab:
+  # Bắt buộc — validate ở main() qua EnvValidator (xem RequiredEnv).
+  env: ${APP_ENV:local}
+  # Endpoint /debug/* chỉ để verify hạ tầng; chỉ bật ở local.
+  debug-endpoints: ${SHOPLAB_DEBUG_ENDPOINTS:false}
+  # Git sha do Docker build arg truyền vào (xem Dockerfile + README.md).
+  git-commit: ${SHOPLAB_GIT_COMMIT:unknown}
+  readiness:
+    dependencies:
+      - name: postgres
+        host: ${POSTGRES_HOST:localhost}
+        port: ${POSTGRES_PORT:5432}
+        timeout: 500ms
+      - name: redis
+        host: ${REDIS_HOST:localhost}
+        port: ${REDIS_PORT:6379}
+        timeout: 500ms
+
+logging:
+  level:
+    root: INFO
+    # Đổi độ chi tiết của log service mà không phải build lại image.
+    com.shoplab: ${LOG_LEVEL:INFO}
