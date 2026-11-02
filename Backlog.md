@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-0.2` (Review — điều kiện cuối "JDK 21 + Maven trong WSL" đã đạt, chờ chốt `Done`) |
-| **Ticket tiếp theo** | `SL-0.4` |
+| **Ticket đang làm** | `SL-0.4` |
+| **Ticket tiếp theo** | `SL-0.5` |
 | **Số ticket chi tiết hiện có** | 8 (Phase 0) |
 
 ---
@@ -16,7 +16,7 @@
 
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
-| 0 | Foundation | 🔵 In Progress | 5 / 8 |
+| 0 | Foundation | 🔵 In Progress | 6 / 8 |
 | 1 | Walking skeleton | ⚪ Todo (epic) | — |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
@@ -356,7 +356,7 @@ dưới dạng ADR để sau này không phải tranh luận lại.
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Review |
+| **Trạng thái** | Done |
 | **Phase** | 0 — Foundation |
 | **Phụ thuộc** | SL-0.1, SL-0.7 |
 | **Ước lượng** | M |
@@ -424,9 +424,28 @@ và máy dev sẵn sàng build service đầu tiên.
   **BUILD FAILURE** `Unused import - java.util.List. [UnusedImports]`. Đã xoá `src/` sau khi test.
 - `pwd` → `/home/anchu/shop-lab-microservices`; `df -T .` → `/dev/sdd  ext4` (Linux fs → đạt ADR-0002)
 - `git status --short` → rỗng (không nhiễu line-ending/mode)
-- **Còn lại (cần sudo của user)**: cài JDK 21 + Maven **vào WSL** để `java`/`mvn` có trên PATH:
-  `sudo apt update && sudo apt install -y openjdk-21-jdk maven`. Trước đó `which mvn` trỏ vào bản **Windows**
-  `/mnt/d/Programs/Maven/apache-maven-3.8.6/bin/mvn` (trái ADR-0002) và `java` MISSING.
+- **Đóng ticket — verify lần cuối (2026-11-02, sau khi cài tooling trong WSL)**: điều kiện còn lại đã đạt.
+
+  ```console
+  $ java -version            → openjdk version "21.0.12.1" 2026-08-18      (which java: /usr/bin/java)
+  $ mvn -v                   → Apache Maven 3.9.12                         (which mvn:  /usr/bin/mvn)
+  $ lefthook version         → 2.2.2                                       (~/.local/bin/lefthook)
+  $ mvn -B verify            → spotless:3.10.4:check + checkstyle:3.6.0:check
+                               "You have 0 Checkstyle violations." → BUILD SUCCESS (1.085 s)
+  $ pwd ; df -T .            → /home/anchu/shop-lab-microservices · /dev/sdd ext4
+  $ git status --short       → rỗng (sạch)
+  $ git check-ignore -v .env → .gitignore:10:.env
+  ```
+
+  ⇒ `which mvn` giờ là `/usr/bin/mvn`, **không** còn lẫn bản Windows `/mnt/d/Programs/Maven/...` → đạt ADR-0002.
+- **Test âm lặp lại trên bản Lefthook đã cài thật** (chứng minh hook có tác dụng, không phải "xanh vì rỗng"):
+  `git commit -m "update stuff"` → `🥊 lefthook v2.2.2 hook: commit-msg` →
+  `❌ Commit message KHÔNG đúng Conventional Commits.` → `exit status 1`, số commit **không đổi** (10 → 10).
+  File chứa `AKIA***` giả → `secret-scan` chặn: `❌ Nghi vấn secret trong: negtest-sl02b.txt`.
+  `bash tools/protect-main.sh` trên nhánh feature → `exit 0`.
+- **Hook chạy thật trên commit thật**: `eef58a3`, `ff54587` (ticket `SL-0.3`) đi qua đủ 3 hook —
+  `pre-commit` (`secret-scan ✔️`, `java-format skip`) → `commit-msg` (`conventional-commit ✔️`) →
+  `pre-push` (`protect-main ✔️`).
 
 **Learning note**
 
@@ -439,6 +458,16 @@ và máy dev sẵn sàng build service đầu tiên.
   bảo vệ → khi repo chuyển public / nâng Pro thì nên bật lại branch protection thật.
 - `lefthook` **không** có trong apt repo Ubuntu → cài bằng binary release vào `~/.local/bin` (không cần sudo).
 - `mvn` bị lẫn bản Windows qua PATH kế thừa của WSL → cài tooling **trong WSL** rồi kiểm tra `which mvn`.
+- **Verify bằng tooling cài tạm là chưa đủ** (bài học khi đóng ticket): lần verify đầu dùng Temurin 21.0.13 +
+  Maven 3.9.16 cài tạm **không nằm trên PATH**, nên `which mvn` vẫn trỏ bản Windows ⇒ kết luận "đạt ADR-0002"
+  lúc đó là **chưa** chứng minh được gì. Phải cài thật trong WSL rồi `which mvn` ra `/usr/bin/mvn` mới tính.
+  → **Verify phải chạy bằng đúng công cụ mà dev sẽ dùng, không phải bản dựng tạm.**
+- **Git hook nằm trong `.git/hooks/` — không được commit.** Người clone mới **phải** tự chạy `lefthook install`
+  thì hook mới có; nếu không, mọi bảo vệ (Conventional Commits, secret-scan, chặn push `main`) đều **im lặng
+  mất tác dụng**. Đây là lỗ hổng đã biết của phương án "dùng hook local thay branch protection" — cần nhắc
+  trong README (đã có) và nên kiểm tra ở `SL-0.5` (CI) vì CI mới là chốt chặn thật.
+- Test âm với file `.tmp` **không** chạy được vì `.gitignore` đã ignore `*.tmp` → `git add` báo
+  "paths are ignored", test vô hiệu. Dùng đuôi file **không** bị ignore mới test đúng.
 
 ---
 
@@ -838,6 +867,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | SL-0.3 | `docker compose` nạp `.env` theo **project directory** (= thư mục chứa compose file), **không** theo CWD → compose ở `infra/` mà `.env` ở gốc thì **buộc** `--env-file .env`. |
 | 2026-11-02 | SL-0.3 | **Test âm chỉ đáng tin khi môi trường sạch**: biến đã export vào shell (`set -a; . ./.env`) làm Compose resolve từ env → test "bỏ `--env-file`" cho kết quả sai. Phải chạy `env -i`. |
 | 2026-11-02 | SL-0.3 | Postgres `docker-entrypoint-initdb.d` **chỉ chạy khi volume rỗng** → sửa init script phải `down -v` mới thấy tác dụng. Redis `requirepass` ⇒ `redis-cli ping` trần trả `NOAUTH` (AC gốc cần ghi rõ điều kiện auth). RAM baseline cả stack ≈ **150 MiB** (RabbitMQ chiếm ~106 MiB — nặng nhất). |
+| 2026-11-02 | SL-0.2 | Verify bằng tooling **cài tạm** không chứng minh được gì: `which mvn` vẫn trỏ bản Windows → phải cài trong WSL rồi kiểm tra `which mvn`. Git hook nằm trong `.git/hooks` (không commit) → người clone mới phải tự `lefthook install`, nếu không mọi bảo vệ **im lặng** mất tác dụng. Test âm bằng file bị `.gitignore` ignore là test **vô hiệu**. |
 
 ---
 
@@ -862,6 +892,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | `SL-0.3` → `Done`: `infra/docker-compose.yml` (Postgres 16 · Redis 7 · RabbitMQ 4 + management UI · Adminer), `infra/init/01-create-databases.sh` (7 DB per service, idempotent), `tools/reset-infra.sh` (bash, thay `reset-infra.ps1` theo ADR-0002), `.env.example` (+`POSTGRES_DB`, `ADMINER_PORT`), README (port table + RAM baseline + bẫy `--env-file`). Verify thật: 4/4 container `healthy`, psql 7/7 DB OK, `redis-cli -a … ping` → `PONG`, RabbitMQ UI + Adminer HTTP 200, reset script OK, volume bền qua `down`/`up`, test âm `${VAR:?}` fail-fast. RAM baseline ≈ **150 MiB**. |
 | 2026-11-02 | Ghi nhận (ngoài scope `SL-0.3`): JDK **21.0.12.1** + Maven **3.9.12** đã có trong WSL → `mvn -B verify` **BUILD SUCCESS** (0 Checkstyle violations) ⇒ điều kiện cuối của `SL-0.2` đã đạt, `SL-0.2` có thể chuyển `Done`. `lefthook` **2.2.2** cũng đã cài (`~/.local/bin`, hooks active — thấy chạy thật khi commit `eef58a3`). Sửa lại bảng "Yêu cầu môi trường" trong `README.md` cho khớp. |
 | 2026-11-02 | Commit `eef58a3` trên nhánh `feat/sl-0.3-local-infra-compose` (lefthook `pre-commit` + `commit-msg` chạy và pass). |
+| 2026-11-02 | Đóng `SL-0.2` → `Done`: điều kiện cuối đã đạt — JDK **21.0.12.1** + Maven **3.9.12** (`/usr/bin/mvn`, không còn bản Windows) + Lefthook **2.2.2** cài trong WSL; `mvn -B verify` **BUILD SUCCESS**; test âm lặp lại cho `commit-msg` + `secret-scan` đều **bị chặn thật**. Phase 0 → **6 / 8**. |
 
 
 
