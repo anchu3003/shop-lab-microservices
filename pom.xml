@@ -11,17 +11,24 @@
   <packaging>pom</packaging>
 
   <name>ShopLab :: Parent</name>
-  <description>Parent POM — convention build / lint / format cho mọi service Java (SL-0.2)</description>
+  <description>Parent POM — convention build / lint / format cho mọi module Java (SL-0.2, SL-0.4)</description>
 
   <!--
-    Ghi chú (SL-0.2):
-    - Java 21 + Spring Boot là ngôn ngữ chính (ADR-0001); parent POM này để mọi service
-      thừa hưởng cùng một convention format/lint thay vì mỗi service một kiểu.
+    Ghi chú:
+    - Java 21 + Spring Boot là ngôn ngữ chính (ADR-0001); parent POM này để mọi module
+      thừa hưởng cùng một convention format/lint thay vì mỗi module một kiểu.
     - FORMAT  = Spotless + google-java-format  → mvn spotless:apply
     - LINT    = Checkstyle (config/checkstyle/checkstyle.xml)
-    - Chưa khai báo <modules>: service đầu tiên sẽ thêm ở Phase 1 (SL-0.4).
+    - Từ SL-0.4 có <modules>: packages/service-commons + services/service-template.
+    - Spring Boot version quản lý tập trung qua BOM (import spring-boot-dependencies).
+      KHÔNG dùng spring-boot-starter-parent làm parent vì parent này đang giữ convention riêng.
     - Go chưa cấu hình ở đây (toolchain để Phase 2–3 theo ADR-0001).
   -->
+
+  <modules>
+    <module>packages/service-commons</module>
+    <module>services/service-template</module>
+  </modules>
 
   <properties>
     <java.version>21</java.version>
@@ -29,9 +36,20 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
+    <!-- Ngôn ngữ chính (ADR-0001). Version chốt ở SL-0.4. -->
+    <spring-boot.version>4.1.2</spring-boot.version>
+
     <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
+    <!--
+      Surefire PHẢI pin: super-POM của Maven để mặc định một bản rất cũ (2.17) — bản đó KHÔNG hỗ trợ
+      JUnit Platform, nên Spring Boot 4 (JUnit 6) sẽ chạy ra "Tests run: 0" mà vẫn BUILD SUCCESS.
+      Đây là kiểu lỗi nguy hiểm nhất: xanh nhưng không test gì. Phát hiện ở SL-0.4.
+    -->
+    <maven-surefire-plugin.version>3.6.1</maven-surefire-plugin.version>
     <spotless-maven-plugin.version>3.10.4</spotless-maven-plugin.version>
     <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
+    <jacoco-maven-plugin.version>0.8.16</jacoco-maven-plugin.version>
+    <logstash-logback-encoder.version>9.0</logstash-logback-encoder.version>
     <!--
       Checkstyle version PHẢI khai báo tường minh (dependency của plugin), vì plugin
       3.6.0 mặc định kéo checkstyle 9.3 (2022) — khá cũ. Override bằng -Dcheckstyle.version
@@ -39,6 +57,31 @@
     -->
     <checkstyle.version>12.3.1</checkstyle.version>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- Spring Boot BOM: quản lý version mọi dependency Spring. -->
+      <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-dependencies</artifactId>
+        <version>${spring-boot.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- Module nội bộ: dùng ${project.version} để không lệch version giữa các module. -->
+      <dependency>
+        <groupId>com.shoplab</groupId>
+        <artifactId>shoplab-service-commons</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>net.logstash.logback</groupId>
+        <artifactId>logstash-logback-encoder</artifactId>
+        <version>${logstash-logback-encoder.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
 
   <build>
     <pluginManagement>
@@ -49,7 +92,37 @@
           <version>${maven-compiler-plugin.version}</version>
           <configuration>
             <release>${maven.compiler.release}</release>
+            <!--
+              -parameters BẮT BUỘC với Spring: @RequestParam/@PathVariable/@ConfigurationProperties
+              dựa vào tên tham số trong class file. Không có cờ này thì Spring MVC ném
+              "Name for argument of type [long] not specified" lúc runtime (không phải lúc compile).
+              spring-boot-starter-parent bật sẵn; ta không dùng nó nên phải tự bật. Phát hiện ở SL-0.4.
+            -->
+            <parameters>true</parameters>
           </configuration>
+        </plugin>
+
+        <!--
+          spring-boot-maven-plugin: version PHẢI khai báo tường minh vì parent này KHÔNG
+          kế thừa từ spring-boot-starter-parent (chỉ import BOM, mà BOM không quản version plugin).
+        -->
+        <plugin>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-maven-plugin</artifactId>
+          <version>${spring-boot.version}</version>
+        </plugin>
+
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${maven-surefire-plugin.version}</version>
+        </plugin>
+
+        <!-- JaCoCo: version tập trung; rule coverage khai báo ở từng module cần. -->
+        <plugin>
+          <groupId>org.jacoco</groupId>
+          <artifactId>jacoco-maven-plugin</artifactId>
+          <version>${jacoco-maven-plugin.version}</version>
         </plugin>
       </plugins>
     </pluginManagement>
@@ -58,6 +131,11 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
       </plugin>
 
       <!-- ============ FORMAT: Spotless + google-java-format ============ -->

@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-0.4` |
-| **Ticket tiếp theo** | `SL-0.5` |
+| **Ticket đang làm** | `SL-0.5` |
+| **Ticket tiếp theo** | Phase 1 (epic — breakdown khi tới lượt) |
 | **Số ticket chi tiết hiện có** | 8 (Phase 0) |
 
 ---
@@ -16,7 +16,7 @@
 
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
-| 0 | Foundation | 🔵 In Progress | 6 / 8 |
+| 0 | Foundation | 🔵 In Progress | 7 / 8 |
 | 1 | Walking skeleton | ⚪ Todo (epic) | — |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
@@ -664,7 +664,7 @@ compose config OK
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done |
 | **Phase** | 0 — Foundation |
 | **Phụ thuộc** | SL-0.2, SL-0.3 |
 | **Ước lượng** | M |
@@ -701,19 +701,206 @@ phần hạ tầng dùng chung — đủ để Phase 1 copy ra thành service th
 - Chưa setup tracing/metrics (Phase 6) — nhưng **phải để sẵn chỗ** cho nó
 
 **Acceptance Criteria**
-- [ ] `docker compose up -d` → `service-template` healthy, gọi `GET /health` trả 200
-- [ ] `GET /ready` trả 200 khi dependency OK, trả 503 khi tắt dependency (đã thử tắt thật)
-- [ ] Thiếu env bắt buộc → service fail lúc boot với message rõ ràng, không chạy nửa vời
-- [ ] Log ra JSON có `traceId`, và `traceId` xuất hiện trong response lỗi
-- [ ] `docker stop` → service shutdown êm, log ghi rõ đang chờ request nào, không bị kill cứng
-- [ ] `mvn -q verify` (Java) pass, coverage phần config/health ≥ 80%
-- [ ] Image size ghi lại trong ticket (để so sánh khi optimize sau)
-- [ ] `README.md` có hướng dẫn tạo service mới từ template, đã thử làm theo và chạy được
+- [x] `docker compose up -d` → `service-template` healthy, gọi `GET /health` trả 200
+- [x] `GET /ready` trả 200 khi dependency OK, trả 503 khi tắt dependency (đã thử tắt thật)
+- [x] Thiếu env bắt buộc → service fail lúc boot với message rõ ràng, không chạy nửa vời
+- [x] Log ra JSON có `traceId`, và `traceId` xuất hiện trong response lỗi
+- [x] `docker stop` → service shutdown êm, log ghi rõ đang chờ request nào, không bị kill cứng
+- [x] `mvn -q verify` (Java) pass, coverage phần config/health ≥ 80%
+- [x] Image size ghi lại trong ticket (để so sánh khi optimize sau)
+- [x] `README.md` có hướng dẫn tạo service mới từ template, đã thử làm theo và chạy được
 
 **Ghi chú kỹ thuật**
 - Trade-off: shared library giúp đồng bộ nhưng tạo coupling. Chỉ để **hạ tầng** trong shared lib
   (log, config, error, health), **tuyệt đối không** để domain logic hay database entity chung
 - Giữ template tối giản — mỗi thứ thêm vào phải trả lời được "service thật có cần không"
+
+**Quyết định khi implement** *(chốt với user 2026-11-02)*
+- **Spring Boot 4.1.2** (latest stable) — ADR-0003. Parent POM giữ convention riêng, **import BOM**
+  `spring-boot-dependencies` thay vì dùng `spring-boot-starter-parent`.
+- Maven multi-module: `packages/service-commons` (artifactId `shoplab-service-commons`) +
+  `services/service-template` (`shoplab-service-template`); version nội bộ dùng `${project.version}`.
+- Shared lib dùng **Spring Boot auto-configuration** (`AutoConfiguration.imports`), mọi bean
+  `@ConditionalOnMissingBean` → service ghi đè được. Chi tiết: ADR-0004.
+- **Tự viết** `/health` `/ready` `/version`, **không** dùng Actuator (để Phase 6) — đúng thiết kế ticket
+  và giữ phần "học cơ chế probe".
+- Dependency check mức **TCP** (`DependencyHealthCheck` + `TcpHealthCheck`) — không kéo JDBC/Redis client
+  vào shared lib. Phase 1 thay bằng check sâu mà không phải sửa controller.
+- Log JSON dùng **logstash-logback-encoder 9.0**, format đặt ở shared lib (`logback-shoplab.xml`) để mọi
+  service log giống nhau.
+- Thêm endpoint **dev-only** `/debug/slow`, `/debug/error`, `/debug/boom` (bật bằng
+  `SHOPLAB_DEBUG_ENDPOINTS=true`, chỉ set trong compose local) để **thật sự verify** AC graceful shutdown
+  và error response — không có request đang chạy thì không có gì để log.
+- Port `SERVICE_TEMPLATE_PORT=8090` (8080–8082 dành cho Phase 1).
+
+**Kết quả verify** *(2026-11-02 — output thật; WSL2 · JDK 21.0.12.1 · Maven 3.9.12 · Docker 29.9.2)*
+
+File tạo: `packages/service-commons/**` · `services/service-template/**` (gồm `Dockerfile`) ·
+`.dockerignore` · `docs/adr/0003-*.md` · `docs/adr/0004-*.md`.
+File sửa: `pom.xml` · `config/checkstyle/checkstyle.xml` · `infra/docker-compose.yml` · `.env.example` ·
+`README.md` · `architecture.md` · `Backlog.md`.
+
+```console
+# --- AC: mvn verify (spotless + checkstyle + test + jacoco gate) ---
+$ mvn -B verify
+[INFO] ShopLab :: Service Commons ...................... SUCCESS [ 2.177 s]   Tests run: 37
+[INFO] You have 0 Checkstyle violations.
+[INFO] All coverage checks have been met.
+[INFO] ShopLab :: Service Template ..................... SUCCESS [ 5.120 s]   Tests run: 35
+[INFO] You have 0 Checkstyle violations.
+[INFO] All coverage checks have been met.
+[INFO] BUILD SUCCESS                       → tổng 72 test, 0 failure
+
+# --- AC: docker compose up -d → service-template healthy ---
+$ docker compose -f infra/docker-compose.yml --env-file .env up -d
+$ docker compose -f infra/docker-compose.yml --env-file .env ps
+NAME                       STATUS
+shoplab-adminer            Up (healthy)
+shoplab-postgres           Up (healthy)
+shoplab-rabbitmq           Up (healthy)
+shoplab-redis              Up (healthy)
+shoplab-service-template   Up (healthy)        ← 5/5 healthy
+
+# --- AC: GET /health → 200 ---
+$ curl -s -w 'status=%{http_code}\n' localhost:8090/health
+{"status":"UP"}
+status=200
+
+# --- AC: GET /ready → 200 khi dependency OK ---
+$ curl -s localhost:8090/ready
+{"status":"UP","dependencies":[
+  {"name":"postgres","status":"UP","detail":"ok","latency":"PT0.006409952S"},
+  {"name":"redis","status":"UP","detail":"ok","latency":"PT0.001030498S"}]}
+
+# --- AC: GET /version → có git commit thật ---
+$ GIT_COMMIT=$(git rev-parse --short HEAD) docker compose ... up -d --build service-template
+$ curl -s localhost:8090/version
+{"service":"service-template","version":"0.1.0-SNAPSHOT","gitCommit":"01ebfb6","buildTime":"2026-11-02T16:52:29.386Z"}
+```
+
+```console
+# --- AC: tắt dependency → /ready trả 503 (đã thử tắt thật) ---
+$ docker stop shoplab-postgres && curl -s -w 'status=%{http_code}\n' localhost:8090/ready
+{"status":"DOWN","dependencies":[
+  {"name":"postgres","status":"DOWN","detail":"UnknownHostException: postgres","latency":"PT3.992760968S"},
+  {"name":"redis","status":"UP","detail":"ok","latency":"PT0.001370696S"}]}
+status=503
+$ docker start shoplab-postgres && curl -s -o /dev/null -w '%{http_code}\n' localhost:8090/ready
+200
+
+# --- AC: thiếu env bắt buộc → fail-fast, message SẠCH (không stack trace rối) ---
+$ docker run --rm --network shoplab-net shoplab-service-template:local     # không set APP_ENV
+
+[shoplab] KHỞI ĐỘNG THẤT BẠI — cấu hình không hợp lệ
+Thiếu biến môi trường bắt buộc — service dừng ngay để không chạy nửa vời:
+  - APP_ENV: môi trường chạy: local | dev | staging | prod
+Xem .env.example để lấy giá trị mẫu.
+exit=1
+
+# --- AC: response lỗi thống nhất + traceId (lấy từ header client) ---
+$ curl -s -H 'x-correlation-id: trace-from-client-001' localhost:8090/debug/error
+{"code":"NOT_FOUND","message":"Lỗi cố ý từ /debug/error để xem format ApiError",
+ "traceId":"trace-from-client-001","timestamp":"2026-11-02T16:50:48.489871347Z",
+ "path":"/debug/error","details":[]}
+
+$ curl -s localhost:8090/khong-ton-tai                      # 404, KHÔNG bị biến thành 500
+{"code":"NOT_FOUND",...,"path":"/khong-ton-tai","details":[]}
+
+$ curl -s localhost:8090/debug/boom                         # 500, KHÔNG lộ chi tiết nội bộ
+{"code":"INTERNAL_ERROR","message":"Lỗi hệ thống",...}      # chi tiết gốc chỉ nằm trong log
+
+# --- AC: log JSON có traceId / service / level / msg ---
+$ docker logs shoplab-service-template | tail -4   (rút gọn)
+{"@timestamp":"...","msg":"http GET /health -> 200 (1 ms)","logger":"...",
+ "thread":"http-nio-8090-exec-1","level":"INFO",
+ "traceId":"02cc88e6-cf15-4f0d-afa8-32119bdfe29e","service":"service-template"}
+→ đúng 4 field bắt buộc; `service` lấy từ spring.application.name qua shared lib.
+
+# --- AC: graceful shutdown có request đang chạy (bằng chứng đầy đủ) ---
+$ curl -s -H 'x-correlation-id: drain-demo-001' 'localhost:8090/debug/slow?ms=8000' &
+$ sleep 2 && docker stop -t 35 shoplab-service-template
+17:07:10.803 INFO  graceful shutdown: chờ 1 request đang chạy hoàn tất: [drain-demo-001 GET /debug/slow (2051 ms)]
+17:07:10.804 INFO  Commencing graceful shutdown. Waiting for active requests to complete
+17:07:16.760 INFO  http GET /debug/slow -> 200 (8014 ms)      ← request hoàn tất trọn 8s, KHÔNG bị kill
+17:07:16.795 INFO  Graceful shutdown complete
+$ cat /tmp/slow.out
+{"sleptMs":8000}                                              ← client nhận response đầy đủ
+```
+
+**Coverage & image size** *(số thật từ `target/site/jacoco/jacoco.csv` + `docker image ls`)*
+
+| Package (gate ≥ 80% LINE) | Kết quả |
+|---|---|
+| `com.shoplab.commons.config.*` | `EnvValidator` 85% · `RequiredConfig` 100% · `MissingConfigException` 100% |
+| `com.shoplab.commons.health.*` | `TcpHealthCheck` 100% · `HealthCheckResult` 100% · `HealthStatus` 100% · `DependencyHealthCheck` 100% |
+| `com.shoplab.template.config.*` | `ServiceProperties` 100% · `AppEnv` 100% · `Readiness`/`Dependency` 100% · `RequiredEnv` 80% |
+| `com.shoplab.template.health.*` | `ReadinessService` 100% · `HealthController` 100% |
+
+Ngoài gate (không ép coverage): `web` của commons (`GlobalExceptionHandler` 100%, `CorrelationIdFilter` 100%,
+`ApiError` 100%, `CorrelationId` 85%), `web` của template (`VersionController` 100%,
+`GracefulShutdownLogger` 87%, `RequestTracker` 81%, `DebugController` 100%).
+
+**Image size**: `shoplab-service-template:local` = **370 MB** (base `eclipse-temurin:21-jre-alpine` = 287 MB
+→ layer ứng dụng ≈ 83 MB, chủ yếu là fat jar). Ghi lại làm baseline — Phase 7 có thể tối ưu bằng layered jar
+(`layertools`) hoặc jlink/native image.
+
+**Learning note**
+
+- 🔴 **`mvn verify` xanh nhưng `Tests run: 0` — bug nguy hiểm nhất gặp ở ticket này.** Maven super-POM để
+  mặc định `maven-surefire-plugin:2.17`, bản này **không hỗ trợ JUnit Platform**; Spring Boot 4 kéo JUnit
+  6.0.3 → surefire chạy 0 test và **vẫn `BUILD SUCCESS`**. Không có bước kiểm tra số test thì pipeline
+  "xanh" mà thực chất không test gì. → Đã pin surefire `3.6.1`. **Bài học: khi thấy `Tests run: 0` phải
+  coi là lỗi, không phải "repo chưa có test".**
+- 🔴 **Thiếu `-parameters` của javac là lỗi runtime, không phải lỗi compile.** `@RequestParam long ms`
+  không có tên tường minh → Spring MVC ném `Name for argument of type [long] not specified` **lúc gọi
+  request đầu tiên**. `spring-boot-starter-parent` bật sẵn cờ này; vì ta import BOM thay vì dùng
+  starter-parent nên phải tự bật. **Bài học: bỏ starter-parent thì phải tự kiểm kê những gì nó làm sẵn**
+  (đã ghi vào ADR-0003).
+- 🔴 **Test không chạm endpoint thì bug không lộ.** Bug `-parameters` chỉ lộ khi tôi curl `/debug/slow` bằng
+  tay — 72 test pass mà không test nào chạm endpoint đó. Đã thêm test gọi thật `/debug/slow` để chốt lại.
+- 🔴 **Spotless và Checkstyle xung đột trực tiếp ở block rỗng.** google-java-format luôn ép `{}`; checkstyle
+  `WhitespaceAround` mặc định `allowEmpty*=false` đòi `{ }`. **Không thể thoả cả hai** → phải bật
+  `allowEmptyTypes/Methods/Constructors/Lambdas/Catches/Loops=true`. Config này có từ `SL-0.2` nhưng chỉ lộ
+  ra khi có code Java thật đầu tiên. **Bài học: lint + format phải được kiểm chứng trên code thật, không
+  phải repo rỗng** (đúng như learning note của `SL-0.2`).
+- **Tên method ảnh hưởng API**: `HealthCheckResult.isUp()` bị Jackson coi là getter → body `/ready` lộ thêm
+  `"up": true`. Đổi thành `healthy()`. Với record trả ra API, tên method phải để ý.
+- **`<includeContext>false</includeContext>` và `<includeTags>false</includeTags>` cho logstash encoder**:
+  mặc định encoder nhét **mọi** property của logger context vào log (biến `SHOPLAB_SERVICE_NAME` của logback
+  lọt ra thành field rác) và thêm field `tags` chỉ ở **một vài** dòng (log đi qua cầu commons-logging có
+  marker `COMMONS-LOGGING`). Schema log không nhất quán sẽ làm Loki/ELK khó truy vấn.
+- **`@EventListener(ContextClosedEvent)` KHÔNG dùng được cho graceful shutdown**: với
+  `server.shutdown=graceful`, Spring Boot đợi request xong **trước khi** đóng context → nghe event đó thì
+  đã quá muộn, lúc đó không còn request nào. Phải dùng `SmartLifecycle` với phase `Integer.MAX_VALUE`
+  (cao hơn `WebServerStartStopLifecycle` = `MAX_VALUE - 1`) để chạy **trước** khi Tomcat drain.
+- **Health check TCP không chặn được DNS resolution**: timeout 500ms chỉ áp cho bước `connect`. Khi tắt
+  container, Docker gỡ DNS entry → fail bằng `UnknownHostException` sau ~4s. Muốn chặn cả DNS phải tự
+  resolve trước hoặc dùng check sâu.
+- **`${VAR:?}` fail-fast nhưng message bị chôn**: Spring Boot launcher bọc exception trong
+  `InvocationTargetException` nên message đúng nhưng khó đọc. Đã bắt `MissingConfigException` ngay trong
+  `main()` và in message sạch ra stderr rồi `System.exit(1)`.
+- **`spring-boot-starter-web` đã deprecated ở Boot 4** → dùng `spring-boot-starter-webmvc`. Và
+  `TestRestTemplate`/`@AutoConfigureMockMvc` **không còn** ở module test cũ → né bằng
+  `@SpringBootTest(RANDOM_PORT)` + `@LocalServerPort` + `java.net.http.HttpClient` thuần (cũng tránh được
+  việc phải theo dõi API test của Boot).
+- **JaCoCo**: tham số đúng là `<value>COVEREDRATIO</value>` — viết `COVERAGE` sẽ lỗi
+  `No enum constant ICounter.CounterValue.COVERAGE` lúc chạy `verify`, không phải lúc validate config.
+- **Glitch môi trường (không tái lặp)**: một lần `docker start shoplab-postgres` fail với lỗi bind mount
+  `./init:/docker-entrypoint-initdb.d` (Docker Desktop/WSL2 không tìm thấy đường dẫn mount nội bộ). Thử lại
+  sau khi `docker rm -f` + `up -d` thì bình thường, và các lần `stop`/`start` sau đó đều OK → **không phải
+  lỗi config**, chỉ là glitch của Docker Desktop. Nếu tái diễn thường xuyên thì nên bỏ bind mount, chuyển
+  init script vào image (`COPY init/ /docker-entrypoint-initdb.d/`).
+- 🔴 **Thực sự làm theo hướng dẫn trong README mới phát hiện bug "template không copy-safe".** Tôi copy
+  `service-template` → `smoke-service` theo đúng các bước README rồi `mvn verify` → **BUILD FAILURE** vì test
+  `versionShouldExposeServiceIdentity` **hard-code** `"service-template"`. Đã sửa: test đọc tên service từ
+  `@Value("${spring.application.name}")` thay vì viết cứng. **Bài học: hướng dẫn "copy template" mà không
+  chạy thử thì gần như chắc chắn sai** — cái sai không nằm ở bước copy mà ở giả định ngầm trong code
+  (`application.yml` cũng hard-code tên). Sau khi sửa, quy trình chạy lại: `BUILD SUCCESS`, 35 test, jar
+  `shoplab-smoke-service-0.1.0-SNAPSHOT.jar`. Đã xoá `smoke-service` sau khi verify.
+- **Lần thứ 2 trong ticket này chứng minh điều tương tự**: bug `-parameters` lộ khi curl tay, bug
+  "copy-safe" lộ khi làm theo README. Cả hai đều **không** lộ qua 72 test tự động. → Những AC dạng
+  "đã thử làm theo và chạy được" phải được **thực thi thật**, không được suy luận.
+
 
 ---
 
@@ -868,6 +1055,11 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | SL-0.3 | **Test âm chỉ đáng tin khi môi trường sạch**: biến đã export vào shell (`set -a; . ./.env`) làm Compose resolve từ env → test "bỏ `--env-file`" cho kết quả sai. Phải chạy `env -i`. |
 | 2026-11-02 | SL-0.3 | Postgres `docker-entrypoint-initdb.d` **chỉ chạy khi volume rỗng** → sửa init script phải `down -v` mới thấy tác dụng. Redis `requirepass` ⇒ `redis-cli ping` trần trả `NOAUTH` (AC gốc cần ghi rõ điều kiện auth). RAM baseline cả stack ≈ **150 MiB** (RabbitMQ chiếm ~106 MiB — nặng nhất). |
 | 2026-11-02 | SL-0.2 | Verify bằng tooling **cài tạm** không chứng minh được gì: `which mvn` vẫn trỏ bản Windows → phải cài trong WSL rồi kiểm tra `which mvn`. Git hook nằm trong `.git/hooks` (không commit) → người clone mới phải tự `lefthook install`, nếu không mọi bảo vệ **im lặng** mất tác dụng. Test âm bằng file bị `.gitignore` ignore là test **vô hiệu**. |
+| 2026-11-02 | SL-0.4 | **`BUILD SUCCESS` không có nghĩa là đã test**: surefire mặc định 2.17 không hỗ trợ JUnit Platform → `Tests run: 0` mà vẫn xanh. Pin `3.6.1`. Bỏ `spring-boot-starter-parent` (import BOM) thì phải tự bật `-parameters` — thiếu nó là **lỗi runtime**, không phải lỗi compile. |
+| 2026-11-02 | SL-0.4 | Spotless (`{}`) và Checkstyle `WhitespaceAround` (`{ }`) **xung đột trực tiếp** ở block rỗng → phải bật `allowEmpty*`. Lint/format chỉ được kiểm chứng trên **code thật**. |
+| 2026-11-02 | SL-0.4 | Graceful shutdown: nghe `ContextClosedEvent` là **quá muộn** (Boot drain xong mới đóng context) → phải dùng `SmartLifecycle` phase `Integer.MAX_VALUE`. Record trả ra API: tên method `isXxx()` bị Jackson coi là getter → lộ field thừa. |
+| 2026-11-02 | SL-0.4 | Log JSON: logstash encoder mặc định nhét **mọi** property logger context + field `tags` không nhất quán → phải tắt `includeContext`/`includeTags` để schema log đồng nhất. Health check TCP **không chặn được DNS resolution** (timeout chỉ áp cho `connect`). |
+| 2026-11-02 | SL-0.4 | **AC "đã thử làm theo và chạy được" phải thực thi thật**: copy template theo README → build đỏ vì test hard-code tên service. Sửa thành đọc từ `@Value("${spring.application.name}")`. Bug `-parameters` và bug này đều **không lộ** qua 72 test tự động — chỉ lộ khi curl tay / làm theo hướng dẫn. |
 
 ---
 
@@ -894,6 +1086,11 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | Commit `eef58a3` trên nhánh `feat/sl-0.3-local-infra-compose` (lefthook `pre-commit` + `commit-msg` chạy và pass). |
 | 2026-11-02 | Đóng `SL-0.2` → `Done`: điều kiện cuối đã đạt — JDK **21.0.12.1** + Maven **3.9.12** (`/usr/bin/mvn`, không còn bản Windows) + Lefthook **2.2.2** cài trong WSL; `mvn -B verify` **BUILD SUCCESS**; test âm lặp lại cho `commit-msg` + `secret-scan` đều **bị chặn thật**. Phase 0 → **6 / 8**. |
 | 2026-11-02 | Tạo PR [#3](https://github.com/anchu3003/shop-lab-microservices/pull/3) cho `SL-0.3` + đóng `SL-0.2` (nhánh `feat/sl-0.3-local-infra-compose`, 3 commit). **Nhắc lại quy ước**: merge bằng **squash** (PR #1 đã lệch — dùng merge commit). |
+| 2026-11-02 | `SL-0.4` → `In Progress`: nhánh `feat/sl-0.4-service-template`. Chốt với user: **Spring Boot 4.1.2**. |
+| 2026-11-02 | `SL-0.4` → `Done`: Maven multi-module (`packages/service-commons` + `services/service-template`), shared lib auto-configuration (log JSON · error response thống nhất · correlation id · health check · env validator fail-fast), service mẫu `/health` `/ready` `/version` + graceful shutdown + Dockerfile multi-stage non-root, thêm vào compose, JaCoCo gate ≥80% cho config/health, README "tạo service mới từ template". ADR-[0003](docs/adr/0003-spring-boot-version-and-module-layout.md) + ADR-[0004](docs/adr/0004-service-commons-shared-library.md). Verify thật: 72 test pass, 5/5 container healthy, `/ready` 200→503 khi tắt Postgres, fail-fast khi thiếu `APP_ENV`, log JSON đủ 4 field, graceful shutdown hoàn tất request 8s. Phase 0 → **7 / 8**. |
+| 2026-11-02 | Sửa 3 bug tiềm ẩn lộ ra khi có code Java thật: **surefire 2.17** (Tests run: 0 mà vẫn xanh) → pin `3.6.1`; thiếu **`-parameters`** → lỗi runtime ở `@RequestParam`; **Spotless ↔ Checkstyle xung đột** ở block rỗng → bật `allowEmpty*` trong `checkstyle.xml`. |
+| 2026-11-02 | Verify AC "tạo service mới từ template" bằng cách **thực sự** copy ra `smoke-service` theo README → phát hiện test hard-code tên service (template không copy-safe) → sửa test đọc tên từ config; chạy lại `BUILD SUCCESS` rồi xoá `smoke-service`. |
+| 2026-11-02 | Tạo PR [#4](https://github.com/anchu3003/shop-lab-microservices/pull/4) cho `SL-0.4` (nhánh `feat/sl-0.4-service-template`, 5 commit). Merge bằng **squash** theo `docs/git-flow.md`. |
 
 
 

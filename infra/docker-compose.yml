@@ -134,6 +134,51 @@ services:
     networks:
       - shoplab-net
 
+  # ---------------------------------------------------------------------------
+  # service-template — service mẫu (SL-0.4), build từ source trong repo.
+  # Chứng minh template chạy được cùng hạ tầng: /ready check TCP tới postgres + redis.
+  #
+  # LƯU Ý: `up -d` lần đầu sẽ BUILD image Java (mất 1–2 phút). Muốn chỉ dựng hạ tầng:
+  #   docker compose -f infra/docker-compose.yml --env-file .env up -d postgres redis rabbitmq adminer
+  # ---------------------------------------------------------------------------
+  service-template:
+    build:
+      # Context là GỐC repo vì service cần parent pom.xml + module packages/service-commons.
+      context: ..
+      dockerfile: services/service-template/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-service-template:local
+    container_name: shoplab-service-template
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${SERVICE_TEMPLATE_PORT:-8090}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Endpoint /debug/* chỉ dùng để verify hạ tầng — bật ở local, tắt ở môi trường khác.
+      SHOPLAB_DEBUG_ENDPOINTS: ${SHOPLAB_DEBUG_ENDPOINTS:-true}
+      # Trỏ tới service name trong network của compose, KHÔNG phải localhost.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "${SERVICE_TEMPLATE_PORT:-8090}:${SERVICE_TEMPLATE_PORT:-8090}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # `wget` có sẵn trong eclipse-temurin:21-jre-alpine (busybox).
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${SERVER_PORT}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    networks:
+      - shoplab-net
+
 volumes:
   shoplab-pg-data:
     name: shoplab-pg-data

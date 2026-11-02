@@ -80,30 +80,36 @@ Bỏ qua hook khi thật cần (hạn chế tối đa): `LEFTHOOK=0 git commit -
 
 ```
 .
-├── services/            # mỗi service 1 thư mục kebab-case (vd: order-service) — Phase 1+
-├── packages/            # shared library hạ tầng (không chứa business logic của service)
-├── infra/               # docker compose, init SQL, config hạ tầng local — SL-0.3
-│   ├── docker-compose.yml   # Postgres · Redis · RabbitMQ · Adminer
-│   └── init/                # script tạo database lần đầu (chạy 1 lần khi volume rỗng)
-├── tools/               # script phụ trợ (git hooks, reset infra...)
-├── config/checkstyle/   # Checkstyle config cho Java
-├── docs/adr/            # Architecture Decision Records
-├── .cline/ .clinerules/ # AI tooling (skill / workflow / rule) — xem AGENTS.md §10
-└── pom.xml              # Maven parent POM (convention lint/format)
+├── services/                     # mỗi service 1 thư mục kebab-case — Phase 1+
+│   └── service-template/         # service mẫu (SL-0.4) — copy ra để tạo service mới
+├── packages/                     # shared library hạ tầng (không chứa business logic của service)
+│   └── service-commons/          # log JSON · error response · correlation id · health check · env validator
+├── infra/                        # docker compose, init SQL, config hạ tầng local — SL-0.3
+│   ├── docker-compose.yml        # Postgres · Redis · RabbitMQ · Adminer · service-template
+│   └── init/                     # script tạo database lần đầu (chạy 1 lần khi volume rỗng)
+├── tools/                        # script phụ trợ (git hooks, reset infra...)
+├── config/checkstyle/            # Checkstyle config cho Java
+├── docs/adr/                     # Architecture Decision Records
+├── .cline/ .clinerules/          # AI tooling (skill / workflow / rule) — xem AGENTS.md §10
+└── pom.xml                       # Maven parent POM (convention build/lint + version tập trung)
 ```
+
+Maven là **multi-module**: parent `pom.xml` khai `<modules>`, version Spring Boot quản tập trung qua BOM.
 
 ---
 
-## Lint & format
+## Lint, format & test
 
 ```bash
 # Java — format (sửa file) rồi check (CI dùng check)
 mvn -q spotless:apply
-mvn -q verify                 # chạy cả spotless:check + checkstyle:check
+mvn -q verify                 # spotless:check + checkstyle:check + test + jacoco:check
 ```
 
-Convention: **Spotless + google-java-format** (format) · **Checkstyle** (lint).
+Convention: **Spotless + google-java-format** (format) · **Checkstyle** (lint) · **JUnit 5/6 + AssertJ** (test)
+· **JaCoCo** (coverage gate ≥ 80% LINE cho package `config` + `health`).
 Line-ending do `.gitattributes` ép **LF**; editor theo `.editorconfig`.
+
 
 ---
 
@@ -142,7 +148,11 @@ bash tools/reset-infra.sh
 | `5672` | RabbitMQ 4 | AMQP — producer/consumer |
 | `15672` | RabbitMQ management | UI: http://localhost:15672 (`shoplab` / password trong `.env`) |
 | `8085` | Adminer | UI xem dữ liệu Postgres: http://localhost:8085 |
+| `8090` | `service-template` | service mẫu (SL-0.4) |
 | `8080` / `8081` / `8082` | — | dành cho `api-gateway` / `identity-service` / `catalog-service` (Phase 1) |
+
+> ⚠️ `up -d` **build luôn image của `service-template`** (mất ~1–2 phút lần đầu). Muốn chỉ dựng hạ tầng:
+> `docker compose -f infra/docker-compose.yml --env-file .env up -d postgres redis rabbitmq adminer`
 
 **Database có sẵn sau lần init đầu tiên**: `identity`, `catalog`, `inventory`, `promotion`, `order`,
 `payment`, `notification` (+ DB `shoplab` làm DB "main"). Danh sách này sinh từ biến `POSTGRES_DB_*`
@@ -171,7 +181,8 @@ Muốn dùng client native: `sudo apt install -y postgresql-client redis-tools`.
 | `shoplab-redis` | ~4.5 MiB |
 | `shoplab-rabbitmq` | ~106 MiB |
 | `shoplab-adminer` | ~13 MiB |
-| **Tổng** | **~150 MiB** (dao động 145–165 MiB) |
+| `shoplab-service-template` | ~150 MiB (JVM, idle) |
+| **Tổng** | **~150 MiB hạ tầng** + ~150 MiB cho mỗi service Java |
 
 → Dùng làm baseline cho Phase 7 (K8s resource request). Lưu ý: **chưa** gồm OpenSearch/MinIO
 (chưa dựng ở SL-0.3) — hai cái này nặng hơn nhiều, cần chỉnh `%UserProfile%\.wslconfig`.
@@ -179,6 +190,93 @@ Muốn dùng client native: `sudo apt install -y postgresql-client redis-tools`.
 **Còn thiếu (cố ý, xem `Backlog.md` → SL-0.3 out of scope)**: MinIO (object storage) và OpenSearch 2.x
 (search) — dựng khi phase cần thật; observability stack (Phase 6); K8s (Phase 7).
 
+### Service template (`SL-0.4`)
+
+`service-template` là service mẫu — **không có business logic**, chỉ chứng minh hạ tầng dùng chung chạy được.
+Đây là thứ để copy ra thành service thật ở Phase 1.
+
+| Endpoint | Trả về | Dùng cho |
+|---|---|---|
+| `GET /health` | `200` + `{"status":"UP"}` | **liveness** — cố ý KHÔNG check dependency |
+| `GET /ready` | `200` khi mọi dependency UP, `503` khi có cái DOWN (kèm lý do + latency) | **readiness** |
+| `GET /version` | service name · version · git commit · build time | biết đang chạy build nào |
+| `GET /debug/slow?ms=N` | giữ request mở N ms | verify graceful shutdown |
+| `GET /debug/error` · `GET /debug/boom` | lỗi 404 / 500 theo format chuẩn | verify error response |
+
+`/debug/*` chỉ tồn tại khi `SHOPLAB_DEBUG_ENDPOINTS=true` (chỉ set trong compose local).
+
+```bash
+curl -s localhost:8090/health  ; curl -s localhost:8090/ready ; curl -s localhost:8090/version
+
+# Readiness thật sự đổi trạng thái khi dependency chết
+docker stop shoplab-postgres && curl -s -o /dev/null -w '%{http_code}\n' localhost:8090/ready   # 503
+docker start shoplab-postgres
+```
+
+**Hai thứ dễ nhầm — đừng gộp lại:**
+
+- **liveness** (`/health`) không được check dependency. Nếu check, DB chết sẽ khiến orchestrator
+  **restart cả service đang khoẻ mạnh** → càng chết nặng.
+- **readiness** (`/ready`) mới check dependency: trả `503` để load balancer **tạm ngừng đẩy traffic**
+  vào instance này, nhưng **không** restart nó.
+
+**Log**: mọi service dùng chung format JSON ở `packages/service-commons/src/main/resources/logback-shoplab.xml`
+— field `traceId`, `service`, `level`, `msg`. Muốn đổi format thì sửa **một chỗ** đó.
+
+---
+
+## Tạo service mới từ template
+
+Ví dụ tạo `order-service`:
+
+```bash
+# 1) Copy template (giữ nguyên cấu trúc, chỉ đổi tên)
+cp -r services/service-template services/order-service
+rm -rf services/order-service/target services/order-service/Dockerfile.bak
+
+# 2) Đổi artifactId + name trong pom.xml của service mới
+#    shoplab-service-template  →  shoplab-order-service
+#    ShopLab :: Service Template → ShopLab :: Order Service
+
+# 3) Đổi tên class main + package (tuỳ chọn nhưng nên làm cho rõ)
+#    com.shoplab.template.ServiceTemplateApplication → com.shoplab.order.OrderServiceApplication
+#    (nhớ sửa luôn package trong mọi file java của service)
+
+# 4) Đăng ký module vào parent pom.xml
+#    <module>services/order-service</module>
+
+# 5) Đổi tên service trong application.yml (spring.application.name) — tên này vào log + /version
+#    spring.application.name: order-service
+
+# 6) Thêm port + biến môi trường vào .env.example và một service trong infra/docker-compose.yml
+#    (copy block `service-template`, đổi tên + port)
+
+# 7) Chạy
+mvn -q verify
+docker compose -f infra/docker-compose.yml --env-file .env up -d --build order-service
+curl -s localhost:<port>/health
+```
+
+**Đừng quên** (những thứ copy không tự mang theo):
+
+- Thêm biến bắt buộc mới vào `com.shoplab.<svc>.config.RequiredEnv` — validate chạy ở `main()`.
+- **`Dockerfile`: 4 chỗ phải đổi tên** — `COPY services/<svc>/pom.xml services/<svc>/`,
+  `mvn -pl services/<svc> -am dependency:go-offline`, `mvn -pl services/<svc> -am verify`, và
+  `COPY --from=build /workspace/services/<svc>/target/shoplab-<svc>-*.jar app.jar`.
+  Build context vẫn phải là **gốc repo** (cần parent pom + `packages/service-commons`).
+- **Test không cần sửa** — template cố ý không hard-code tên service (đọc từ `spring.application.name`).
+  Nếu bạn thêm test có assert tên service thì nhớ đọc từ config, đừng viết cứng.
+- Nếu service cần check dependency sâu hơn TCP (query DB thật) → implement `DependencyHealthCheck`
+  trong service, đừng nhét JDBC driver vào shared lib.
+- Service cần một **database riêng** → thêm biến `POSTGRES_DB_<SVC>` vào `.env.example` và
+  `infra/docker-compose.yml`, rồi thêm vào `infra/init/01-create-databases.sh` (nhớ `docker compose down -v`
+  để init script chạy lại — nó chỉ chạy khi volume rỗng).
+
+**Nguyên tắc cho shared lib** (`packages/service-commons`): chỉ để **hạ tầng** (log, config, error,
+health, correlation id). **Tuyệt đối không** để domain logic hay entity/database dùng chung — làm vậy
+là tự biến microservices thành distributed monolith (AGENTS.md §6).
+
 ### Service
 
-Phase 0 chưa có service nào. Service đầu tiên (`api-gateway`) ở **Phase 1**.
+Phase 1 sẽ tạo `api-gateway` / `identity-service` / `catalog-service` bằng cách copy `service-template`.
+

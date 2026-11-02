@@ -33,7 +33,20 @@
     <module name="LeftCurly"/>
     <module name="RightCurly"/>
     <module name="WhitespaceAfter"/>
-    <module name="WhitespaceAround"/>
+    <!--
+      Block rỗng: google-java-format (Spotless) LUÔN format thành `{}`, không bao giờ `{ }`.
+      Mặc định của WhitespaceAround là allowEmpty*=false → đòi `{ }` → XUNG ĐỘT trực tiếp với
+      formatter (không thể thoả cả hai). Phải bật allow cho các loại block rỗng.
+      Phát hiện ở SL-0.4 — service template là code Java thật đầu tiên của repo.
+    -->
+    <module name="WhitespaceAround">
+      <property name="allowEmptyTypes" value="true"/>
+      <property name="allowEmptyMethods" value="true"/>
+      <property name="allowEmptyConstructors" value="true"/>
+      <property name="allowEmptyLambdas" value="true"/>
+      <property name="allowEmptyCatches" value="true"/>
+      <property name="allowEmptyLoops" value="true"/>
+    </module>
 
     <!-- Dễ gây bug -->
     <module name="EqualsHashCode"/>

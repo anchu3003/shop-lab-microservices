@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  logback-shoplab.xml — cấu hình log JSON dùng chung cho mọi service ShopLab (SL-0.4).
+
+  File này KHÔNG phải logback-spring.xml — nó được service include vào:
+
+      <springProperty scope="context" name="SHOPLAB_SERVICE_NAME" source="spring.application.name" defaultValue="unknown"/>
+      <include resource="logback-shoplab.xml"/>
+
+  Lý do đặt ở shared lib: format log là convention của cả hệ, không phải lựa chọn của từng service.
+  Sửa một chỗ, mọi service đổi theo — đúng tinh thần observability thống nhất (Phase 6 sẽ cần).
+
+  Field bắt buộc (AGENTS.md §6): traceId, service, level, msg.
+    - traceId : lấy từ MDC, do CorrelationIdFilter set
+    - service : lấy từ spring.application.name (biến SHOPLAB_SERVICE_NAME ở trên)
+    - level   : field mặc định của logstash encoder
+    - msg     : field `message` được đổi tên thành `msg`
+-->
+<included>
+
+  <appender name="SHOPLAB_JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <!-- Log UTC để khi ghép log nhiều container không phải đoán timezone. -->
+      <timeZone>UTC</timeZone>
+      <includeMdc>true</includeMdc>
+      <!--
+        includeContext = false: mặc định logstash encoder nhét MỌI property của logger context vào log
+        top-level → biến SHOPLAB_SERVICE_NAME của logback lọt ra thành field rác. Ta chỉ muốn field
+        `service` (khai ở customFields bên dưới).
+      -->
+      <includeContext>false</includeContext>
+      <!--
+        includeTags = false: log đi qua cầu commons-logging (spring-jcl) có marker "COMMONS-LOGGING"
+        → field `tags` xuất hiện ở MỘT VÀI dòng log, không phải mọi dòng. Schema log không nhất quán
+        sẽ làm log aggregation (Loki/ELK) khó truy vấn → tắt cho sạch.
+      -->
+      <includeTags>false</includeTags>
+      <fieldNames>
+        <timestamp>@timestamp</timestamp>
+        <message>msg</message>
+        <logger>logger</logger>
+        <thread>thread</thread>
+        <!-- Bỏ các field nhiễu, không ai đọc. -->
+        <version>[ignore]</version>
+        <levelValue>[ignore]</levelValue>
+        <caller>[ignore]</caller>
+      </fieldNames>
+      <customFields>{"service":"${SHOPLAB_SERVICE_NAME:-unknown}"}</customFields>
+    </encoder>
+  </appender>
+
+</included>
