@@ -280,6 +280,15 @@ Có rule + workflow + tài liệu cho git flow: commit sau mỗi ticket, tách n
 - Repo đang ở `master`, **chưa** có remote, **chưa** có `gh` → "PR vào `main`" cần 1 lần setup
   (rename + remote + `gh`); workflow phải có nhánh dự phòng khi thiếu `gh`.
 - Chọn **GitHub Flow** thay vì GitFlow vì lab 1 người, không có release train → GitFlow chỉ thêm ma sát.
+- **Diff nhiễu CRLF** (13 file, 1253/1253 dòng) khi commit `a881a01`: repo **thiếu `.gitattributes`** và
+  `core.autocrlf` đang **unset** → editor trên WSL ghi ra CRLF. Cách kiểm chứng nhanh "chỉ đổi line-ending":
+  `git diff --ignore-cr-at-eol --stat` trả **rỗng**. Đã xử lý bằng `git restore .` + `.gitattributes`
+  (`* text=auto eol=lf`). Lưu ý: `.gitattributes` **vốn đã nằm trong scope `SL-0.2`** → phần này là việc của
+  `SL-0.2` đi sớm, `SL-0.2` chỉ cần verify lại.
+- **Branch protection cho `main` không khả dụng**: repo **private** + gói **GitHub Free** → API trả
+  `403 Upgrade to GitHub Pro or make this repository public`. Cả branch protection **và** rulesets đều bị chặn.
+  Muốn enforce "không push thẳng `main`" trên gói Free → phải dùng **git hook local** (`Lefthook` `pre-push`,
+  thuộc `SL-0.2`), hoặc chuyển repo sang **public** / nâng **GitHub Pro**.
 
 ---
 
@@ -655,6 +664,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | SL-0.1 | Chốt polyglot staged (Java-first + Go); trade-off rõ: 2 template/shared lib/CI. Lint/test/git-hooks phải đổi theo ngôn ngữ, không dùng tooling Node. |
 | 2026-11-02 | SL-0.7 | Dev env = WSL2: Docker Desktop vốn đã dùng WSL2 backend → cần đưa source sang Linux fs (`~`), không để `/mnt/d/...`. |
 | 2026-11-02 | SL-0.8 | Chọn GitHub Flow (không GitFlow) cho lab 1 người; repo đang ở `master` cần rename → `main`; PR cần remote + `gh`. |
+| 2026-11-02 | SL-0.8 | Diff nhiễu **CRLF** (1253/1253 dòng) do thiếu `.gitattributes` + `core.autocrlf` unset → chuẩn hoá LF. **Branch protection/rulesets không dùng được trên repo private + GitHub Free (403)** → phải thay bằng git hook local. |
 
 ---
 
@@ -671,6 +681,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | `SL-0.2`: bổ sung `.gitattributes` + git config (`core.autocrlf`/`core.fileMode`) để tránh nhiễu khi chuyển sang WSL. |
 | 2026-11-02 | Thêm `SL-0.8` (Review): git workflow — rule `.clinerules/10-git-workflow.md`, workflow `/git-branch-pr.md`, `docs/git-flow.md`. |
 | 2026-11-02 | Đóng `SL-0.8` → `Done` (user gọi `/git-branch-pr.md` xác nhận workflow nạp đúng). |
+| 2026-11-02 | Tạo PR [#1](https://github.com/anchu3003/shop-lab-microservices/pull/1) cho `SL-0.1/0.6/0.7/0.8` (squash vào `main`). Commit `a881a01` chuẩn hoá line-ending bằng `.gitattributes` (`* text=auto eol=lf`) — sớm hơn `SL-0.2`. |
+| 2026-11-02 | Ghi learning note `SL-0.8`: diff nhiễu CRLF + kết quả thử branch protection (**403 — private + GitHub Free**, không bật được). |
 
 
 
