@@ -5,7 +5,7 @@
 | **Trạng thái** | `DRAFT v0.3` — Phase 0 (Foundation) **hoàn thành**: repo skeleton · infra local · service template · **CI xanh** |
 | **Người thực hiện** | bạn + AI |
 | **Cập nhật lần cuối** | 2026-11-03 (Phase 0 xong — `SL-0.5` CI xanh trên `main`) |
-| **Liên quan** | `AGENTS.md`, `Backlog.md`, `docs/adr/` |
+| **Liên quan** | `AGENTS.md`, `Backlog.md`, `Backlog-phase-0.md`, `docs/adr/` |
 
 ---
 
@@ -560,7 +560,7 @@ xem `README.md` → *Cách chạy* (ticket `SL-0.3`).
 ## 11. Tech stack (đã chốt — ADR-0001)
 
 > Đã chốt ngày 2026-11-02. Lý do + trade-off + điều kiện revisit xem
-> [`docs/adr/0001-tech-stack.md`](docs/adr/0001-tech-stack.md). Xem `Backlog.md` → `SL-0.1`.
+> [`docs/adr/0001-tech-stack.md`](docs/adr/0001-tech-stack.md). Xem `Backlog-phase-0.md` → `SL-0.1`.
 
 ### 11.1. Ngôn ngữ & framework
 
