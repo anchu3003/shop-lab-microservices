@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-0.5` |
+| **Ticket đang làm** | — (Phase 0 xong) |
 | **Ticket tiếp theo** | Phase 1 (epic — breakdown khi tới lượt) |
-| **Số ticket chi tiết hiện có** | 8 (Phase 0) |
+| **Số ticket chi tiết hiện có** | 8 (Phase 0 — tất cả `Done`) |
 
 ---
 
@@ -16,7 +16,7 @@
 
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
-| 0 | Foundation | 🔵 In Progress | 7 / 8 |
+| 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ⚪ Todo (epic) | — |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
@@ -908,7 +908,7 @@ Ngoài gate (không ép coverage): `web` của commons (`GlobalExceptionHandler`
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Review |
+| **Trạng thái** | Done |
 | **Phase** | 0 — Foundation |
 | **Phụ thuộc** | SL-0.4 |
 | **Ước lượng** | S |
@@ -937,7 +937,7 @@ Mỗi lần push/PR, pipeline tự chạy lint → test → build Docker image, 
 - [x] Cố tình làm fail test → pipeline đỏ
 - [x] Build image thành công trong CI
 - [x] Thời gian pipeline lần đầu được ghi lại trong ticket
-- [ ] Badge CI hiển thị đúng trạng thái trong `README.md` *(chờ merge vào `main` — badge lấy run mới nhất của `main`)*
+- [x] Badge CI hiển thị đúng trạng thái trong `README.md` *(sau merge — xem ghi chú cuối mục "Kết quả verify")*
 
 **Ghi chú kỹ thuật**
 - Chạy các job song song nếu độc lập để tiết kiệm thời gian
@@ -1054,9 +1054,29 @@ lint (checkstyle + spotless)    -> completed/success
 # ⇒ 6/6 success, KHÔNG còn `cancelled` (trước khi sửa: 3 success + 3 cancelled trên cùng commit)
 ```
 
-**AC #6 (badge)** chỉ verify được **sau khi merge vào `main`**: badge `actions/workflows/ci.yml/badge.svg` resolve
-theo **default branch**, nên khi `ci.yml` chưa có trên `main` thì URL trả **404** (đã thử cả `Bearer` lẫn basic auth
-→ `http=404 size=9 "Not Found"`). Ngoài ra repo **private** nên badge chỉ render trong trình duyệt đã đăng nhập.
+**AC #6 (badge) — verify sau merge** *(PR #5 merge lúc 2026-11-03T15:15:20Z, commit `60e8afe`)*
+
+```console
+# --- merge PR #5 (squash) → push run trên `main` xanh ---
+$ gh pr view 5 --json state,mergedAt,mergeCommit --jq '.'
+{"mergeCommit":{"oid":"60e8afe4439396813146c2c87d551a1f97399c96"},"mergedAt":"2026-11-03T15:15:20Z","state":"MERGED"}
+$ gh run view 41661973256 --json jobs --jq '.jobs[]|"\(.name) -> \(.status)/\(.conclusion)"'
+lint (checkstyle + spotless)   -> completed/success
+test (unit + jacoco gate)      -> completed/success
+build-image (service-template) -> completed/success
+# run trên `main`: event=push · 2m13s
+
+# --- badge: URL trỏ đúng workflow + branch; nội dung badge = run mới nhất trên `main` ---
+$ grep -n 'badge.svg' README.md
+3:[![CI](https://github.com/anchu3003/shop-lab-microservices/actions/workflows/ci.yml/badge.svg?branch=main)](...)
+$ curl -o /dev/null -w '%{http_code}\n' ".../actions/workflows/ci.yml/badge.svg?branch=main"
+404      # Bearer / basic auth / ?token= ĐỀU 404
+```
+
+Repo **private** → GitHub không trả SVG badge cho client không phải browser session (404 cả **trước** và **sau** merge,
+nên 404 không phải lỗi đường dẫn). Trạng thái badge = run mới nhất của `main` = `success` ⇒ badge **passing**;
+phần render SVG chỉ xem được trong browser đã đăng nhập GitHub. Trước merge thì **không thể** verify AC này, vì
+badge resolve theo default branch và `ci.yml` khi đó chưa nằm trên `main`.
 
 **Learning note**
 - **"Xanh" phải chứng minh bằng log, không suy luận**: job `test` mất 33.9 s cho 72 test — nhìn badge xanh thì
@@ -1204,6 +1224,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | SL-0.5 | Actions trên repo **private** tính theo phút (Free 2.000/tháng) → ràng buộc `needs:` giúp 2 run đỏ chỉ tốn 1m12s / 35s thay vì ~2m35s mỗi run. Badge repo private chỉ render khi đã login GitHub. |
 | 2026-11-03 | SL-0.5 | **`concurrency` gom push + PR chung một group là bẫy**: run PR huỷ run push của **cùng commit** → commit có check `cancelled` (thấy bằng `gh api .../commits/<sha>/check-runs`), PR hiện như fail dù code sạch. Gom theo `github.ref` (push = `refs/heads/x`, PR = `refs/pull/N/merge`) thì 2 run độc lập, không huỷ nhau. **Tối ưu "ít run" có thể đánh đổi bằng tín hiệu sai trên PR.** |
 | 2026-11-03 | SL-0.5 | **Badge workflow resolve theo default branch**: `actions/workflows/ci.yml/badge.svg` trả **404** khi `ci.yml` chưa nằm trên `main` (thử cả Bearer lẫn basic auth đều 404) → AC badge chỉ verify được **sau merge**. Đừng hứa "badge xanh" trước khi merge. |
+| 2026-11-03 | SL-0.5 | **AC phụ thuộc trạng thái `main` (badge, branch protection…) thì phải merge mới verify được** → ticket phải để `Review` chứ không `Done` trước merge. Và repo **private** thì SVG badge không lấy được bằng curl (chỉ browser đã login) — trạng thái phải suy từ API run mới nhất của `main`. |
 
 ---
 
@@ -1238,6 +1259,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | `SL-0.5` → `In Progress`: nhánh `feat/sl-0.5-ci-pipeline`. Chốt với user: **giữ remote HTTPS** (token VS Code có scope `workflow`, không cần đổi SSH). |
 | 2026-11-03 | `SL-0.5` → `Review`: `.github/workflows/ci.yml` (job `lint` ∥ `test` → `build-image`; cache Maven; `concurrency` theo tên nhánh; `timeout-minutes`; `permissions: contents: read`), badge CI + mục **CI (GitHub Actions)** trong `README.md`, `architecture.md` §10.3 + Changelog. **Baseline run đầu: 2m35s** (3/3 job xanh). Test âm thật: `lint` đỏ (`HealthController.java:54:5 ... [NeedBraces]`), `test` đỏ (`AppEnvTest.shouldReportLocalOnly:48`) — cả hai lần `build-image` **skipped**. PR [#5](https://github.com/anchu3003/shop-lab-microservices/pull/5). |
 | 2026-11-03 | `SL-0.5`: **sửa lỗi thiết kế `concurrency`** — gom push+PR chung group làm run PR huỷ run push, để lại check `cancelled` trên commit; đổi sang `group: ${{ github.workflow }}-${{ github.ref }}`. Cập nhật `README.md` + ticket + learning log. |
+| 2026-11-03 | Merge PR [#5](https://github.com/anchu3003/shop-lab-microservices/pull/5) bằng **squash** (`60e8afe`). Run trên `main` xanh: 3/3 job, 2m13s → badge CI `passing`. |
+| 2026-11-03 | Đóng `SL-0.5` → `Done`: **6/6 AC** đạt. **Phase 0 → 8 / 8 ✅ Done** — điều kiện hoàn thành phase đã đủ: `docker compose up` infra `healthy` · service template `/health` 200 · CI xanh · `architecture.md` §11 không còn chữ "cần chốt". Việc tiếp theo: breakdown **Phase 1** (epic → ticket chi tiết). |
 
 
 
