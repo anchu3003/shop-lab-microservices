@@ -6,7 +6,7 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.0` |
+| **Ticket đang làm** | — (chờ breakdown tiếp Phase 1) |
 | **Ticket tiếp theo** | Phase 1 (epic — breakdown tiếp khi tới lượt) |
 | **Số ticket chi tiết hiện có** | 9 (Phase 0: 8 — archive · Phase 1: 1) |
 
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 0 / 1 |
+| 1 | Walking skeleton | 🔵 In Progress | 1 / 1 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -119,7 +119,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | In Progress |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-0.5 (CI pipeline) |
 | **Ước lượng** | S |
@@ -160,14 +160,14 @@ tắt CI tạm thời khi cần.
 
 **Acceptance Criteria**
 
-- [ ] Commit **chỉ docs** → **không** có run nào được tạo (cả nhánh feature lẫn `main`)
-- [ ] Commit **có code** trên nhánh feature → chỉ **1 run** (`pull_request`), **không** còn run `push` trùng
-- [ ] Merge vào `main` → có run `push` trên `main`
-- [ ] **Draft PR** + commit code → không chạy; bấm **Ready for review** → chạy
-- [ ] `gh variable set CI_ENABLED --body false` → run vẫn được tạo nhưng **mọi job `skipped`**; đặt lại `true` → chạy bình thường
-- [ ] Đo lại usage bằng API: cùng kịch bản (1 commit docs + 1 commit code + 1 draft) giảm **≥ 50%** số run và số phút
-- [ ] `actionlint` pass trên workflow mới
-- [ ] `README.md` + ticket cập nhật (trigger mới, 3 lệnh vận hành, trade-off)
+- [x] Commit **chỉ docs** → **không** có run nào được tạo (cả nhánh feature lẫn `main`)
+- [x] Commit **có code** trên nhánh feature → chỉ **1 run** (`pull_request`), **không** còn run `push` trùng
+- [x] Merge vào `main` → có run `push` trên `main`
+- [x] **Draft PR** + commit code → không chạy; bấm **Ready for review** → chạy
+- [x] `gh variable set CI_ENABLED --body false` → run vẫn được tạo nhưng **mọi job `skipped`**; đặt lại `true` → chạy bình thường
+- [x] Đo lại usage bằng API: cùng kịch bản giảm **≥ 50%** số phút (thực đo: **8 phút** vs ~**19,5 phút** = **−59%**)
+- [x] `actionlint` pass trên workflow mới
+- [x] `README.md` + ticket cập nhật (trigger mới, 3 lệnh vận hành, trade-off)
 
 **Ghi chú kỹ thuật**
 
@@ -210,7 +210,66 @@ test (unit + jacoco gate)      | skipped | started=-
 lint (checkstyle + spotless)   | skipped | started=-
 build-image (service-template) | skipped | started=-
 # ⇒ cả 3 job `skipped` và KHÔNG có started_at ⇒ không cấp runner ⇒ 0 phút billable
+
+# --- AC (F): kill-switch bằng config — tắt rồi RE-RUN (không cần commit giả) ---
+$ gh variable set CI_ENABLED --body false
+$ gh run rerun 41676541410
+$ gh run list --limit 1
+completed skipped  feat(ci): cut CI cost ...  pull_request  attempt=2      ← mọi job skip, 0 phút
+$ gh variable set CI_ENABLED --body true ; gh run rerun 41676541410
+completed success  ... attempt=3                                           ← chạy lại bình thường (3/3 job)
+
+# --- AC (G dương): bấm "Ready for review" -> run chạy thật ---
+$ gh pr ready 7
+completed success  feat(ci): cut CI cost ...  pull_request  41676541410    ← lint · test · build-image xanh
+
+# --- AC (B dương): merge vào `main` -> CÓ run `push` trên `main` ---
+$ gh pr merge 7 --squash --delete-branch
+$ gh run view 41677658371 --json jobs --jq '.jobs[]|"\(.name) -> \(.conclusion)"'
+lint (checkstyle + spotless)   -> success
+test (unit + jacoco gate)      -> success
+build-image (service-template) -> success
+
+# --- AC (A): PR CHỈ ĐỔI DOCS -> KHÔNG có run nào được tạo ---
+$ gh api repos/.../actions/runs --jq '.total_count'
+20                       # trước và sau khi push + mở PR chỉ-docs: KHÔNG tăng (PR này chính là phép thử)
+$ gh run list --limit 1
+completed success  feat(ci): cut CI cost ...  CI  main  push  41677658371   ← vẫn là run cũ
+
+# --- Đo lại usage (làm tròn lên từng job; job `skipped` tính 0 phút) ---
+run            event        concl     att  phút  ghi chú
+41677658371    push         success   1     4   push trên main sau merge
+41676541410    pull_request success   3     8   att1=4p · att2=skipped(0p) ← kill-switch · att3=4p
+41676400180    pull_request skipped   1     0   commit docs trong PR có code (lúc còn draft)
+41676119411    pull_request skipped   1     0   PR draft
+⇒ TỔNG cả ticket SL-1.0: 12 phút (trong đó 2 run = 0 phút)
 ```
+
+**So sánh trước/sau cho cùng kịch bản** (2 push + 1 PR + merge — đúng những gì ticket này đã làm):
+
+| | Config cũ (SL-0.5) | Config mới (SL-1.0) | Giảm |
+|---|---|---|---|
+| Run được tạo | **5** (2 `push` + 3 `pull_request`) | **4** (2 trong đó `skipped` = 0 phút) | −20% |
+| Phút billable | ~**19,5** | **8** (không tính lần re-run để test kill-switch) | **−59%** |
+| Phút billable (tính cả lần test) | ~19,5 | 12 | −38% |
+
+**Learning note**
+
+- **`paths`/`paths-ignore` trên `pull_request` được đánh giá theo TOÀN BỘ diff của PR**, không phải commit cuối. Nên trong
+  một PR có code, commit docs-only vẫn làm workflow chạy (ở đây là run `skipped` vì đang draft). Muốn "commit docs không
+  tốn gì" thì phải là **PR chỉ-docs**, hoặc thêm `[skip ci]` vào commit.
+- **Job `skipped` = 0 phút** (không cấp runner) — chứng minh bằng `started_at = null` (GraphQL). ⚠️ **Bẫy đo lường**:
+  REST API `/runs/{id}/jobs` trả `started_at` **GIẢ** cho job `skipped` (started == completed) → tự đo bằng REST sẽ
+  **tính dư ~1 phút/job**. Dùng `gh run view --json jobs` (GraphQL) hoặc lọc `conclusion == 'skipped'`.
+- **Re-run có đánh giá lại `vars`** → test kill-switch **không cần commit giả** (không để lại commit rác trong history).
+- **PR draft vẫn TẠO run** (kết luận `skipped`) chứ không phải "không có run" — vẫn 0 phút, nhưng khác bản chất với
+  `paths-ignore` (không tạo run nào). Khi đọc log cần phân biệt "không có run" vs "run bị skip".
+- **`ready_for_review` phải khai tường minh** trong `on.pull_request.types` (mặc định chỉ có `opened`/`synchronize`/`reopened`);
+  thiếu nó thì bấm *Ready for review* sẽ không kích hoạt gì.
+- **Free plan (2026) tính theo TIỀN, không phải phút**: "included compute usage" = **$12/tháng** (≈ 2.000 phút Linux 2-core
+  vì $12 ÷ $0.006). Đổi runner là đổi "tốc độ đốt" (Windows 1,67×, macOS ~10×) → tối ưu trigger quan trọng hơn khi đổi runner.
+- **Đo trước khi tối ưu**: nếu không kéo usage thật từ API (18 run = 71 phút, 62% là docs) thì rất dễ tối ưu sai chỗ —
+  trực giác hay nghĩ "build image là đắt nhất" (đúng, 46%) nhưng **thứ đáng bỏ nhất lại là run docs-only**.
 
 ---
 
@@ -331,6 +390,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | process | **Backlog dài → tách archive theo phase**: ticket đã xong vẫn có giá trị (verify output + learning note) nhưng làm loãng backlog sống → tách sang `Backlog-phase-<N>.md`, giữ **Learning log + Changelog** ở `Backlog.md` làm chỉ mục xuyên phase. Kết quả: `Backlog.md` 1267 → **260 dòng**, archive 1057 dòng, không mất nội dung (8/8 `### SL-`). |
 | 2026-11-03 | process | **Commit minor không cần nhánh/PR riêng**: đóng ticket / update backlog / sửa doc → gộp vào nhánh ticket kế tiếp, tránh PR chỉ chứa doc. Rủi ro cần để ý: phần đóng ticket "trễ" một nhịp, nên **ticket chỉ được coi là `Done` khi PR chứa commit đóng ticket đã merge**. |
 | 2026-11-03 | process | **Lưu trữ snapshot theo phase = tag + Release + doc snapshot, KHÔNG giữ nhánh thường trực**: tag cho phép `git switch -c maint/phase-N phase-N` bất cứ lúc nào ⇒ nhánh thường trực **không thêm khả năng nào**, chỉ thêm rot + phân kỳ doc. Gọi là "lazy D" (ADR-0005). Tag **không** trigger CI (workflow chỉ khai `on.push.branches`) ⇒ 0 phút Actions; `git diff phase-N phase-M --stat` là công cụ học rất tốt (thấy đúng phase sau thêm gì). |
+| 2026-11-03 | SL-1.0 | **`paths` filter trên `pull_request` đánh giá theo TOÀN BỘ diff của PR** (không phải commit cuối) → commit docs trong PR có code vẫn kích hoạt workflow. Muốn commit docs "miễn phí" thì phải là PR chỉ-docs hoặc `[skip ci]`. |
+| 2026-11-03 | SL-1.0 | **Job `skipped` = 0 phút, nhưng REST jobs API trả `started_at` GIẢ cho job skipped** (started == completed) → đo chi phí bằng REST sẽ tính dư ~1 phút/job. Dùng GraphQL (`gh run view --json jobs`, `started_at = null`) hoặc lọc `conclusion == 'skipped'`. |
+| 2026-11-03 | SL-1.0 | **Đo trước khi tối ưu, đừng đoán**: 71 phút/18 run với 62% là run docs-only — trực giác nghĩ "build-image đắt nhất" (đúng 46%) nhưng thứ **đáng bỏ** nhất là run docs-only. Re-run cũng **đánh giá lại `vars`** → test kill-switch không cần commit giả. |
 
 ---
 
@@ -371,7 +433,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | **Sửa rule git**: commit minor (đóng ticket / update backlog / sửa doc / tách archive) **không** tạo nhánh + PR riêng — gộp vào nhánh của **ticket kế tiếp**; chỉ tách PR riêng khi hết ticket kế tiếp. Ghi vào `AGENTS.md` §6 · `.clinerules/10-git-workflow.md` · `docs/git-flow.md` · workflow `/close-ticket.md` (bước 8–9). |
 | 2026-11-03 | Chốt **ADR-[0005](docs/adr/0005-phase-snapshot-and-release.md)** + dựng `docs/phases/` ([index](docs/phases/README.md) + [`phase-0.md`](docs/phases/phase-0.md)): tag `phase-N` + **GitHub Release** + doc snapshot, **không** dùng release branch ("lazy D"). `AGENTS.md` §5 thêm **DoD của một phase**; `/close-ticket.md` thêm bước 8 & 10 (tách archive, tag/release sau merge). |
 | 2026-11-03 | Tạo **tag + GitHub Release `phase-0`** trên merge commit `259a7e9` (ADR-0005). Verify: push tag **không** trigger CI (workflow chỉ khai `on.push.branches`) → 0 phút Actions; `git show phase-0:<file>` đọc được snapshot. |
-| 2026-11-03 | `SL-1.0` → `In Progress`: nhánh `feat/sl-1.0-ci-cost-optimization` — tối ưu chi phí CI (`paths-ignore` cho docs, `push` chỉ trên `main`, kill-switch `vars.CI_ENABLED`, bỏ qua draft PR). **Phase 1 → In Progress** với ticket đầu tiên. Bối cảnh: đo được **71 phút/18 run**, 62% là run docs-only, 49% là run push trùng. |
+| 2026-11-03 | `SL-1.0` → `Done`: tối ưu chi phí CI — `paths-ignore` (bỏ run chỉ-docs), `push` chỉ trên `main` (hết run trùng), kill-switch `vars.CI_ENABLED`, bỏ qua draft PR (`ready_for_review`). Verify thật: push nhánh feature **0 run**, draft → run `skipped` (0 phút), `CI_ENABLED=false` + re-run → `skipped`, `true` → 3/3 xanh, merge → run `main` xanh, **PR chỉ-docs → 0 run**. Cùng kịch bản: **8 phút vs ~19,5 phút (−59%)**. Merge PR [#7](https://github.com/anchu3003/shop-lab-microservices/pull/7) (squash). **Phase 1 → 1 / 1**. |
 
 
 
