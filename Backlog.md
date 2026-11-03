@@ -184,6 +184,34 @@ tắt CI tạm thời khi cần.
 - Giữ nguyên `concurrency: group: ${{ github.workflow }}-${{ github.ref }}` + `cancel-in-progress` (SL-0.5).
 - Giữ nguyên cấu trúc 3 job (`lint` ∥ `test` → `build-image`) và cache Maven.
 
+**Kết quả verify** *(đang đo — cập nhật dần)*
+
+File sửa: `.github/workflows/ci.yml` · `README.md` · `Backlog.md`. PR [#7](https://github.com/anchu3003/shop-lab-microservices/pull/7) (mở dạng **draft** để test luôn cơ chế G).
+
+```console
+# --- AC: actionlint pass trên workflow mới ---
+$ actionlint .github/workflows/ci.yml ; echo exit=$?
+exit=0
+
+# --- AC (B): push nhánh feature KHÔNG tạo run nào ---
+$ git push -u origin feat/sl-1.0-ci-cost-optimization
+$ gh api repos/.../actions/runs --jq '.total_count'
+18                                   # trước và sau push đều 18 -> không có run `push` mới
+$ gh run list --limit 1
+completed success  docs(backlog): close SL-0.5 ...  CI  main  push  41668299796   ← vẫn là run cũ trên main
+
+# --- AC (G): PR ở dạng DRAFT -> run được tạo nhưng KHÔNG job nào chạy (0 phút) ---
+$ gh pr create --draft ...
+https://github.com/anchu3003/shop-lab-microservices/pull/7
+$ gh run list --limit 1
+completed skipped  feat(ci): cut CI cost ...  CI  feat/sl-1.0-ci-cost-optimization  pull_request  41676119411
+$ gh run view 41676119411 --json jobs --jq '.jobs[]|"\(.name) | \(.conclusion) | started=\(.started_at // "-")"'
+test (unit + jacoco gate)      | skipped | started=-
+lint (checkstyle + spotless)   | skipped | started=-
+build-image (service-template) | skipped | started=-
+# ⇒ cả 3 job `skipped` và KHÔNG có started_at ⇒ không cấp runner ⇒ 0 phút billable
+```
+
 ---
 
 ## 5. Phase 2 → 8 — Epic outline
