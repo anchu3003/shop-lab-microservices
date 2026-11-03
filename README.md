@@ -130,6 +130,10 @@ Không có CI thì "code chạy máy tôi" sẽ âm thầm phá build khi số s
 Vì sao tách 3 job: CI UI chỉ rõ job nào đỏ (đọc log nhanh), `lint` và `test` độc lập nên chạy song song, còn
 `build-image` là job nặng nhất nên chỉ chạy khi 2 job kia đã xanh (repo private tính phút Actions theo gói).
 
+**Push lên nhánh đang có PR sẽ thấy 2 run** (một cho event `push`, một cho `pull_request`) — đây là chủ ý:
+gom chung group sẽ khiến run PR huỷ run push và để lại check `cancelled` trên commit. `cancel-in-progress`
+chỉ huỷ run cũ **cùng ref** (push liên tiếp cùng nhánh / PR cập nhật liên tục).
+
 Tái hiện đúng lệnh CI ở máy:
 
 ```bash

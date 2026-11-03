@@ -953,8 +953,12 @@ Mỗi lần push/PR, pipeline tự chạy lint → test → build Docker image, 
   lặp lint. Đã **đo trước khi viết workflow**: 2 flag này thực sự skip spotless/checkstyle (log không còn
   "Starting audit...") mà `jacoco:check` vẫn chạy (`All coverage checks have been met.`).
 - Trigger `push: branches: ['**']` (đúng AC "push nhánh bất kỳ") + `pull_request: branches: [main]` (để PR có
-  check). `concurrency.group = ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}` +
-  `cancel-in-progress: true` → push + PR của cùng nhánh **không chạy trùng**, push mới huỷ run cũ.
+  check). `concurrency.group = ${{ github.workflow }}-${{ github.ref }}` + `cancel-in-progress: true` → chỉ huỷ
+  run cũ **cùng ref** (push liên tiếp cùng nhánh, PR cập nhật liên tục).
+- **Đã thử và bỏ cách gom push+PR chung một group** (`github.head_ref || github.ref_name`): khi đó run PR huỷ run
+  push của cùng commit → `gh api .../commits/<sha>/check-runs` trả về **3 check `cancelled`** nằm cạnh 3 check
+  `success`; PR hiện như có check fail dù code sạch, và sau này bật required-checks sẽ bị chặn oan. Đổi sang gom
+  theo `github.ref` → mỗi push trên nhánh có PR sinh **2 run** (push + PR) chạy độc lập; đổi lại check sạch.
 - Cache Maven qua `actions/setup-java@v4` (`cache: maven`) cho `lint`/`test`. `build-image` dùng `docker build`
   trần (không cache layer xuyên run) — chấp nhận chậm hơn để ít action/phụ thuộc. **Điều kiện revisit**: nếu job
   `build-image` > 3 phút thì chuyển sang `docker/build-push-action` + `cache-from: type=gha`.
@@ -1034,8 +1038,9 @@ Hai test âm làm trên nhánh tạm `test/sl-0.5-ci-negative` rồi **xoá** (k
 Run do `pull_request` trigger (mở PR #5): `41658741592` — `lint` success, `test` success, `build-image` success
 ⇒ check hiện trên PR. Workflow đã đăng ký: `gh api .../actions/workflows` → `CI | .github/workflows/ci.yml | state=active`.
 
-**AC #6 (badge)** chỉ verify được **sau khi merge vào `main`** (badge hiển thị trạng thái run mới nhất của `main`);
-trước merge, `main` chưa có run nào nên badge "no status".
+**AC #6 (badge)** chỉ verify được **sau khi merge vào `main`**: badge `actions/workflows/ci.yml/badge.svg` resolve
+theo **default branch**, nên khi `ci.yml` chưa có trên `main` thì URL trả **404** (đã thử cả `Bearer` lẫn basic auth
+→ `http=404 size=9 "Not Found"`). Ngoài ra repo **private** nên badge chỉ render trong trình duyệt đã đăng nhập.
 
 **Learning note**
 - **"Xanh" phải chứng minh bằng log, không suy luận**: job `test` mất 33.9 s cho 72 test — nhìn badge xanh thì
@@ -1181,6 +1186,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | SL-0.5 | **Job `test` phải skip lint để không chạy 2 lần**: `mvn verify -Dcheckstyle.skip=true -Dspotless.check.skip=true` — đo trước khi viết workflow (log hết "Starting audit..." nhưng `jacoco:check` vẫn chạy). Không suy đoán "chắc là skip được". |
 | 2026-11-03 | SL-0.5 | **Hai token một máy, scope khác nhau**: token VS Code cấp qua `GIT_ASKPASS` có `workflow` (push được `.github/workflows/*`), token `gh` CLI **không**. Kiểm tra bằng `git credential fill` + `curl -D - -H "Authorization: token $TOKEN" https://api.github.com/user` → header `x-oauth-scopes` (không in token ra). |
 | 2026-11-03 | SL-0.5 | Actions trên repo **private** tính theo phút (Free 2.000/tháng) → ràng buộc `needs:` giúp 2 run đỏ chỉ tốn 1m12s / 35s thay vì ~2m35s mỗi run. Badge repo private chỉ render khi đã login GitHub. |
+| 2026-11-03 | SL-0.5 | **`concurrency` gom push + PR chung một group là bẫy**: run PR huỷ run push của **cùng commit** → commit có check `cancelled` (thấy bằng `gh api .../commits/<sha>/check-runs`), PR hiện như fail dù code sạch. Gom theo `github.ref` (push = `refs/heads/x`, PR = `refs/pull/N/merge`) thì 2 run độc lập, không huỷ nhau. **Tối ưu "ít run" có thể đánh đổi bằng tín hiệu sai trên PR.** |
+| 2026-11-03 | SL-0.5 | **Badge workflow resolve theo default branch**: `actions/workflows/ci.yml/badge.svg` trả **404** khi `ci.yml` chưa nằm trên `main` (thử cả Bearer lẫn basic auth đều 404) → AC badge chỉ verify được **sau merge**. Đừng hứa "badge xanh" trước khi merge. |
 
 ---
 
@@ -1214,6 +1221,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | Tạo PR [#4](https://github.com/anchu3003/shop-lab-microservices/pull/4) cho `SL-0.4` (nhánh `feat/sl-0.4-service-template`, 5 commit). Merge bằng **squash** theo `docs/git-flow.md`. |
 | 2026-11-03 | `SL-0.5` → `In Progress`: nhánh `feat/sl-0.5-ci-pipeline`. Chốt với user: **giữ remote HTTPS** (token VS Code có scope `workflow`, không cần đổi SSH). |
 | 2026-11-03 | `SL-0.5` → `Review`: `.github/workflows/ci.yml` (job `lint` ∥ `test` → `build-image`; cache Maven; `concurrency` theo tên nhánh; `timeout-minutes`; `permissions: contents: read`), badge CI + mục **CI (GitHub Actions)** trong `README.md`, `architecture.md` §10.3 + Changelog. **Baseline run đầu: 2m35s** (3/3 job xanh). Test âm thật: `lint` đỏ (`HealthController.java:54:5 ... [NeedBraces]`), `test` đỏ (`AppEnvTest.shouldReportLocalOnly:48`) — cả hai lần `build-image` **skipped**. PR [#5](https://github.com/anchu3003/shop-lab-microservices/pull/5). |
+| 2026-11-03 | `SL-0.5`: **sửa lỗi thiết kế `concurrency`** — gom push+PR chung group làm run PR huỷ run push, để lại check `cancelled` trên commit; đổi sang `group: ${{ github.workflow }}-${{ github.ref }}`. Cập nhật `README.md` + ticket + learning log. |
 
 
 

@@ -33,11 +33,15 @@ on:
   pull_request:
     branches: [main]
 
-# Gom nhóm theo TÊN NHÁNH chứ không theo ref: push và pull_request của cùng một
-# nhánh rơi vào cùng group, nên run trùng (push + PR) tự triệt tiêu nhau, và push
-# mới sẽ huỷ run cũ của chính nhánh đó -> không đốt minutes cho kết quả đã lỗi thời.
+# Gom nhóm theo REF (`refs/heads/<branch>` khi push, `refs/pull/<N>/merge` khi PR):
+# push và PR là 2 group KHÁC nhau nên KHÔNG huỷ nhau. Chỉ huỷ run cũ **cùng ref** —
+# đúng chỗ cần tiết kiệm (push liên tiếp cùng nhánh, hoặc PR cập nhật liên tục).
+#
+# Vì sao KHÔNG gom push+PR vào cùng group (đã thử và bỏ): khi đó run PR sẽ huỷ run
+# push của cùng commit, để lại 3 check `cancelled` trên commit → PR hiện "check fail"
+# dù code sạch, và sau này bật required-checks sẽ bị chặn oan.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Least privilege: CI chỉ cần đọc source, không ghi gì lên repo.
