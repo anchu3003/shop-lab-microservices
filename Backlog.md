@@ -908,7 +908,7 @@ Ngoài gate (không ép coverage): `web` của commons (`GlobalExceptionHandler`
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | In Progress |
+| **Trạng thái** | Review |
 | **Phase** | 0 — Foundation |
 | **Phụ thuộc** | SL-0.4 |
 | **Ước lượng** | S |
@@ -932,16 +932,132 @@ Mỗi lần push/PR, pipeline tự chạy lint → test → build Docker image, 
 - Chưa làm integration test với Testcontainers — để Phase 1–2 khi có DB thật
 
 **Acceptance Criteria**
-- [ ] Push lên nhánh bất kỳ → pipeline chạy tự động, xanh
-- [ ] Cố tình tạo lỗi lint → pipeline đỏ, job lint báo đúng file/dòng
-- [ ] Cố tình làm fail test → pipeline đỏ
-- [ ] Build image thành công trong CI
-- [ ] Thời gian pipeline lần đầu được ghi lại trong ticket
-- [ ] Badge CI hiển thị đúng trạng thái trong `README.md`
+- [x] Push lên nhánh bất kỳ → pipeline chạy tự động, xanh
+- [x] Cố tình tạo lỗi lint → pipeline đỏ, job lint báo đúng file/dòng
+- [x] Cố tình làm fail test → pipeline đỏ
+- [x] Build image thành công trong CI
+- [x] Thời gian pipeline lần đầu được ghi lại trong ticket
+- [ ] Badge CI hiển thị đúng trạng thái trong `README.md` *(chờ merge vào `main` — badge lấy run mới nhất của `main`)*
 
 **Ghi chú kỹ thuật**
 - Chạy các job song song nếu độc lập để tiết kiệm thời gian
 - Pin version của action (`@v4`) để tránh pipeline vỡ do upstream update
+
+**Quyết định khi implement** *(chốt 2026-11-03)*
+- Tách **3 job** (`lint` ∥ `test` → `build-image`) thay vì 1 job: CI UI chỉ rõ job nào đỏ; `lint`/`test` độc lập
+  nên chạy song song; `build-image` là job nặng nhất nên chỉ chạy khi 2 job kia xanh (repo private tính **phút**
+  Actions theo gói — Free chỉ 2.000 phút/tháng).
+- Job `lint` tách **2 step** (`checkstyle:check` rồi `spotless:check`): Checkstyle chạy trước để lỗi hiện
+  `file:line` (AC #2 đòi "báo đúng file/dòng") và CI UI chỉ rõ step nào đỏ.
+- Job `test` chạy `mvn verify -Dcheckstyle.skip=true -Dspotless.check.skip=true` → giữ test + JaCoCo gate, không
+  lặp lint. Đã **đo trước khi viết workflow**: 2 flag này thực sự skip spotless/checkstyle (log không còn
+  "Starting audit...") mà `jacoco:check` vẫn chạy (`All coverage checks have been met.`).
+- Trigger `push: branches: ['**']` (đúng AC "push nhánh bất kỳ") + `pull_request: branches: [main]` (để PR có
+  check). `concurrency.group = ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}` +
+  `cancel-in-progress: true` → push + PR của cùng nhánh **không chạy trùng**, push mới huỷ run cũ.
+- Cache Maven qua `actions/setup-java@v4` (`cache: maven`) cho `lint`/`test`. `build-image` dùng `docker build`
+  trần (không cache layer xuyên run) — chấp nhận chậm hơn để ít action/phụ thuộc. **Điều kiện revisit**: nếu job
+  `build-image` > 3 phút thì chuyển sang `docker/build-push-action` + `cache-from: type=gha`.
+- `build-image` **chỉ build** + `docker image ls`, **không** `docker run` smoke test → giữ đúng scope ticket;
+  smoke-test container thật để Phase 1 (khi đã có integration test).
+- Giữ remote **HTTPS** (không đổi sang SSH): token VS Code cấp qua `GIT_ASKPASS` có scope **`workflow`** nên push
+  file `.github/workflows/*` qua HTTPS được (`git push --dry-run` → exit 0). Token của `gh` CLI thì **thiếu**
+  `workflow` → push từ terminal **ngoài** VS Code sẽ fail, khi đó chạy
+  `gh auth refresh -h github.com -s workflow && gh auth setup-git`, hoặc đổi sang SSH.
+- Không cần ADR: CI đã chốt GitHub Actions ở `architecture.md` §10.3 (ADR-0001), ticket này chỉ hiện thực hoá.
+
+**Kết quả verify** *(2026-11-03 — output thật từ GitHub Actions; runner `ubuntu-24.04`, JDK temurin 21)*
+
+File tạo: `.github/workflows/ci.yml`. File sửa: `README.md` (badge + mục **CI** + cây thư mục),
+`architecture.md` (§10.3 + Changelog), `Backlog.md`. PR [#5](https://github.com/anchu3003/shop-lab-microservices/pull/5).
+
+```console
+# --- AC1: push nhánh bất kỳ → pipeline tự chạy, xanh (run 41657425300, event=push, sha 8260938) ---
+$ gh run list --limit 1
+completed success  feat(ci): add lint, ...  CI  feat/sl-0.5-ci-pipeline  push  41657425300  2m35s  2026-11-03T14:49:02Z
+$ gh run view 41657425300 --json jobs --jq '.jobs[]|"\(.name) -> \(.status)/\(.conclusion)"'
+lint (checkstyle + spotless)   -> completed/success     # 14:49:06 → 14:49:39  (33 s)
+test (unit + jacoco gate)      -> completed/success     # 14:49:06 → 14:49:52  (46 s) ← SONG SONG với lint
+build-image (service-template) -> completed/success     # 14:49:55 → 14:51:35
+# run: created 14:49:02 → updated 14:51:37  ⇒ BASELINE lần đầu = 2m35s (cold cache)
+
+# --- AC5: job lint thật sự check (không "xanh rỗng") ---
+$ gh run view --job <lint> --log | grep -E 'Checkstyle violations|Spotless.Java|BUILD SUCCESS'
+[INFO] You have 0 Checkstyle violations.      ×3 (parent · service-commons · service-template)
+[INFO] Spotless.Java is keeping 23 files clean - 0 needs changes to be clean, 23 were already clean
+[INFO] Spotless.Java is keeping 17 files clean - 0 needs changes to be clean, 17 were already clean
+[INFO] BUILD SUCCESS   (Checkstyle step 12.312 s · Spotless step 6.545 s)
+
+# --- AC: job test thật sự chạy test (chống bẫy "Tests run: 0" đã gặp ở SL-0.4) ---
+$ gh run view --job <test> --log | grep -E 'Tests run:|coverage checks'
+[INFO] Tests run: 37, Failures: 0, Errors: 0, Skipped: 0          ← service-commons
+[INFO] All coverage checks have been met.
+[INFO] Tests run: 35, Failures: 0, Errors: 0, Skipped: 0          ← service-template
+[INFO] All coverage checks have been met.
+[INFO] BUILD SUCCESS   Total time: 33.884 s
+```
+
+```console
+# --- AC4: build image thành công trong CI ---
+$ gh run view --job <build-image> --log | grep -E 'naming to|docker image ls|shoplab-service-template'
+#23 naming to docker.io/library/shoplab-service-template:ci done
+$ docker image ls shoplab-service-template:ci
+shoplab-service-template   ci   138f1ff94268   1 second ago   252MB
+# (trong image, `mvn verify` chạy luôn spotless + checkstyle + jacoco:check:
+#  "Analyzed bundle 'shoplab-service-template' with 7 classes")
+
+# --- AC2: cố tình vi phạm Checkstyle → pipeline ĐỎ, job lint báo đúng file/dòng (run 41658103835) ---
+$ gh run view 41658103835 --json jobs --jq '.jobs[]|"\(.name) -> \(.status)/\(.conclusion)"'
+lint (checkstyle + spotless)   -> completed/failure
+test (unit + jacoco gate)      -> completed/success
+build-image (service-template) -> completed/skipped     ← job nặng KHÔNG chạy khi lint đỏ
+$ gh run view 41658103835 --log-failed | grep -E 'NeedBraces|exit code'
+[ERROR] /home/runner/work/.../services/service-template/src/main/java/com/shoplab/template/health/HealthController.java:54:5: 'if' construct must use '{}'s. [NeedBraces]
+[ERROR] src/main/java/com/shoplab/template/health/HealthController.java:[54,5] (blocks) NeedBraces: 'if' construct must use '{}'s.
+##[error]Process completed with exit code 1.
+
+# --- AC3: cố tình làm fail 1 test → pipeline ĐỎ (run 41658481217) ---
+$ gh run view 41658481217 --json jobs --jq '.jobs[]|"\(.name) -> \(.status)/\(.conclusion)"'
+lint (checkstyle + spotless)   -> completed/success
+test (unit + jacoco gate)      -> completed/failure
+build-image (service-template) -> completed/skipped
+$ gh run view 41658481217 --log-failed | grep -E 'shouldReportLocalOnly|BUILD FAILURE'
+[ERROR] Tests run: 5, Failures: 1, Errors: 0, Skipped: 0, ... -- in com.shoplab.template.config.AppEnvTest
+[ERROR] com.shoplab.template.config.AppEnvTest.shouldReportLocalOnly -- Time elapsed: 0.011 s <<< FAILURE!
+[ERROR]   AppEnvTest.shouldReportLocalOnly:48
+[ERROR] BUILD FAILURE
+```
+
+Hai test âm làm trên nhánh tạm `test/sl-0.5-ci-negative` rồi **xoá** (không đưa vào PR). Code đã sạch trở lại:
+`grep -c negativeTestNeedBraces` = `0`, `AppEnvTest` về `isFalse()`.
+
+Run do `pull_request` trigger (mở PR #5): `41658741592` — `lint` success, `test` success, `build-image` success
+⇒ check hiện trên PR. Workflow đã đăng ký: `gh api .../actions/workflows` → `CI | .github/workflows/ci.yml | state=active`.
+
+**AC #6 (badge)** chỉ verify được **sau khi merge vào `main`** (badge hiển thị trạng thái run mới nhất của `main`);
+trước merge, `main` chưa có run nào nên badge "no status".
+
+**Learning note**
+- **"Xanh" phải chứng minh bằng log, không suy luận**: job `test` mất 33.9 s cho 72 test — nhìn badge xanh thì
+  không biết test có chạy thật hay không (SL-0.4 đã từng dính "Tests run: 0 mà BUILD SUCCESS" vì surefire cũ).
+  Phải `grep 'Tests run:'` trong log CI mới dám kết luận.
+- **CI cũng phải test âm mới tin được**: 2 run đỏ (vi phạm Checkstyle → `lint` đỏ; assert sai → `test` đỏ) mới
+  chứng minh pipeline thật sự chặn, và chứng minh `needs:` hoạt động (`build-image` = `skipped`, không đốt phút).
+  Một run xanh duy nhất **không** nói được gì về việc pipeline có chặn hay không.
+- **Chọn loại vi phạm để test âm cũng phải nghĩ**: vi phạm `UnusedImports` sẽ bị Spotless (google-java-format) tự
+  xoá ngay ở hook `pre-commit` → test âm "tự chết" trước khi tới CI. Dùng `NeedBraces` (formatter không sửa được)
+  mới đi được tới CI. **Test âm phải sống sót qua các lớp tooling phía trước.**
+- **Hai token trên cùng một máy có scope khác nhau**: token VS Code cấp qua `GIT_ASKPASS` có `workflow` (push được
+  file `.github/workflows/*`), token `gh` CLI thì **không**. Cách kiểm tra không lộ secret:
+  `printf 'protocol=https\nhost=github.com\n\n' | git credential fill` rồi
+  `curl -sS -o /dev/null -D - -H "Authorization: token $TOKEN" https://api.github.com/user | grep x-oauth-scopes`.
+- **Actions trên repo private tốn phút** (Free: 2.000 phút/tháng): 2 run đỏ chỉ tốn 1m12s và 35s vì `build-image`
+  bị `skipped`; nếu 3 job chạy hết thì mỗi run ~2m35s. Ràng buộc `needs:` vừa tiết kiệm phút vừa đúng ý
+  ("không build image cho code đã fail").
+- **Đừng chạy 2 lệnh git song song** (lỗi tự gây trong ticket này): 2 lệnh `git commit` cùng lúc → tranh chấp
+  `index.lock`, một commit bị mất (`fatal: Unable to create .git/index.lock`). Git luôn phải chạy tuần tự.
+- **Badge trên repo private**: SVG chỉ render khi trình duyệt đã login GitHub → người xem ẩn danh thấy ảnh vỡ
+  (không phải CI hỏng). Muốn badge công khai thì phải đổi repo sang public, hoặc chấp nhận badge chỉ để tự xem.
 
 ---
 
@@ -1060,6 +1176,11 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | SL-0.4 | Graceful shutdown: nghe `ContextClosedEvent` là **quá muộn** (Boot drain xong mới đóng context) → phải dùng `SmartLifecycle` phase `Integer.MAX_VALUE`. Record trả ra API: tên method `isXxx()` bị Jackson coi là getter → lộ field thừa. |
 | 2026-11-02 | SL-0.4 | Log JSON: logstash encoder mặc định nhét **mọi** property logger context + field `tags` không nhất quán → phải tắt `includeContext`/`includeTags` để schema log đồng nhất. Health check TCP **không chặn được DNS resolution** (timeout chỉ áp cho `connect`). |
 | 2026-11-02 | SL-0.4 | **AC "đã thử làm theo và chạy được" phải thực thi thật**: copy template theo README → build đỏ vì test hard-code tên service. Sửa thành đọc từ `@Value("${spring.application.name}")`. Bug `-parameters` và bug này đều **không lộ** qua 72 test tự động — chỉ lộ khi curl tay / làm theo hướng dẫn. |
+| 2026-11-03 | SL-0.5 | **CI cũng phải test âm mới tin**: run xanh chỉ chứng minh pipeline *chạy*, không chứng minh nó *chặn*. Phải cố tình vi phạm Checkstyle (→ `lint` đỏ, log hiện `file:line`) và cố tình fail test (→ `test` đỏ) mới thấy `needs:` hoạt động (`build-image` = `skipped`). |
+| 2026-11-03 | SL-0.5 | **Chọn vi phạm cho test âm phải sống sót qua tooling phía trước**: `UnusedImports` bị Spotless (google-java-format) tự xoá ngay ở hook `pre-commit` → test âm tự chết trước khi tới CI. Dùng `NeedBraces` (formatter không sửa được) mới tới được CI. |
+| 2026-11-03 | SL-0.5 | **Job `test` phải skip lint để không chạy 2 lần**: `mvn verify -Dcheckstyle.skip=true -Dspotless.check.skip=true` — đo trước khi viết workflow (log hết "Starting audit..." nhưng `jacoco:check` vẫn chạy). Không suy đoán "chắc là skip được". |
+| 2026-11-03 | SL-0.5 | **Hai token một máy, scope khác nhau**: token VS Code cấp qua `GIT_ASKPASS` có `workflow` (push được `.github/workflows/*`), token `gh` CLI **không**. Kiểm tra bằng `git credential fill` + `curl -D - -H "Authorization: token $TOKEN" https://api.github.com/user` → header `x-oauth-scopes` (không in token ra). |
+| 2026-11-03 | SL-0.5 | Actions trên repo **private** tính theo phút (Free 2.000/tháng) → ràng buộc `needs:` giúp 2 run đỏ chỉ tốn 1m12s / 35s thay vì ~2m35s mỗi run. Badge repo private chỉ render khi đã login GitHub. |
 
 ---
 
@@ -1091,6 +1212,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | Sửa 3 bug tiềm ẩn lộ ra khi có code Java thật: **surefire 2.17** (Tests run: 0 mà vẫn xanh) → pin `3.6.1`; thiếu **`-parameters`** → lỗi runtime ở `@RequestParam`; **Spotless ↔ Checkstyle xung đột** ở block rỗng → bật `allowEmpty*` trong `checkstyle.xml`. |
 | 2026-11-02 | Verify AC "tạo service mới từ template" bằng cách **thực sự** copy ra `smoke-service` theo README → phát hiện test hard-code tên service (template không copy-safe) → sửa test đọc tên từ config; chạy lại `BUILD SUCCESS` rồi xoá `smoke-service`. |
 | 2026-11-02 | Tạo PR [#4](https://github.com/anchu3003/shop-lab-microservices/pull/4) cho `SL-0.4` (nhánh `feat/sl-0.4-service-template`, 5 commit). Merge bằng **squash** theo `docs/git-flow.md`. |
+| 2026-11-03 | `SL-0.5` → `In Progress`: nhánh `feat/sl-0.5-ci-pipeline`. Chốt với user: **giữ remote HTTPS** (token VS Code có scope `workflow`, không cần đổi SSH). |
+| 2026-11-03 | `SL-0.5` → `Review`: `.github/workflows/ci.yml` (job `lint` ∥ `test` → `build-image`; cache Maven; `concurrency` theo tên nhánh; `timeout-minutes`; `permissions: contents: read`), badge CI + mục **CI (GitHub Actions)** trong `README.md`, `architecture.md` §10.3 + Changelog. **Baseline run đầu: 2m35s** (3/3 job xanh). Test âm thật: `lint` đỏ (`HealthController.java:54:5 ... [NeedBraces]`), `test` đỏ (`AppEnvTest.shouldReportLocalOnly:48`) — cả hai lần `build-image` **skipped**. PR [#5](https://github.com/anchu3003/shop-lab-microservices/pull/5). |
 
 
 
