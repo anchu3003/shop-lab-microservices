@@ -4,7 +4,7 @@
 |---|---|
 | **Trạng thái** | Accepted |
 | **Ngày** | 2026-11-02 |
-| **Liên quan** | `Backlog.md` → `SL-0.4`; ADR-0001 (tech stack); ADR-0003 (module layout); `architecture.md` §6, §11.1 |
+| **Liên quan** | `Backlog-phase-0.md` → `SL-0.4`; ADR-0001 (tech stack); ADR-0003 (module layout); `architecture.md` §6, §11.1 |
 
 ---
 

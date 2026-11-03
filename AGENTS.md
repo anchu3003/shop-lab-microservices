@@ -21,7 +21,8 @@ Tài liệu nguồn (source of truth):
 | File | Nội dung |
 |---|---|
 | `architecture.md` | Kiến trúc tổng quát, service map, pattern, roadmap, tech stack |
-| `Backlog.md` | Danh sách ticket chia theo phase, thực hiện cuốn chiếu |
+| `Backlog.md` | Danh sách ticket **đang làm / sắp làm** chia theo phase, thực hiện cuốn chiếu |
+| `Backlog-phase-<N>.md` | **Archive** chi tiết các phase đã xong (giữ nguyên verify + learning note để tra cứu) |
 | `AGENTS.md` | File này — cách làm việc |
 | `docs/adr/` | Architecture Decision Record cho các quyết định lớn |
 
@@ -113,6 +114,15 @@ Tài liệu nguồn (source of truth):
 - [ ] `Backlog.md` đã update status + learning note
 - [ ] Doc/README liên quan đã update nếu cách chạy thay đổi
 
+**Definition of Done của một PHASE** (khi ticket cuối của phase xong — ADR-0005):
+
+- [ ] Tất cả ticket của phase `Done` · tách chi tiết sang `Backlog-phase-<N>.md`
+- [ ] Viết `docs/phases/phase-N.md` (stack · có gì · cách chạy **ở tag đó** · số liệu · **cái gì chưa có** · bài học)
+- [ ] Verify `docker compose up` **tại snapshot** chạy được (dán lệnh + output)
+- [ ] Tag annotated `phase-N` trên **merge commit đóng phase** + **GitHub Release** (notes tái dùng `Backlog-phase-N.md`)
+- [ ] Cập nhật `docs/phases/README.md` (index) + bảng "Archive các phase đã xong" trong `Backlog.md`
+- [ ] `architecture.md` §12 đánh dấu phase đã xong (nếu roadmap thay đổi)
+
 ---
 
 ## 6. Convention code
@@ -124,6 +134,12 @@ Chi tiết ngôn ngữ/framework xem `architecture.md` §11. Quy ước chung:
 - **Branch**: `<type>/<ticket-id>-slug` — ví dụ `feat/sl-2.4-order-saga`, `fix/sl-3.1-...`.
 - **Git workflow**: **GitHub Flow** (base `main` + nhánh ngắn hạn + PR). **Commit sau khi hoàn thành mỗi ticket**
   (sau khi verify thật). Chi tiết: `docs/git-flow.md` + rule `.clinerules/10-git-workflow.md`.
+- **Commit minor — KHÔNG tạo nhánh/PR riêng**: commit nhỏ (đóng ticket, update `Backlog.md`/learning note, sửa doc
+  lặt vặt, tách `Backlog-phase-<N>.md`) **gộp vào nhánh của ticket kế tiếp** — cùng một PR.
+  Chỉ tạo nhánh + PR riêng khi **không còn ticket kế tiếp** (hết phase / dừng dự án).
+  ⚠️ Thay đổi **có code** thì **không** được gộp — phải là ticket riêng (§3.1).
+- **Archive theo phase**: phase xong → tách phần chi tiết (ticket + verify + learning note) sang
+  `Backlog-phase-<N>.md`; `Backlog.md` giữ việc đang làm + bảng archive + Learning log + Changelog.
 - **Folder**: service dùng `kebab-case` — `order-service`, `api-gateway`.
 - **Config**: 12-factor — đọc từ env, `.env.example` commit lên, `.env` **không** commit.
 - **Log**: structured JSON, luôn có `traceId`, `service`, `level`, `msg`.

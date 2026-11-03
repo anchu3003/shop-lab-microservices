@@ -4,7 +4,7 @@
 |---|---|
 | **Trạng thái** | Accepted |
 | **Ngày** | 2026-11-02 |
-| **Liên quan** | `Backlog.md` → `SL-0.7`, `SL-0.2`; `architecture.md` §10; ADR-0001 |
+| **Liên quan** | `Backlog-phase-0.md` → `SL-0.7`, `SL-0.2`; `architecture.md` §10; ADR-0001 |
 
 ---
 

@@ -2,10 +2,10 @@
 
 | | |
 |---|---|
-| **Trạng thái** | `DRAFT v0.2` — §11 Tech stack đã chốt (ADR-0001) |
+| **Trạng thái** | `DRAFT v0.3` — Phase 0 (Foundation) **hoàn thành**: repo skeleton · infra local · service template · **CI xanh** |
 | **Người thực hiện** | bạn + AI |
-| **Cập nhật lần cuối** | 2026-11-02 (Phase 0 — chốt tech stack, ADR-0001) |
-| **Liên quan** | `AGENTS.md`, `Backlog.md`, `docs/adr/` |
+| **Cập nhật lần cuối** | 2026-11-03 (Phase 0 xong — `SL-0.5` CI xanh trên `main`) |
+| **Liên quan** | `AGENTS.md`, `Backlog.md`, `Backlog-phase-0.md`, `docs/adr/`, `docs/phases/` |
 
 ---
 
@@ -560,7 +560,7 @@ xem `README.md` → *Cách chạy* (ticket `SL-0.3`).
 ## 11. Tech stack (đã chốt — ADR-0001)
 
 > Đã chốt ngày 2026-11-02. Lý do + trade-off + điều kiện revisit xem
-> [`docs/adr/0001-tech-stack.md`](docs/adr/0001-tech-stack.md). Xem `Backlog.md` → `SL-0.1`.
+> [`docs/adr/0001-tech-stack.md`](docs/adr/0001-tech-stack.md). Xem `Backlog-phase-0.md` → `SL-0.1`.
 
 ### 11.1. Ngôn ngữ & framework
 
@@ -733,6 +733,8 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-02 | `SL-0.3`: dựng hạ tầng local bằng Docker Compose (Postgres 16 · Redis 7 · RabbitMQ 4 · Adminer); cập nhật §10.1 (port + RAM baseline ≈ 150 MiB) | bạn + AI |
 | 2026-11-02 | `SL-0.4`: chốt **Spring Boot 4.1.2** + Maven multi-module (ADR-0003); thêm shared lib `packages/service-commons` + `services/service-template` (ADR-0004); cập nhật §11.1 | bạn + AI |
 | 2026-11-03 | `SL-0.5`: dựng CI GitHub Actions (`.github/workflows/ci.yml`) — job `lint` (Checkstyle + Spotless) ∥ `test` (unit + JaCoCo gate) → `build-image`; cập nhật §10.3 | bạn + AI |
+| 2026-11-03 | **Phase 0 (Foundation) hoàn thành**: `SL-0.5` merge, CI xanh trên `main` (3/3 job); trạng thái doc → `DRAFT v0.3` | bạn + AI |
+| 2026-11-03 | ADR-[0005](docs/adr/0005-phase-snapshot-and-release.md): lưu trữ snapshot theo phase bằng **tag `phase-N` + GitHub Release + `docs/phases/phase-N.md`** (không dùng release branch — "lazy D"); thêm `docs/phases/` + DoD của phase | bạn + AI |
 
 
 

@@ -13,4 +13,10 @@ và ghi vào Learning log.
 5. Thêm dòng vào mục "Learning log" (ngày + ticket + học được).
 6. Cập nhật bảng "Trạng thái theo phase" + header (Ticket đang làm / Ticket tiếp theo).
 7. Nếu design đổi → đảm bảo `architecture.md` + ADR đã update.
+8. Nếu **phase đã xong** (DoD của phase — `AGENTS.md` §5): tách `Backlog-phase-<N>.md`, viết `docs/phases/phase-N.md`,
+   thêm dòng vào bảng "Archive các phase đã xong". Các file này đi cùng PR đóng phase.
+9. **Commit**: còn ticket kế tiếp → gộp commit đóng ticket vào **nhánh của ticket kế tiếp**
+   (không mở nhánh/PR riêng cho doc — xem `docs/git-flow.md`).
+10. **Sau khi PR đóng phase đã merge**: gắn tag annotated `phase-N` lên **merge commit** + tạo **GitHub Release**
+    (tag/release không cần PR, không trigger CI — ADR-0005).
 </detailed_sequence_of_steps>

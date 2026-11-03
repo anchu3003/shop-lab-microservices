@@ -9,11 +9,14 @@
 |---|---|
 | Kiến trúc, tech stack, roadmap | [`architecture.md`](architecture.md) |
 | Ticket & tiến độ theo phase | [`Backlog.md`](Backlog.md) |
+| Archive Phase 0 (chi tiết ticket + verify) | [`Backlog-phase-0.md`](Backlog-phase-0.md) |
+| Snapshot từng phase (tag + release + số liệu) | [`docs/phases/`](docs/phases/README.md) |
 | Cách làm việc (working agreement) | [`AGENTS.md`](AGENTS.md) |
 | Quyết định kiến trúc (ADR) | [`docs/adr/`](docs/adr/) |
 | Git workflow | [`docs/git-flow.md`](docs/git-flow.md) |
 
-**Trạng thái hiện tại**: Phase 0 — Foundation (xem `Backlog.md`). Chưa có business logic.
+**Trạng thái hiện tại**: Phase 0 — Foundation ✅ **Done (8/8)** — chi tiết ở [`Backlog-phase-0.md`](Backlog-phase-0.md).
+Phase 1 (Walking skeleton) chưa bắt đầu. Chưa có business logic.
 
 ---
 
@@ -92,6 +95,7 @@ Bỏ qua hook khi thật cần (hạn chế tối đa): `LEFTHOOK=0 git commit -
 ├── tools/                        # script phụ trợ (git hooks, reset infra...)
 ├── config/checkstyle/            # Checkstyle config cho Java
 ├── docs/adr/                     # Architecture Decision Records
+├── docs/phases/                  # Snapshot từng phase (tag + release) — ADR-0005
 ├── .github/workflows/            # CI (GitHub Actions) — SL-0.5
 ├── .cline/ .clinerules/          # AI tooling (skill / workflow / rule) — xem AGENTS.md §10
 └── pom.xml                       # Maven parent POM (convention build/lint + version tập trung)
@@ -228,7 +232,7 @@ Muốn dùng client native: `sudo apt install -y postgresql-client redis-tools`.
 → Dùng làm baseline cho Phase 7 (K8s resource request). Lưu ý: **chưa** gồm OpenSearch/MinIO
 (chưa dựng ở SL-0.3) — hai cái này nặng hơn nhiều, cần chỉnh `%UserProfile%\.wslconfig`.
 
-**Còn thiếu (cố ý, xem `Backlog.md` → SL-0.3 out of scope)**: MinIO (object storage) và OpenSearch 2.x
+**Còn thiếu (cố ý, xem [`Backlog-phase-0.md`](Backlog-phase-0.md) → SL-0.3 out of scope)**: MinIO (object storage) và OpenSearch 2.x
 (search) — dựng khi phase cần thật; observability stack (Phase 6); K8s (Phase 7).
 
 ### Service template (`SL-0.4`)

@@ -8,7 +8,8 @@ Rule phụ trợ. **Nguồn sự thật vẫn là `AGENTS.md`** — không lặp
 
 1. `AGENTS.md` — working agreement (ngôn ngữ, nguyên tắc, convention, DoR/DoD).
 2. `architecture.md` — kiến trúc, tech stack, roadmap, glossary.
-3. `Backlog.md` — ticket đang làm / tiếp theo, learning log.
+3. `Backlog.md` — ticket đang làm / tiếp theo, learning log, bảng archive.
+   Phase đã xong → chi tiết nằm ở `Backlog-phase-<N>.md` (chỉ đọc khi cần tra cứu).
 
 Không tạo `memory-bank/` riêng. Hai file `architecture.md` + `Backlog.md` đóng vai **Memory Bank**.
 

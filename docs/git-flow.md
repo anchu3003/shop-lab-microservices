@@ -39,6 +39,20 @@
 - Merge kiểu **squash** để `main` sạch.
 - **Không** merge khi chưa verify thật.
 
+## Commit minor — KHÔNG tạo nhánh/PR riêng
+
+Commit nhỏ (đóng ticket, update `Backlog.md`/learning note, sửa doc lặt vặt, tách `Backlog-phase-<N>.md`)
+**không** cần nhánh + PR riêng: gộp vào **nhánh của ticket kế tiếp** (commit riêng, message riêng).
+
+| Trường hợp | Cách làm |
+|---|---|
+| **Còn ticket kế tiếp** | Gộp vào nhánh `feat/<ticket-id>-slug` của ticket kế tiếp → **cùng PR** |
+| **Không còn ticket kế tiếp** (hết phase / dừng dự án) | Tạo nhánh `docs/<mô-tả-ngắn>` + PR riêng |
+| Thay đổi **có code** | ❌ Không gộp — phải là ticket riêng (`AGENTS.md` §3.1) |
+
+**Trade-off đã chấp nhận**: phần "đóng ticket" trễ một nhịp (nằm trong PR của ticket kế tiếp) — đổi lại không sinh
+PR chỉ chứa doc. Model "`main` luôn xanh + mọi thay đổi đi qua PR" **không** bị phá vì vẫn không commit thẳng `main`.
+
 ## Lệnh mẫu
 
 ```bash
