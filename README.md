@@ -10,6 +10,7 @@
 | Kiến trúc, tech stack, roadmap | [`architecture.md`](architecture.md) |
 | Ticket & tiến độ theo phase | [`Backlog.md`](Backlog.md) |
 | Archive Phase 0 (chi tiết ticket + verify) | [`Backlog-phase-0.md`](Backlog-phase-0.md) |
+| Snapshot từng phase (tag + release + số liệu) | [`docs/phases/`](docs/phases/README.md) |
 | Cách làm việc (working agreement) | [`AGENTS.md`](AGENTS.md) |
 | Quyết định kiến trúc (ADR) | [`docs/adr/`](docs/adr/) |
 | Git workflow | [`docs/git-flow.md`](docs/git-flow.md) |
@@ -94,6 +95,7 @@ Bỏ qua hook khi thật cần (hạn chế tối đa): `LEFTHOOK=0 git commit -
 ├── tools/                        # script phụ trợ (git hooks, reset infra...)
 ├── config/checkstyle/            # Checkstyle config cho Java
 ├── docs/adr/                     # Architecture Decision Records
+├── docs/phases/                  # Snapshot từng phase (tag + release) — ADR-0005
 ├── .github/workflows/            # CI (GitHub Actions) — SL-0.5
 ├── .cline/ .clinerules/          # AI tooling (skill / workflow / rule) — xem AGENTS.md §10
 └── pom.xml                       # Maven parent POM (convention build/lint + version tập trung)

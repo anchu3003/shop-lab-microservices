@@ -114,6 +114,15 @@ Tài liệu nguồn (source of truth):
 - [ ] `Backlog.md` đã update status + learning note
 - [ ] Doc/README liên quan đã update nếu cách chạy thay đổi
 
+**Definition of Done của một PHASE** (khi ticket cuối của phase xong — ADR-0005):
+
+- [ ] Tất cả ticket của phase `Done` · tách chi tiết sang `Backlog-phase-<N>.md`
+- [ ] Viết `docs/phases/phase-N.md` (stack · có gì · cách chạy **ở tag đó** · số liệu · **cái gì chưa có** · bài học)
+- [ ] Verify `docker compose up` **tại snapshot** chạy được (dán lệnh + output)
+- [ ] Tag annotated `phase-N` trên **merge commit đóng phase** + **GitHub Release** (notes tái dùng `Backlog-phase-N.md`)
+- [ ] Cập nhật `docs/phases/README.md` (index) + bảng "Archive các phase đã xong" trong `Backlog.md`
+- [ ] `architecture.md` §12 đánh dấu phase đã xong (nếu roadmap thay đổi)
+
 ---
 
 ## 6. Convention code
