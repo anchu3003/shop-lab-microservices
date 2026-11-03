@@ -120,10 +120,11 @@ Line-ending do `.gitattributes` ép **LF**; editor theo `.editorconfig`.
 
 ---
 
-## CI (GitHub Actions) — `SL-0.5`
+## CI (GitHub Actions) — `SL-0.5` (dựng) + `SL-1.0` (tối ưu chi phí)
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy khi **push lên nhánh bất kỳ** và khi **mở PR vào `main`**.
-Không có CI thì "code chạy máy tôi" sẽ âm thầm phá build khi số service tăng lên ở Phase 1+.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy khi **push lên `main`** và khi **mở/cập nhật PR vào `main`**
+(PR ở dạng **draft bị bỏ qua** cho tới khi bấm *Ready for review*). Không có CI thì "code chạy máy tôi" sẽ âm thầm phá
+build khi số service tăng lên ở Phase 1+.
 
 | Job | Quan hệ | Lệnh | Chặn cái gì |
 |---|---|---|---|
@@ -132,11 +133,26 @@ Không có CI thì "code chạy máy tôi" sẽ âm thầm phá build khi số s
 | `build-image` | sau `lint` + `test` | `docker build -f services/service-template/Dockerfile …` | Dockerfile / image build hỏng |
 
 Vì sao tách 3 job: CI UI chỉ rõ job nào đỏ (đọc log nhanh), `lint` và `test` độc lập nên chạy song song, còn
-`build-image` là job nặng nhất nên chỉ chạy khi 2 job kia đã xanh (repo private tính phút Actions theo gói).
+`build-image` là job nặng nhất nên chỉ chạy khi 2 job kia đã xanh (repo private tính **tiền/phút** Actions theo gói).
 
-**Push lên nhánh đang có PR sẽ thấy 2 run** (một cho event `push`, một cho `pull_request`) — đây là chủ ý:
-gom chung group sẽ khiến run PR huỷ run push và để lại check `cancelled` trên commit. `cancel-in-progress`
-chỉ huỷ run cũ **cùng ref** (push liên tiếp cùng nhánh / PR cập nhật liên tục).
+**Không chạy CI khi không cần** (`SL-1.0`) — đo bằng API trước khi tối ưu: 18 run = **~71 phút**, trong đó **62% số phút
+chỉ là sửa docs** và **49% là run `push` trùng với run `pull_request`**:
+
+| Cơ chế | Cách dùng | Tác dụng |
+|---|---|---|
+| `paths-ignore` | tự động — run chỉ đổi `**.md`, `docs/**`, `.clinerules/**`, `.cline/**`, `LICENSE` sẽ **không chạy** | bỏ hẳn nhóm run docs |
+| `push` chỉ trên `main` | tự động — nhánh feature chỉ chạy qua `pull_request` | bỏ run trùng push/PR |
+| **Kill-switch** | `gh variable set CI_ENABLED --body false` (tắt) · `--body true` (bật) | tạm dừng CI **không cần sửa file** — job bị `skipped`, không đốt phút |
+| **Bỏ qua draft PR** | mở PR dạng **draft** → không chạy; bấm **Ready for review** → chạy | không đốt phút cho WIP |
+| `[skip ci]` | thêm vào commit message để bỏ qua 1 commit cụ thể | cho commit docs lẻ |
+| Tắt hẳn workflow | `gh workflow disable ci.yml` · `gh workflow enable ci.yml` | dừng hẳn CI khi làm loạt thay đổi lớn |
+
+> ⚠️ Workflow bị **skip** (do `paths-ignore` hoặc `[skip ci]`) để lại check ở trạng thái **"Pending"** → sẽ **chặn merge**
+> nếu sau này bật required checks. Repo hiện private + Free nên chưa bật được branch protection; khi chuyển public/Team
+> thì chuyển `paths-ignore` ở trigger sang điều kiện ở **job level** (job bị skip được tính là pass).
+>
+> `cancel-in-progress` chỉ huỷ run cũ **cùng ref** (push liên tiếp cùng nhánh / PR cập nhật liên tục) — cố ý không gom
+> `push` + `pull_request` chung group vì làm vậy sẽ để lại check `cancelled` sai trên commit.
 
 Tái hiện đúng lệnh CI ở máy:
 

@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (Phase 0 xong) |
-| **Ticket tiếp theo** | Phase 1 (epic — breakdown khi tới lượt) |
-| **Số ticket chi tiết hiện có** | 8 (Phase 0 — tất cả `Done`) |
+| **Ticket đang làm** | `SL-1.0` |
+| **Ticket tiếp theo** | Phase 1 (epic — breakdown tiếp khi tới lượt) |
+| **Số ticket chi tiết hiện có** | 9 (Phase 0: 8 — archive · Phase 1: 1) |
 
 ---
 
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | ⚪ Todo (epic) | — |
+| 1 | Walking skeleton | 🔵 In Progress | 0 / 1 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -97,19 +97,127 @@ Pattern / thư viện / trade-off đã chấp nhận.
 
 ---
 
-## 4. Phase 1 → 8 — Epic outline
+## 4. Phase 1 — Walking skeleton
 
-> Các phase này **chỉ ở mức epic**. Khi Phase 0 xong mới breakdown Phase 1 thành ticket chi tiết.
-> Đây là chủ ý: breakdown quá sớm sẽ phải viết lại vì hiểu biết thay đổi sau mỗi phase.
+> **Mục tiêu phase**: đường đi từ client tới DB chạy được **end-to-end** với 3 service đầu tiên
+> (`api-gateway` → `identity-service` / `catalog-service` → Postgres), có auth JWT + contract OpenAPI.
+>
+> **Điều kiện hoàn thành phase**: register → login → lấy token → gọi API product qua gateway chạy end-to-end ·
+> CI xanh · có OpenAPI spec · tách archive + tag `phase-1` (ADR-0005).
 
-### Phase 1 — Walking skeleton
-Mục tiêu: đường đi từ client tới DB chạy được end-to-end với 3 service đầu tiên.
+**Epic — chưa breakdown hết, chỉ breakdown khi tới lượt** (`AGENTS.md` §3.1)
 
-- `SL-1.x` API Gateway bản mỏng: routing, verify JWT, correlation id, error response thống nhất
-- `SL-1.x` `identity-service`: đăng ký, đăng nhập, refresh token, JWT, RBAC cơ bản
-- `SL-1.x` `catalog-service`: CRUD product/SKU/category, migration + seed data, phân trang & filter
-- `SL-1.x` E2E smoke test: register → login → create product (seller) → list product (guest) qua gateway
-- `SL-1.x` OpenAPI spec cho các endpoint Phase 1
+- `api-gateway` bản mỏng: routing, verify JWT, correlation id, error response thống nhất
+- `identity-service`: đăng ký, đăng nhập, refresh token, JWT, RBAC cơ bản
+- `catalog-service`: CRUD product/SKU/category, migration + seed data, phân trang & filter
+- E2E smoke test: register → login → create product (seller) → list product (guest) qua gateway
+- OpenAPI spec cho các endpoint Phase 1
+
+---
+
+### SL-1.0 — Tối ưu chi phí CI: paths filter, push chỉ trên `main`, kill-switch, bỏ qua draft PR
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | In Progress |
+| **Phase** | 1 — Walking skeleton |
+| **Phụ thuộc** | SL-0.5 (CI pipeline) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Số liệu thật đo từ API sau SL-0.5 (18 run trong tháng 11/2026): **~71 phút billable**, trung bình **3,9 phút/run**.
+
+- **11/18 run (62% — 44 phút) chỉ sửa docs** (`.md`, `docs/`, `.clinerules/`) → build/test hoàn toàn vô nghĩa.
+- **9 run `push` trên nhánh feature = 35 phút**, trong khi đã có run `pull_request` tương ứng (chạy song song, gấp đôi).
+- Job `build-image` chiếm **33/71 phút (46%)** — nặng nhất vì build trong Docker lại chạy `mvn verify` lần nữa.
+
+GitHub Free cho repo private: **included compute usage $12/tháng**, tính theo **tiền** chứ không phải phút
+($12 ÷ $0.006/phút Linux 2-core = 2.000 phút). Vượt quota: **chưa có payment method → bị block** (CI ngừng chạy);
+có payment method → bị tính tiền. Phase 1 trở đi số run sẽ tăng mạnh (3 service + integration test) → tối ưu **trước**
+khi bắt tay vào service để cả phase hưởng lợi.
+
+**Mục tiêu**
+
+Giảm ≥ 50% số phút CI cho cùng khối lượng công việc, **không** giảm chất lượng chốt chặn: vẫn lint + test + build image
+cho mọi thay đổi **có code**, nhưng không chạy cho thay đổi docs, không chạy 2 lần cho cùng một nhánh, và có công tắc
+tắt CI tạm thời khi cần.
+
+**In scope**
+
+- **A. `paths-ignore`**: bỏ hẳn run khi chỉ đổi `**.md`, `docs/**`, `.clinerules/**`, `.cline/**`, `LICENSE`
+- **B. Trigger gọn**: `push` chỉ trên `main`; nhánh feature chỉ chạy qua `pull_request` (bỏ run trùng)
+- **F. Kill-switch bằng config**: job-level `if: vars.CI_ENABLED != 'false'` + `gh variable set CI_ENABLED --body false`
+- **G. Bỏ qua Draft PR**: thêm `ready_for_review` vào `on.pull_request.types`, job skip khi PR còn draft
+- Cập nhật `README.md` (mục CI: trigger mới + 3 lệnh vận hành) + ghi lại số đo trước/sau
+
+**Out of scope**
+
+- Gộp `lint` vào `test` (mất tín hiệu "job nào đỏ") — chưa cần
+- Gate `build-image` theo path / thêm `ARG SKIP_TESTS` — chưa cần
+- Self-hosted runner, chuyển repo sang public, required checks (branch protection)
+- Integration test Testcontainers (ticket riêng của Phase 1–2)
+
+**Acceptance Criteria**
+
+- [ ] Commit **chỉ docs** → **không** có run nào được tạo (cả nhánh feature lẫn `main`)
+- [ ] Commit **có code** trên nhánh feature → chỉ **1 run** (`pull_request`), **không** còn run `push` trùng
+- [ ] Merge vào `main` → có run `push` trên `main`
+- [ ] **Draft PR** + commit code → không chạy; bấm **Ready for review** → chạy
+- [ ] `gh variable set CI_ENABLED --body false` → run vẫn được tạo nhưng **mọi job `skipped`**; đặt lại `true` → chạy bình thường
+- [ ] Đo lại usage bằng API: cùng kịch bản (1 commit docs + 1 commit code + 1 draft) giảm **≥ 50%** số run và số phút
+- [ ] `actionlint` pass trên workflow mới
+- [ ] `README.md` + ticket cập nhật (trigger mới, 3 lệnh vận hành, trade-off)
+
+**Ghi chú kỹ thuật**
+
+- **Vì sao `paths-ignore` chứ không `paths`**: `paths` là allow-list → dễ sót path mới (ví dụ `packages/` mới) và im lặng
+  bỏ qua thay đổi cần build. `paths-ignore` là deny-list hẹp, chỉ liệt kê thứ **chắc chắn** không ảnh hưởng build.
+- **Không** ignore `.github/**` (đổi workflow phải được CI kiểm chứng), `.editorconfig`/`.gitattributes`
+  (ảnh hưởng format/line-ending → Spotless), `tools/**`, `infra/**`.
+- **Trade-off đã biết**: workflow bị skip (do `paths-ignore` hoặc `[skip ci]`) để lại check ở trạng thái **"Pending"** →
+  **sẽ chặn merge nếu bật required checks**. Hiện repo private + Free nên không bật được branch protection ⇒ chấp nhận.
+  Khi chuyển public/Team: chuyển `paths-ignore` ở trigger sang **điều kiện ở job level** (dùng `vars` + path filter),
+  vì job bị **skip** thì check tính là pass.
+- **Vì sao dùng `vars` cho kill-switch**: `vars` **được phép** trong `jobs.<job_id>.if` (đã verify bằng `actionlint` 1.7.12
+  → exit 0), nên tắt/bật CI **không cần sửa file**, không cần commit "tạm" nào trong history.
+- Giữ nguyên `concurrency: group: ${{ github.workflow }}-${{ github.ref }}` + `cancel-in-progress` (SL-0.5).
+- Giữ nguyên cấu trúc 3 job (`lint` ∥ `test` → `build-image`) và cache Maven.
+
+**Kết quả verify** *(đang đo — cập nhật dần)*
+
+File sửa: `.github/workflows/ci.yml` · `README.md` · `Backlog.md`. PR [#7](https://github.com/anchu3003/shop-lab-microservices/pull/7) (mở dạng **draft** để test luôn cơ chế G).
+
+```console
+# --- AC: actionlint pass trên workflow mới ---
+$ actionlint .github/workflows/ci.yml ; echo exit=$?
+exit=0
+
+# --- AC (B): push nhánh feature KHÔNG tạo run nào ---
+$ git push -u origin feat/sl-1.0-ci-cost-optimization
+$ gh api repos/.../actions/runs --jq '.total_count'
+18                                   # trước và sau push đều 18 -> không có run `push` mới
+$ gh run list --limit 1
+completed success  docs(backlog): close SL-0.5 ...  CI  main  push  41668299796   ← vẫn là run cũ trên main
+
+# --- AC (G): PR ở dạng DRAFT -> run được tạo nhưng KHÔNG job nào chạy (0 phút) ---
+$ gh pr create --draft ...
+https://github.com/anchu3003/shop-lab-microservices/pull/7
+$ gh run list --limit 1
+completed skipped  feat(ci): cut CI cost ...  CI  feat/sl-1.0-ci-cost-optimization  pull_request  41676119411
+$ gh run view 41676119411 --json jobs --jq '.jobs[]|"\(.name) | \(.conclusion) | started=\(.started_at // "-")"'
+test (unit + jacoco gate)      | skipped | started=-
+lint (checkstyle + spotless)   | skipped | started=-
+build-image (service-template) | skipped | started=-
+# ⇒ cả 3 job `skipped` và KHÔNG có started_at ⇒ không cấp runner ⇒ 0 phút billable
+```
+
+---
+
+## 5. Phase 2 → 8 — Epic outline
+
+> Các phase này **chỉ ở mức epic**. Chỉ breakdown thành ticket chi tiết khi tới lượt — breakdown sớm sẽ phải viết lại
+> vì hiểu biết thay đổi sau mỗi phase (`AGENTS.md` §3.1).
 
 ### Phase 2 — Core commerce flow
 Mục tiêu: luồng mua hàng hoàn chỉnh, đúng dữ liệu kể cả khi fail.
@@ -190,7 +298,7 @@ Mục tiêu: các pattern nâng cao, chỉ làm khi đã vững nền.
 
 ---
 
-## 5. Learning log
+## 6. Learning log
 
 Ghi lại những thứ học được trong quá trình làm — đây là **output chính** của repo này.
 
@@ -226,7 +334,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 ---
 
-## 6. Changelog
+## 7. Changelog
 
 | Ngày | Thay đổi |
 |---|---|
@@ -262,6 +370,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | **Tách archive**: chuyển toàn bộ Phase 0 (8 ticket + bối cảnh/AC/quyết định/verify/learning note) sang [`Backlog-phase-0.md`](Backlog-phase-0.md); `Backlog.md` còn **260 dòng** (bảng phase · convention · pointer + bảng archive · epic Phase 1–8 · Learning log · Changelog). Cập nhật tham chiếu ở `README.md`, `architecture.md`, ADR-0001…0004, `.clinerules/00-context.md`, `AGENTS.md` §1/§6. |
 | 2026-11-03 | **Sửa rule git**: commit minor (đóng ticket / update backlog / sửa doc / tách archive) **không** tạo nhánh + PR riêng — gộp vào nhánh của **ticket kế tiếp**; chỉ tách PR riêng khi hết ticket kế tiếp. Ghi vào `AGENTS.md` §6 · `.clinerules/10-git-workflow.md` · `docs/git-flow.md` · workflow `/close-ticket.md` (bước 8–9). |
 | 2026-11-03 | Chốt **ADR-[0005](docs/adr/0005-phase-snapshot-and-release.md)** + dựng `docs/phases/` ([index](docs/phases/README.md) + [`phase-0.md`](docs/phases/phase-0.md)): tag `phase-N` + **GitHub Release** + doc snapshot, **không** dùng release branch ("lazy D"). `AGENTS.md` §5 thêm **DoD của một phase**; `/close-ticket.md` thêm bước 8 & 10 (tách archive, tag/release sau merge). |
+| 2026-11-03 | Tạo **tag + GitHub Release `phase-0`** trên merge commit `259a7e9` (ADR-0005). Verify: push tag **không** trigger CI (workflow chỉ khai `on.push.branches`) → 0 phút Actions; `git show phase-0:<file>` đọc được snapshot. |
+| 2026-11-03 | `SL-1.0` → `In Progress`: nhánh `feat/sl-1.0-ci-cost-optimization` — tối ưu chi phí CI (`paths-ignore` cho docs, `push` chỉ trên `main`, kill-switch `vars.CI_ENABLED`, bỏ qua draft PR). **Phase 1 → In Progress** với ticket đầu tiên. Bối cảnh: đo được **71 phút/18 run**, 62% là run docs-only, 49% là run push trùng. |
 
 
 
