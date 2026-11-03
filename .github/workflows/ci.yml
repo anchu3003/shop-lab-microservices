@@ -20,18 +20,44 @@
 #   Build image cho code đã fail lint/test là đốt minutes vô ích. Repo private +
 #   gói Free chỉ có 2.000 phút Actions/tháng, và build image là job nặng nhất.
 #
-# Liên quan: AGENTS.md §6 · architecture.md §10.3 · Backlog.md -> SL-0.5
+# Liên quan: AGENTS.md §6 · architecture.md §10.3 · Backlog.md -> SL-0.5 (dựng CI), SL-1.0 (tối ưu chi phí)
+#
+# Tối ưu chi phí (SL-1.0) — lý do của từng mảnh cấu hình:
+#   - `paths-ignore`: run chỉ đổi docs (.md, docs/, .clinerules/, .cline/) KHÔNG cần build/test.
+#     Số đo thật trước tối ưu: 11/18 run (62% số phút) chỉ là docs.
+#   - `push` chỉ trên `main`: nhánh feature đã có run `pull_request` -> bỏ run trùng
+#     (số đo thật: 9 run push trên nhánh feature = 49% số phút).
+#   - `vars.CI_ENABLED`: kill-switch bằng CONFIG, không cần sửa file:
+#       tắt:  gh variable set CI_ENABLED --body false      (job bị skip -> không đốt phút)
+#       bật:  gh variable set CI_ENABLED --body true       (hoặc xoá variable)
+#   - PR ở dạng draft -> skip cho tới khi bấm "Ready for review" (nhờ `ready_for_review` trong types).
 # ==============================================================================
 
 name: CI
 
 on:
-  # Push lên NHÁNH BẤT KỲ -> pipeline chạy tự động (AC #1 của SL-0.5).
+  # Push CHỈ trên `main`: nhánh feature đã có run `pull_request` -> không chạy 2 lần cho 1 commit.
   push:
-    branches: ['**']
-  # PR vào main -> check hiện trên PR (điều kiện để bật branch protection sau này).
+    branches: [main]
+    # Run chỉ đổi docs thì không cần build/test. KHÔNG ignore `.github/**` (đổi workflow phải
+    # được CI kiểm chứng), `.editorconfig`/`.gitattributes` (ảnh hưởng format/line-ending),
+    # `tools/**`, `infra/**`.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.clinerules/**'
+      - '.cline/**'
+      - 'LICENSE'
+  # PR vào main. Thêm `ready_for_review` để PR draft bị skip nhưng chạy ngay khi bấm Ready.
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.clinerules/**'
+      - '.cline/**'
+      - 'LICENSE'
 
 # Gom nhóm theo REF (`refs/heads/<branch>` khi push, `refs/pull/<N>/merge` khi PR):
 # push và PR là 2 group KHÁC nhau nên KHÔNG huỷ nhau. Chỉ huỷ run cũ **cùng ref** —
@@ -56,6 +82,8 @@ jobs:
     name: lint (checkstyle + spotless)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Kill-switch (`vars.CI_ENABLED`) + bỏ qua PR draft — chi tiết ở comment đầu file (SL-1.0).
+    if: ${{ vars.CI_ENABLED != 'false' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -81,6 +109,8 @@ jobs:
     name: test (unit + jacoco gate)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Kill-switch (`vars.CI_ENABLED`) + bỏ qua PR draft — chi tiết ở comment đầu file (SL-1.0).
+    if: ${{ vars.CI_ENABLED != 'false' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -104,6 +134,8 @@ jobs:
     needs: [lint, test]
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Kill-switch (`vars.CI_ENABLED`) + bỏ qua PR draft — chi tiết ở comment đầu file (SL-1.0).
+    if: ${{ vars.CI_ENABLED != 'false' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
     steps:
       - uses: actions/checkout@v4
 
