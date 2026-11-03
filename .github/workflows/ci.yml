@@ -1,0 +1,118 @@
+# ==============================================================================
+# ci.yml — CI pipeline cho ShopLab (SL-0.5)
+#
+# Mục tiêu: mỗi lần push / mở PR, pipeline tự chạy lint -> test -> build Docker
+# image và kết quả hiện ngay trên PR. CHƯA deploy (CD) và CHƯA push image lên
+# registry — để Phase 7 (architecture.md §10.3).
+#
+# 3 job:
+#   lint        — Checkstyle (lint) + Spotless (format check).  SONG SONG với test.
+#   test        — unit test + JaCoCo coverage gate.              SONG SONG với lint.
+#   build-image — build Docker image của service-template.       SAU khi lint+test xanh.
+#
+# Vì sao tách lint và test thành 2 job (không gộp):
+#   1. CI UI chỉ rõ job/step nào đỏ -> đọc log nhanh, đúng chỗ.
+#   2. Hai job độc lập -> chạy song song, giảm thời gian pipeline.
+#   3. Job test skip checkstyle/spotless (đã có job lint làm) -> không chạy 2 lần
+#      cùng một việc.
+#
+# Vì sao build-image phải chờ lint+test:
+#   Build image cho code đã fail lint/test là đốt minutes vô ích. Repo private +
+#   gói Free chỉ có 2.000 phút Actions/tháng, và build image là job nặng nhất.
+#
+# Liên quan: AGENTS.md §6 · architecture.md §10.3 · Backlog.md -> SL-0.5
+# ==============================================================================
+
+name: CI
+
+on:
+  # Push lên NHÁNH BẤT KỲ -> pipeline chạy tự động (AC #1 của SL-0.5).
+  push:
+    branches: ['**']
+  # PR vào main -> check hiện trên PR (điều kiện để bật branch protection sau này).
+  pull_request:
+    branches: [main]
+
+# Gom nhóm theo TÊN NHÁNH chứ không theo ref: push và pull_request của cùng một
+# nhánh rơi vào cùng group, nên run trùng (push + PR) tự triệt tiêu nhau, và push
+# mới sẽ huỷ run cũ của chính nhánh đó -> không đốt minutes cho kết quả đã lỗi thời.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+# Least privilege: CI chỉ cần đọc source, không ghi gì lên repo.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # lint — Checkstyle (lint) + Spotless (format)
+  # ---------------------------------------------------------------------------
+  lint:
+    name: lint (checkstyle + spotless)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Tách 2 step để CI UI chỉ rõ cái nào đỏ. Checkstyle chạy TRƯỚC để lỗi
+      # hiện dạng `file:line: error` (dễ đọc hơn diff format của Spotless).
+      # Không dùng -q: cần thấy output vi phạm trong log CI.
+      - name: Checkstyle (lint)
+        run: mvn -B -ntp checkstyle:check
+
+      - name: Spotless (format check)
+        run: mvn -B -ntp spotless:check
+
+  # ---------------------------------------------------------------------------
+  # test — unit test + JaCoCo coverage gate
+  # ---------------------------------------------------------------------------
+  test:
+    name: test (unit + jacoco gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # `verify` = compile + test + jacoco report + jacoco:check (gate >= 80% LINE
+      # cho package config/health — khai ở services/service-template/pom.xml).
+      # Skip spotless/checkstyle vì job lint đã chạy chúng.
+      - name: Verify (test + coverage gate)
+        run: mvn -B -ntp verify -Dcheckstyle.skip=true -Dspotless.check.skip=true
+
+  # ---------------------------------------------------------------------------
+  # build-image — build Docker image của service-template (chưa push registry)
+  # ---------------------------------------------------------------------------
+  build-image:
+    name: build-image (service-template)
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      # Docker có sẵn trên runner ubuntu-latest. Build context PHẢI là gốc repo
+      # (Dockerfile cần parent pom.xml + packages/service-commons) — xem
+      # services/service-template/Dockerfile. GIT_COMMIT hiện ở GET /version.
+      - name: Build image
+        run: |
+          docker build \
+            --file services/service-template/Dockerfile \
+            --build-arg GIT_COMMIT="$(git rev-parse --short HEAD)" \
+            --tag shoplab-service-template:ci \
+            .
+
+      - name: Show image
+        run: docker image ls shoplab-service-template:ci
