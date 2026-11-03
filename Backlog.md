@@ -1038,6 +1038,22 @@ Hai test âm làm trên nhánh tạm `test/sl-0.5-ci-negative` rồi **xoá** (k
 Run do `pull_request` trigger (mở PR #5): `41658741592` — `lint` success, `test` success, `build-image` success
 ⇒ check hiện trên PR. Workflow đã đăng ký: `gh api .../actions/workflows` → `CI | .github/workflows/ci.yml | state=active`.
 
+```console
+# --- Sau khi sửa `concurrency` (gom theo `github.ref`): push + PR chạy song song, không huỷ nhau ---
+$ gh run list --limit 2                      # cùng lúc, 2 run khác group
+in_progress  fix(ci): stop PR run ...  CI  feat/sl-0.5-ci-pipeline  push           41660147404  2026-11-03T15:05:02Z
+in_progress  feat(ci): lint + test ...  CI  feat/sl-0.5-ci-pipeline  pull_request   41660155684  2026-11-03T15:05:05Z
+# ~2.5 phút sau: push-run=completed/success   pr-run=completed/success
+$ gh api repos/.../commits/72605c2/check-runs --jq '.check_runs[]|"\(.name) -> \(.status)/\(.conclusion)"'
+build-image (service-template) -> completed/success
+build-image (service-template) -> completed/success
+lint (checkstyle + spotless)    -> completed/success
+test (unit + jacoco gate)       -> completed/success
+test (unit + jacoco gate)       -> completed/success
+lint (checkstyle + spotless)    -> completed/success
+# ⇒ 6/6 success, KHÔNG còn `cancelled` (trước khi sửa: 3 success + 3 cancelled trên cùng commit)
+```
+
 **AC #6 (badge)** chỉ verify được **sau khi merge vào `main`**: badge `actions/workflows/ci.yml/badge.svg` resolve
 theo **default branch**, nên khi `ci.yml` chưa có trên `main` thì URL trả **404** (đã thử cả `Bearer` lẫn basic auth
 → `http=404 size=9 "Not Found"`). Ngoài ra repo **private** nên badge chỉ render trong trình duyệt đã đăng nhập.
