@@ -1,5 +1,7 @@
 # ShopLab — microservices learning lab
 
+[![CI](https://github.com/anchu3003/shop-lab-microservices/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/anchu3003/shop-lab-microservices/actions/workflows/ci.yml)
+
 > Sàn thương mại điện tử multi-seller dựng lại từ đầu theo **microservices**, mục đích **học
 > architecture & system design** ở quy mô high traffic. **Không phải sản phẩm thật.**
 
@@ -90,6 +92,7 @@ Bỏ qua hook khi thật cần (hạn chế tối đa): `LEFTHOOK=0 git commit -
 ├── tools/                        # script phụ trợ (git hooks, reset infra...)
 ├── config/checkstyle/            # Checkstyle config cho Java
 ├── docs/adr/                     # Architecture Decision Records
+├── .github/workflows/            # CI (GitHub Actions) — SL-0.5
 ├── .cline/ .clinerules/          # AI tooling (skill / workflow / rule) — xem AGENTS.md §10
 └── pom.xml                       # Maven parent POM (convention build/lint + version tập trung)
 ```
@@ -109,6 +112,44 @@ mvn -q verify                 # spotless:check + checkstyle:check + test + jacoc
 Convention: **Spotless + google-java-format** (format) · **Checkstyle** (lint) · **JUnit 5/6 + AssertJ** (test)
 · **JaCoCo** (coverage gate ≥ 80% LINE cho package `config` + `health`).
 Line-ending do `.gitattributes` ép **LF**; editor theo `.editorconfig`.
+
+
+---
+
+## CI (GitHub Actions) — `SL-0.5`
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy khi **push lên nhánh bất kỳ** và khi **mở PR vào `main`**.
+Không có CI thì "code chạy máy tôi" sẽ âm thầm phá build khi số service tăng lên ở Phase 1+.
+
+| Job | Quan hệ | Lệnh | Chặn cái gì |
+|---|---|---|---|
+| `lint` | ∥ song song | `mvn -B -ntp checkstyle:check` rồi `mvn -B -ntp spotless:check` | vi phạm Checkstyle (log hiện `file:line`) + code chưa format |
+| `test` | ∥ song song | `mvn -B -ntp verify -Dcheckstyle.skip=true -Dspotless.check.skip=true` | test đỏ + coverage < 80% LINE (JaCoCo gate) |
+| `build-image` | sau `lint` + `test` | `docker build -f services/service-template/Dockerfile …` | Dockerfile / image build hỏng |
+
+Vì sao tách 3 job: CI UI chỉ rõ job nào đỏ (đọc log nhanh), `lint` và `test` độc lập nên chạy song song, còn
+`build-image` là job nặng nhất nên chỉ chạy khi 2 job kia đã xanh (repo private tính phút Actions theo gói).
+
+**Push lên nhánh đang có PR sẽ thấy 2 run** (một cho event `push`, một cho `pull_request`) — đây là chủ ý:
+gom chung group sẽ khiến run PR huỷ run push và để lại check `cancelled` trên commit. `cancel-in-progress`
+chỉ huỷ run cũ **cùng ref** (push liên tiếp cùng nhánh / PR cập nhật liên tục).
+
+Tái hiện đúng lệnh CI ở máy:
+
+```bash
+mvn -B -ntp checkstyle:check && mvn -B -ntp spotless:check             # job lint
+mvn -B -ntp verify -Dcheckstyle.skip=true -Dspotless.check.skip=true  # job test
+docker build -f services/service-template/Dockerfile \
+  --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) -t shoplab-service-template:ci .   # job build-image
+```
+
+Vài điểm cần biết:
+
+- **Badge ở đầu README** lấy trạng thái run **mới nhất trên `main`**. Repo đang **private** → badge chỉ render
+  khi trình duyệt **đã đăng nhập GitHub**; khách chưa login sẽ thấy ảnh vỡ (không phải CI hỏng).
+- CI **chưa** push image lên registry và **chưa** deploy — để Phase 7. Job `build-image` chỉ build rồi liệt kê image.
+- Job `build-image` pull base image từ Docker Hub **anonymous** → có thể gặp rate limit; nếu tái diễn thì đổi
+  sang mirror/registry nội bộ.
 
 
 ---
