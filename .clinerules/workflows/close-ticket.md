@@ -13,4 +13,8 @@ và ghi vào Learning log.
 5. Thêm dòng vào mục "Learning log" (ngày + ticket + học được).
 6. Cập nhật bảng "Trạng thái theo phase" + header (Ticket đang làm / Ticket tiếp theo).
 7. Nếu design đổi → đảm bảo `architecture.md` + ADR đã update.
+8. Nếu **phase đã xong** → tách phần chi tiết phase sang `Backlog-phase-<N>.md` + thêm dòng vào bảng
+   "Archive các phase đã xong" (`AGENTS.md` §6).
+9. **Commit**: còn ticket kế tiếp → gộp commit đóng ticket vào **nhánh của ticket kế tiếp**
+   (không mở nhánh/PR riêng cho doc — xem `docs/git-flow.md`).
 </detailed_sequence_of_steps>

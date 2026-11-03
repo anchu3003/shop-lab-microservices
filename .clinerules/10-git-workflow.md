@@ -16,10 +16,18 @@ Rule behavioral. Base convention ở `AGENTS.md` §6; hướng dẫn đầy đ�
 - 1 ticket có thể có nhiều commit nhỏ; commit cuối đóng ticket (nhắc ticket ID trong body nếu cần).
 - **Không** commit secret / token / connection string.
 
+## Commit minor — KHÔNG tạo nhánh/PR riêng
+
+- Commit nhỏ (đóng ticket, update `Backlog.md`/learning note, sửa doc lặt vặt, tách `Backlog-phase-<N>.md`)
+  → **gộp vào nhánh của ticket kế tiếp**, cùng PR đó. Không mở nhánh + PR riêng cho doc.
+- Chỉ tạo nhánh + PR riêng khi **không còn ticket kế tiếp** (hết phase / dừng dự án).
+- Thay đổi **có code** thì **không** gộp — phải là ticket riêng (`AGENTS.md` §3.1).
+
 ## Branch
 
 - Format: `<type>/<ticket-id>-<slug>` — ví dụ `feat/sl-0.2-repo-skeleton`.
 - `type` ∈ {feat, fix, docs, refactor, test, chore}; `ticket-id` = `SL-X.Y`.
+- Tạo nhánh khi **bắt đầu một ticket**; commit minor không tạo nhánh mới.
 - Nhánh ngắn hạn; xoá sau khi merge.
 
 ## PR
