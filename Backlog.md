@@ -908,7 +908,7 @@ Ngoài gate (không ép coverage): `web` của commons (`GlobalExceptionHandler`
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | In Progress |
 | **Phase** | 0 — Foundation |
 | **Phụ thuộc** | SL-0.4 |
 | **Ước lượng** | S |
