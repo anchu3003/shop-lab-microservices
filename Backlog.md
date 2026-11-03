@@ -232,9 +232,12 @@ build-image (service-template) -> success
 
 # --- AC (A): PR CHỈ ĐỔI DOCS -> KHÔNG có run nào được tạo ---
 $ gh api repos/.../actions/runs --jq '.total_count'
-20                       # trước và sau khi push + mở PR chỉ-docs: KHÔNG tăng (PR này chính là phép thử)
+22                       # trước khi push nhánh docs + mở PR #8
+$ git push -u origin docs/sl-1.0-close ; gh pr create --base main ...   # PR #8, KHÔNG phải draft
+$ gh api repos/.../actions/runs --jq '.total_count'
+22                       # KHÔNG tăng -> paths-ignore chặn hẳn: không có run nào được tạo
 $ gh run list --limit 1
-completed success  feat(ci): cut CI cost ...  CI  main  push  41677658371   ← vẫn là run cũ
+completed success  feat(ci): cut CI cost ...  CI  main  push  41677658371   ← vẫn là run cũ trên main
 
 # --- Đo lại usage (làm tròn lên từng job; job `skipped` tính 0 phút) ---
 run            event        concl     att  phút  ghi chú
