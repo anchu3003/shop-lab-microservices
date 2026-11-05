@@ -41,7 +41,11 @@ COPY config/ config/
 
 # `verify` để chạy luôn spotless/checkstyle/test — image build cũng là một chốt chất lượng.
 # `-DskipITs` vì Testcontainers cần Docker socket (không có trong `docker build`).
-RUN mvn -B -pl services/identity-service -am verify -DskipTests=false -DskipITs
+#
+# `SKIP_TESTS` (SL-1.12): CI truyền `true` vì job `test` đã chạy test cho **cả reactor** — chạy lại
+# test trong image chỉ tốn thời gian. Mặc định `false` để `docker build` tay vẫn test như trước.
+ARG SKIP_TESTS=false
+RUN mvn -B -pl services/identity-service -am verify -DskipTests=${SKIP_TESTS} -DskipITs
 
 # ------------------------------ stage 2: runtime ------------------------------
 FROM eclipse-temurin:21-jre-alpine AS runtime

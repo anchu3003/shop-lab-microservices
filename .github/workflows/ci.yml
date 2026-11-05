@@ -5,10 +5,11 @@
 # image và kết quả hiện ngay trên PR. CHƯA deploy (CD) và CHƯA push image lên
 # registry — để Phase 7 (architecture.md §10.3).
 #
-# 3 job:
+# 4 job:
 #   lint        — Checkstyle (lint) + Spotless (format check).  SONG SONG với test.
 #   test        — unit test + JaCoCo coverage gate.              SONG SONG với lint.
-#   build-image — build Docker image của service-template.       SAU khi lint+test xanh.
+#   build-image — build Docker image của MỌI service (matrix, SL-1.12): hiện 3 job con
+#                 (service-template · identity-service · api-gateway).  SAU khi lint+test xanh.
 #
 # Vì sao tách lint và test thành 2 job (không gộp):
 #   1. CI UI chỉ rõ job/step nào đỏ -> đọc log nhanh, đúng chỗ.
@@ -133,28 +134,41 @@ jobs:
         run: mvn -B -ntp verify -Dcheckstyle.skip=true -Dspotless.check.skip=true
 
   # ---------------------------------------------------------------------------
-  # build-image — build Docker image của service-template (chưa push registry)
+  # build-image — build Docker image của MỌI service (matrix, SL-1.12)
+  #
+  # Vì sao matrix: trước SL-1.12 job này hard-code `service-template` (viết ở SL-0.5 khi repo chỉ có
+  # 1 service) ⇒ Dockerfile của `identity-service`/`api-gateway` KHÔNG được CI kiểm — CI xanh nhưng
+  # image build có thể hỏng. Thêm service mới = thêm 1 dòng trong `matrix.service`.
+  #
+  # Vì sao `SKIP_TESTS=true`: job `test` đã chạy test cho cả reactor; chạy lại test bên trong image
+  # chỉ tốn phút CI (SL-1.0 đo: build-image chiếm 46%). `docker build` TAY vẫn test (mặc định false).
   # ---------------------------------------------------------------------------
   build-image:
-    name: build-image (service-template)
+    name: build-image (${{ matrix.service }})
     needs: [lint, test]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     # Kill-switch (`vars.CI_ENABLED`) + bỏ qua PR draft — chi tiết ở comment đầu file (SL-1.0).
     if: ${{ vars.CI_ENABLED != 'false' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+    strategy:
+      # 1 service lỗi KHÔNG chặn service khác → thấy ngay service nào hỏng, không phải chạy lại để biết.
+      fail-fast: false
+      matrix:
+        # Thêm service mới ⇒ thêm tên thư mục trong services/ vào đây.
+        service: [service-template, identity-service, api-gateway]
     steps:
       - uses: actions/checkout@v4
 
-      # Docker có sẵn trên runner ubuntu-latest. Build context PHẢI là gốc repo
-      # (Dockerfile cần parent pom.xml + packages/service-commons) — xem
-      # services/service-template/Dockerfile. GIT_COMMIT hiện ở GET /version.
-      - name: Build image
+      # Docker có sẵn trên runner ubuntu-latest. Build context PHẢI là gốc repo (Dockerfile cần
+      # parent pom.xml + packages/service-commons). GIT_COMMIT hiện ở GET /version.
+      - name: Build image (${{ matrix.service }})
         run: |
           docker build \
-            --file services/service-template/Dockerfile \
+            --file services/${{ matrix.service }}/Dockerfile \
             --build-arg GIT_COMMIT="$(git rev-parse --short HEAD)" \
-            --tag shoplab-service-template:ci \
+            --build-arg SKIP_TESTS=true \
+            --tag shoplab-${{ matrix.service }}:ci \
             .
 
       - name: Show image
-        run: docker image ls shoplab-service-template:ci
+        run: docker image ls shoplab-${{ matrix.service }}:ci

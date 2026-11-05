@@ -146,10 +146,19 @@ build khi số service tăng lên ở Phase 1+.
 |---|---|---|---|
 | `lint` | ∥ song song | `mvn -B -ntp checkstyle:check` rồi `mvn -B -ntp spotless:check` | vi phạm Checkstyle (log hiện `file:line`) + code chưa format |
 | `test` | ∥ song song | `mvn -B -ntp verify -Dcheckstyle.skip=true -Dspotless.check.skip=true` | test đỏ + coverage < 80% LINE (JaCoCo gate) |
-| `build-image` | sau `lint` + `test` | `docker build -f services/service-template/Dockerfile …` | Dockerfile / image build hỏng |
+| `build-image` | sau `lint` + `test` | **matrix**, 1 job con/service: `docker build -f services/<service>/Dockerfile --build-arg SKIP_TESTS=true …` | Dockerfile / image build hỏng **của từng service** |
 
 Vì sao tách 3 job: CI UI chỉ rõ job nào đỏ (đọc log nhanh), `lint` và `test` độc lập nên chạy song song, còn
 `build-image` là job nặng nhất nên chỉ chạy khi 2 job kia đã xanh (repo private tính **tiền/phút** Actions theo gói).
+
+**`SL-1.12` — build image cho MỌI service (matrix)**
+
+- Trước `SL-1.12` job này hard-code `service-template` (viết ở `SL-0.5` khi repo chỉ có 1 service) ⇒ Dockerfile của
+  `identity-service`/`api-gateway` **không** được CI kiểm: CI xanh nhưng image build có thể hỏng (2 lỗi loại này đã xảy
+  ra thật khi chạy tay). Nay `matrix.service: [service-template, identity-service, api-gateway]` + `fail-fast: false`
+  (1 service lỗi **không** chặn service khác). **Thêm service mới = thêm 1 dòng** trong `matrix.service`.
+- `--build-arg SKIP_TESTS=true`: job `test` đã chạy test cho **cả reactor**, chạy lại test bên trong image chỉ tốn phút
+  CI (`SL-1.0` đo: `build-image` chiếm 46% phút). `docker build` **tay** vẫn test như trước (mặc định `false`).
 
 **Không chạy CI khi không cần** (`SL-1.0`) — đo bằng API trước khi tối ưu: 18 run = **~71 phút**, trong đó **62% số phút
 chỉ là sửa docs** và **49% là run `push` trùng với run `pull_request`**:
@@ -175,15 +184,20 @@ Tái hiện đúng lệnh CI ở máy:
 ```bash
 mvn -B -ntp checkstyle:check && mvn -B -ntp spotless:check             # job lint
 mvn -B -ntp verify -Dcheckstyle.skip=true -Dspotless.check.skip=true  # job test
-docker build -f services/service-template/Dockerfile \
-  --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) -t shoplab-service-template:ci .   # job build-image
+# job build-image (matrix) — lặp cho từng service trong matrix.service:
+for s in service-template identity-service api-gateway; do
+  docker build -f services/$s/Dockerfile \
+    --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
+    --build-arg SKIP_TESTS=true -t shoplab-$s:ci .
+done
 ```
 
 Vài điểm cần biết:
 
 - **Badge ở đầu README** lấy trạng thái run **mới nhất trên `main`**. Repo đang **private** → badge chỉ render
   khi trình duyệt **đã đăng nhập GitHub**; khách chưa login sẽ thấy ảnh vỡ (không phải CI hỏng).
-- CI **chưa** push image lên registry và **chưa** deploy — để Phase 7. Job `build-image` chỉ build rồi liệt kê image.
+- CI **chưa** push image lên registry và **chưa** deploy — để Phase 7. Job `build-image` (matrix) chỉ build rồi liệt kê
+  image của **cả 3 service** (`service-template`, `identity-service`, `api-gateway`).
 - Job `build-image` pull base image từ Docker Hub **anonymous** → có thể gặp rate limit; nếu tái diễn thì đổi
   sang mirror/registry nội bộ.
 
