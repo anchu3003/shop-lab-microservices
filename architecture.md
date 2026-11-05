@@ -547,11 +547,12 @@ xem `README.md` → *Cách chạy* (ticket `SL-0.3`).
 ### 10.3. Deployment
 
 - **Containerize**: mọi service có `Dockerfile` multi-stage, image nhỏ, chạy non-root.
-- **CI**: GitHub Actions — [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`SL-0.5` dựng, `SL-1.0` tối ưu chi phí):
-  job `lint` (Checkstyle + Spotless) ∥ `test` (unit test + JaCoCo gate ≥ 80% LINE) → `build-image` (build Docker image
-  của `service-template`). Trigger: **push trên `main`** + PR vào `main`; **bỏ qua** run chỉ đổi docs (`paths-ignore`)
-  và **PR draft**; có **kill-switch** `vars.CI_ENABLED`. Job `build-image` **chưa** push lên registry; integration test
-  (Testcontainers) để Phase 1–2, push image + CD để Phase 7.
+- **CI**: GitHub Actions — [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`SL-0.5` dựng, `SL-1.0` tối ưu chi phí,
+  `SL-1.12` build image **mọi** service): job `lint` (Checkstyle + Spotless) ∥ `test` (unit test + JaCoCo gate ≥ 80% LINE)
+  → `build-image` **matrix** (1 job con cho mỗi service trong `services/`, `fail-fast: false`; truyền `SKIP_TESTS=true` vì
+  job `test` đã chạy test cả reactor). Trigger: **push trên `main`** + PR vào `main`; **bỏ qua** run chỉ đổi docs
+  (`paths-ignore`) và **PR draft**; có **kill-switch** `vars.CI_ENABLED`. Job `build-image` **chưa** push lên registry;
+  integration test (Testcontainers) đã chạy ở job `test`; push image + CD để Phase 7.
 - **CD**: staging auto-deploy; prod deploy thủ công có approve.
 - **Zero-downtime**: readiness probe + rolling update; Phase 7 làm blue-green / canary.
 - **Rollback**: image tag theo commit SHA, rollback = deploy lại tag trước.

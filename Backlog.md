@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.12` — CI: build image cho **mọi** service (matrix) + cắt thời gian build |
-| **Ticket tiếp theo** | `SL-1.13` — Compose: `service-template` vào **profile** `template` |
+| **Ticket đang làm** | `SL-1.13` — Compose: `service-template` vào **profile** `template` |
+| **Ticket tiếp theo** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 7 / 15 |
+| 1 | Walking skeleton | 🔵 In Progress | 8 / 15 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -121,7 +121,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
 | 11 | `SL-1.10` | *(phát sinh)* fix: `[skip ci]` lọt vào squash message → `main` không chạy CI | S | ✅ Done |
 | 12 | `SL-1.11` | *(phát sinh)* fix: message chẩn đoán của `merge-pr.sh` gây hiểu nhầm | S | ✅ Done |
-| 13 | `SL-1.12` | *(phát sinh)* CI: build image cho **mọi** service (matrix) + cắt thời gian build | M | Todo |
+| 13 | `SL-1.12` | *(phát sinh)* CI: build image cho **mọi** service (matrix) + cắt thời gian build | M | ✅ Done |
 | 14 | `SL-1.13` | *(phát sinh)* compose: `service-template` vào **profile** `template` | S | Todo |
 | 15 | `SL-1.14` | *(phát sinh)* `merge-pr.sh`: cho phép PR **docs-only** + comment evidence **hậu merge** | S | ✅ Done |
 
@@ -1354,7 +1354,7 @@ $ git log -1 --format=%B 741591c | grep -cE '\[(skip ci|ci skip|no ci|skip actio
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton *(phát sinh khi rà lại CI sau SL-1.2)* |
 | **Phụ thuộc** | SL-1.2 (Done) |
 | **Ước lượng** | M |
@@ -1408,9 +1408,54 @@ Mọi service có `Dockerfile` đều được CI build image **thật**, mà **
 - Cache: giữ `docker build` trần (điều kiện revisit đã ghi ở `SL-0.5`: job > 3 phút → `docker/build-push-action` +
   `cache-from: type=gha`).
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-05 — output thật)*
 
-**Learning note** *(điền khi Done)*
+```console
+# --- LOCAL: đúng lệnh CI, cả 3 service (SKIP_TESTS=true) ---
+$ for s in service-template identity-service api-gateway; do
+    docker build -f services/$s/Dockerfile --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
+      --build-arg SKIP_TESTS=true -t shoplab-$s:ci . ; done
+service-template  #20 [INFO] Tests are skipped. … BUILD SUCCESS → naming to shoplab-service-template:ci   (1:29)
+identity-service  #20 [INFO] Tests are skipped. … BUILD SUCCESS → naming to shoplab-identity-service:ci   (0:17)
+api-gateway       #20 [INFO] Tests are skipped. … BUILD SUCCESS → naming to shoplab-api-gateway:ci        (0:14)
+
+# --- TEST ÂM (CI thật, PR #20): phá `services/api-gateway/Dockerfile` (xoá dòng COPY pom của service-commons) ---
+$ gh run view 42064872154 --json conclusion,jobs --jq '.conclusion, (.jobs[]|"\(.name) -> \(.conclusion)")'
+failure
+  lint (checkstyle + spotless)      -> success
+  test (unit + jacoco gate)         -> success
+  build-image (service-template)    -> success
+  build-image (identity-service)    -> success
+  build-image (api-gateway)         -> failure      ← CHỈ service hỏng đỏ ⇒ `fail-fast: false` đúng
+$ gh run view 42064872154 --log-failed | grep 'Child module'
+[ERROR] Child module /workspace/packages/service-commons of /workspace/pom.xml does not exist @
+
+# --- REVERT → XANH: run 42065751051 (HEAD 048320d) ---
+$ gh run view 42065751051 --json conclusion,jobs --jq '.conclusion, (.jobs[]|"\(.name) -> \(.conclusion)")'
+success
+  lint · test · build-image (service-template) · build-image (identity-service) · build-image (api-gateway) -> success
+
+# --- SỐ ĐO (billable ≈ tổng thời lượng job) ---
+                     trước (42063012540)     sau (42065751051)
+lint                  22s                     31s
+test                  83s                    105s
+build-image           89s (1 image)           68 + 65 + 74 = 207s (3 image, CHẠY SONG SONG ⇒ wall ~74s)
+TỔNG billable        194s                    343s   (+149s ≈ +2,5 phút/run)
+```
+
+**Learning note**
+
+- **Chốt chặn giả không tự lộ ra — phải tự đi tìm**: job `build-image` "xanh" suốt `SL-1.1` + `SL-1.2` mà không ai biết nó chỉ kiểm
+  1/3 service. Cách phát hiện rẻ nhất là **đọc lại job CI mỗi khi thêm service**, không phải chờ sự cố.
+- **Test âm phải chạy trên CI thật**: chỉ khi phá Dockerfile rồi xem **đúng job nào đỏ** mới chứng minh được `matrix` +
+  `fail-fast: false` hoạt động (job gateway đỏ, 2 job kia vẫn xanh) — build local **không** chứng minh được điều này.
+- **Song song ≠ rẻ**: 3 image chạy song song nên **thời gian chờ gần như không tăng** (~74s so với 89s trước), nhưng **phút billable
+  tăng ~2,5 phút/run** (89s → 207s). Đây là giá của chốt chặn thật; khi ≥4 service thì chuyển sang **build chọn lọc theo path**
+  (đã ghi ở Out of scope).
+- **`SKIP_TESTS` là phần bù chi phí**: test đã chạy ở job `test` cho cả reactor ⇒ bỏ test trong image giúp mỗi job image ~70s
+  thay vì ~89s.
+- **Chạy `tools/merge-pr.sh` ở foreground** (bài học từ `SL-1.14`): lần chạy bằng background bị cắt tiến trình sau bước merge ⇒
+  comment evidence không được post, phải post tay. Đã ghi vào rule.
 
 ---
 
@@ -1719,6 +1764,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.14 | **Phân biệt "0 run vì hợp lệ" vs "0 run vì bị skip"**: cùng là *không có run*, nhưng PR chỉ-docs là bình thường còn code bị skip là nguy hiểm. Phân biệt bằng **diff của PR**, không bằng "có run hay không". |
 | 2026-11-05 | SL-1.14 | **Tự giẫm bẫy mình vừa viết ra**: commit message giải thích *"nên KHÔNG dùng …"* lại chứa **token skip dạng literal** ⇒ GitHub skip run của chính commit đó (dù diff có `ci.yml`). Tài liệu hoá một cơ chế thì phải biết nó **đọc ở đâu** — ở đây là **cả body**, không chỉ subject. |
 | 2026-11-05 | SL-1.14 | **GitHub API không đáng tin tuyệt đối**: trong ~15 phút gặp 3 lỗi tạm thời (`gh pr create` GraphQL *Something went wrong*, `gh pr close` 502, `gh pr merge` GraphQL) — chạy lại là được. **Debt**: `merge-pr.sh` chưa có retry, hiện phải chạy lại tay. |
+| 2026-11-05 | SL-1.12 | **Chốt chặn giả sống được 2 ticket**: `build-image` "xanh" suốt `SL-1.1`+`SL-1.2` mà chỉ kiểm 1/3 service — không ai đọc lại job CI khi thêm service. **Song song ≠ rẻ**: 3 image chạy song song giữ nguyên thời gian *chờ* nhưng nhân 3 phút *billable* — đo bằng số, không bằng cảm giác. |
 
 | 2026-11-05 | process | **Đừng dùng backtick trong `--body` của `gh` khi gõ trực tiếp**: shell thực thi phần trong backtick (`tools/merge-pr.sh` → `Permission denied`, `null: command not found`) và **body PR bị hỏng**. Luôn dùng `--body-file` với heredoc (`<<'EOF'`). |
 
@@ -1753,6 +1799,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | Verify AC "tạo service mới từ template" bằng cách **thực sự** copy ra `smoke-service` theo README → phát hiện test hard-code tên service (template không copy-safe) → sửa test đọc tên từ config; chạy lại `BUILD SUCCESS` rồi xoá `smoke-service`. |
 | 2026-11-05 | Tạo 3 ticket phát sinh sau khi rà CI/compose: `SL-1.12` (job `build-image` hiện **chỉ** build `service-template` — bằng chứng log run `42054583987`; 2 service thật không được CI kiểm Dockerfile), `SL-1.13` (`service-template` vào **compose profile** `template` để `up -d` chỉ dựng hệ thống thật), `SL-1.14` (`merge-pr.sh`: cho phép PR **docs-only** + post comment evidence **hậu merge**). **Đổi process**: mark done **gộp vào commit cuối của ticket** (1 ticket = 1 commit = 1 run CI trên PR), bỏ "fold commit minor sang PR sau"; evidence hậu merge ghi bằng PR comment. Chốt **giữ monorepo** (ghi vào ADR-0003 → Revisit). |
 | 2026-11-05 | `SL-1.14` → `Done`: `tools/merge-pr.sh` (a) cho phép merge PR **chỉ-docs** (0 run là hợp lệ khi **toàn bộ** diff là docs; 0 run mà có file không phải docs → **vẫn chặn**) và (b) tự post **comment evidence hậu merge** (merge sha · run CI trên `main` · token skip · ghi chú chống hiểu nhầm). Verify: **TEST A** PR docs-only #17 → cho phép (`exit=0`); **TEST B** 0 run + `tools/secret-scan.sh` → chặn (`exit=1`); **merge thật** PR #17 → `main` = `4afb3da` + comment evidence tự post ✓. Kèm dọn 2 nhánh temp + xoá file test. |
+| 2026-11-05 | `SL-1.12` → `Done`: job `build-image` chuyển sang **matrix** (`service-template` · `identity-service` · `api-gateway`, `fail-fast: false`) + `--build-arg SKIP_TESTS=true` (bỏ test trùng trong image — job `test` đã chạy cả reactor). **Test âm thật**: phá `api-gateway/Dockerfile` → run `42064872154` **chỉ** job gateway đỏ (`Child module … does not exist`), 2 job image kia xanh; revert → run `42065751051` **5/5 xanh**. Số đo: billable 194s → 343s (**+2,5 phút/run**, wall-clock gần như không đổi vì chạy song song). Cập nhật `README.md` + `architecture.md` §10.3 + comment `ci.yml`. PR [#20](https://github.com/anchu3003/shop-lab-microservices/pull/20). |
 
 | 2026-11-02 | Tạo PR [#4](https://github.com/anchu3003/shop-lab-microservices/pull/4) cho `SL-0.4` (nhánh `feat/sl-0.4-service-template`, 5 commit). Merge bằng **squash** theo `docs/git-flow.md`. |
 | 2026-11-03 | `SL-0.5` → `In Progress`: nhánh `feat/sl-0.5-ci-pipeline`. Chốt với user: **giữ remote HTTPS** (token VS Code có scope `workflow`, không cần đổi SSH). |

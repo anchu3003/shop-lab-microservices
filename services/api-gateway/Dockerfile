@@ -38,7 +38,11 @@ COPY services/ services/
 COPY config/ config/
 
 # `verify` để chạy luôn spotless/checkstyle/test — image build cũng là một chốt chất lượng.
-RUN mvn -B -pl services/api-gateway -am verify -DskipTests=false
+#
+# `SKIP_TESTS` (SL-1.12): CI truyền `true` vì job `test` đã chạy test cho **cả reactor** — chạy lại
+# test trong image chỉ tốn thời gian. Mặc định `false` để `docker build` tay vẫn test như trước.
+ARG SKIP_TESTS=false
+RUN mvn -B -pl services/api-gateway -am verify -DskipTests=${SKIP_TESTS}
 
 # ------------------------------ stage 2: runtime ------------------------------
 FROM eclipse-temurin:21-jre-alpine AS runtime

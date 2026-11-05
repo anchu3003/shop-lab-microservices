@@ -82,9 +82,13 @@ Rule behavioral. Base convention ở `AGENTS.md` §6; hướng dẫn đầy đ�
 bash tools/merge-pr.sh <pr-number> --summary-file /tmp/pr-summary.md
 ```
 
-Script tự: kiểm PR mở/không draft → kiểm CI xanh → kiểm phần diff sau CI là docs-only (nếu có) →
-comment tóm tắt → `gh pr merge --squash --delete-branch` → `git checkout main && git pull`.
+Script tự: kiểm PR mở/không draft → kiểm CI xanh (**PR chỉ-docs được miễn**: 0 run là hợp lệ khi **toàn bộ** diff là
+docs-only — `SL-1.14`) → kiểm phần diff sau CI là docs-only (nếu có) → comment tóm tắt → `gh pr merge --squash
+--delete-branch` → `git checkout main && git pull` → post **comment evidence hậu merge** (merge sha · run CI trên
+`main` · token skip).
 
+- ⚠️ Chạy script ở **foreground** (đừng `&`): bước comment evidence nằm **sau** merge — bị cắt tiến trình là **mất
+  evidence** (đã gặp thật ở `SL-1.14`, phải post tay).
 - Merge kiểu **squash** (1 commit sạch trên `main`) + **xoá nhánh feature** (cả remote).
 - ⚠️ **Bẫy `[skip ci]` lọt vào merge commit** (`SL-1.10`): mặc định `gh pr merge --squash` ghép *title PR + subject của
   các commit trong PR* → `[skip ci]` của commit docs nằm luôn trong message của merge commit ⇒ **push lên `main` bị
