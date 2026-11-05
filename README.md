@@ -239,11 +239,11 @@ bash tools/reset-infra.sh
 | `5672` | RabbitMQ 4 | AMQP — producer/consumer |
 | `15672` | RabbitMQ management | UI: http://localhost:15672 (`shoplab` / password trong `.env`) |
 | `8085` | Adminer | UI xem dữ liệu Postgres: http://localhost:8085 |
-| `8090` | `service-template` | service mẫu (SL-0.4) |
+| `8090` | `service-template` | service mẫu (SL-0.4) — chỉ chạy khi bật profile `template` |
 | `8080` / `8081` / `8082` | — | dành cho `api-gateway` / `identity-service` / `catalog-service` (Phase 1) |
 
-> ⚠️ `up -d` **build luôn image của `service-template`** (mất ~1–2 phút lần đầu). Muốn chỉ dựng hạ tầng:
-> `docker compose -f infra/docker-compose.yml --env-file .env up -d postgres redis rabbitmq adminer`
+> `up -d` mặc định **KHÔNG** dựng `service-template` — service mẫu nằm trong profile `template` (`SL-1.13`). Bật khi cần:
+> `docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template`
 
 **Database có sẵn sau lần init đầu tiên**: `identity`, `catalog`, `inventory`, `promotion`, `order`,
 `payment`, `notification` (+ DB `shoplab` làm DB "main"). Danh sách này sinh từ biến `POSTGRES_DB_*`
@@ -295,6 +295,9 @@ Muốn dùng client native: `sudo apt install -y postgresql-client redis-tools`.
 | `GET /debug/error` · `GET /debug/boom` | lỗi 404 / 500 theo format chuẩn | verify error response |
 
 `/debug/*` chỉ tồn tại khi `SHOPLAB_DEBUG_ENDPOINTS=true` (chỉ set trong compose local).
+
+> ⚠️ `service-template` nằm trong profile `template` ⇒ trước khi chạy các lệnh dưới phải bật:
+> `docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template`
 
 ```bash
 curl -s localhost:8090/health  ; curl -s localhost:8090/ready ; curl -s localhost:8090/version

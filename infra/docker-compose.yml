@@ -5,6 +5,8 @@
 #   cp .env.example .env                                            # 1 lần
 #   docker compose -f infra/docker-compose.yml --env-file .env up -d
 #   docker compose -f infra/docker-compose.yml --env-file .env ps
+#   # `service-template` là service MẪU, nằm trong profile `template` ⇒ `up -d` mặc định KHÔNG dựng nó:
+#   docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template
 #
 # Vì sao phải có --env-file:
 #   Compose nạp file `.env` từ *project directory*, mặc định là **thư mục chứa file
@@ -138,10 +140,13 @@ services:
   # service-template — service mẫu (SL-0.4), build từ source trong repo.
   # Chứng minh template chạy được cùng hạ tầng: /ready check TCP tới postgres + redis.
   #
-  # LƯU Ý: `up -d` lần đầu sẽ BUILD image Java (mất 1–2 phút). Muốn chỉ dựng hạ tầng:
-  #   docker compose -f infra/docker-compose.yml --env-file .env up -d postgres redis rabbitmq adminer
+  # SL-1.13: nằm trong profile `template` ⇒ `up -d` mặc định KHÔNG dựng nó (service mẫu,
+  # không thuộc hệ thống thật). Chạy khi cần:
+  #   docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template
   # ---------------------------------------------------------------------------
   service-template:
+    # Profile `template`: chỉ dựng khi truyền `--profile template` — xem comment trên.
+    profiles: [template]
     build:
       # Context là GỐC repo vì service cần parent pom.xml + module packages/service-commons.
       context: ..
