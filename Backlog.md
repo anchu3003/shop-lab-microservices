@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
-| **Ticket tiếp theo** | `SL-1.12` — CI: build image cho **mọi** service (matrix) + cắt thời gian build |
+| **Ticket đang làm** | `SL-1.12` — CI: build image cho **mọi** service (matrix) + cắt thời gian build |
+| **Ticket tiếp theo** | `SL-1.13` — Compose: `service-template` vào **profile** `template` |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 6 / 15 |
+| 1 | Walking skeleton | 🔵 In Progress | 7 / 15 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -123,7 +123,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 12 | `SL-1.11` | *(phát sinh)* fix: message chẩn đoán của `merge-pr.sh` gây hiểu nhầm | S | ✅ Done |
 | 13 | `SL-1.12` | *(phát sinh)* CI: build image cho **mọi** service (matrix) + cắt thời gian build | M | Todo |
 | 14 | `SL-1.13` | *(phát sinh)* compose: `service-template` vào **profile** `template` | S | Todo |
-| 15 | `SL-1.14` | *(phát sinh)* `merge-pr.sh`: cho phép PR **docs-only** + comment evidence **hậu merge** | S | Todo |
+| 15 | `SL-1.14` | *(phát sinh)* `merge-pr.sh`: cho phép PR **docs-only** + comment evidence **hậu merge** | S | ✅ Done |
 
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
@@ -1471,7 +1471,7 @@ dựng template không còn cần thiết.
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton *(phát sinh từ đổi process 2026-11-05)* |
 | **Phụ thuộc** | SL-1.11 (Done) |
 | **Ước lượng** | S |
@@ -1517,9 +1517,61 @@ Hai lỗ hổng thật của `tools/merge-pr.sh`, lộ ra khi áp dụng rule **
   *"chưa xong, xem `gh run list`"* thay vì treo.
 - Đây là **evidence**, không phải chốt chặn ⇒ poll fail **không** làm script exit ≠ 0 (merge đã xong rồi).
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-05 — output thật)*
 
-**Learning note** *(điền khi Done)*
+```console
+$ bash -n tools/merge-pr.sh
+OK
+
+# --- TEST A: PR chỉ-docs (0 run) → ĐƯỢC PHÉP merge ---
+$ gh run list --branch chore/tmp-docs-only-test --limit 3
+(rỗng)                                    ← PR chỉ-docs ⇒ `paths-ignore` bỏ hết run
+$ bash tools/merge-pr.sh 17 --summary-file /tmp/tmp-summary.md --dry-run
+merge-pr: nhánh 'chore/tmp-docs-only-test' không có run CI nào — cả PR là docs-only ⇒ được phép merge:
+  ✓ docs/tmp-docs-only-test.md
+merge-pr: PR #17 (chore/tmp-docs-only-test) — PR chỉ-docs (không có run CI) · HEAD f84a814…
+merge-pr: --dry-run → không comment, không merge.
+exit=0
+
+# --- TEST B: 0 run NHƯNG diff có file KHÔNG phải docs → CHẶN ---
+$ gh run list --branch chore/tmp-0run-nondocs --limit 3
+(rỗng)                                    ← HEAD commit có token skip trong body ⇒ GitHub bỏ run
+$ bash tools/merge-pr.sh 18 --summary-file /tmp/tmp-summary.md --dry-run
+merge-pr: nhánh 'chore/tmp-0run-nondocs' KHÔNG có run CI nào mà diff có file không phải docs: tools/secret-scan.sh
+           → không merge mù. Bật lại CI (gh variable delete CI_ENABLED) rồi push lại.
+exit=1
+
+# --- MERGE THẬT PR docs-only #17 (end-to-end, không --dry-run) ---
+$ bash tools/merge-pr.sh 17 --summary-file /tmp/tmp-summary.md
+merge-pr: nhánh 'chore/tmp-docs-only-test' không có run CI nào — cả PR là docs-only ⇒ được phép merge:
+  ✓ docs/tmp-docs-only-test.md
+merge-pr: đã comment tóm tắt.
+merge-pr: xong. main hiện tại:
+4afb3da test(tools): exercise docs-only merge path of merge-pr.sh (SL-1.14)
+merge-pr: token skip trong merge message: 0 (mong đợi 0 → push lên 'main' sẽ chạy CI)
+merge-pr: đã post comment evidence hậu merge (merge sha + run trên 'main').
+
+# --- Comment evidence TỰ POST trên PR #17 (trích) ---
+## Evidence hậu merge (tự động — tools/merge-pr.sh)
+| Merge commit | `4afb3da9e2477f443f5fa38dfee744cd2cbd4636` |
+| Run CI trên `main` | chưa thấy run nào cho 4afb3da… |
+| Token skip trong merge message | **0** (mong đợi 0) |
+| Ghi chú | PR chỉ-docs ⇒ push lên `main` KHÔNG chạy CI (`paths-ignore`) — không thấy run là ĐÚNG, không phải lỗi |
+
+$ gh pr view 17 --json state → MERGED · $ git ls-remote --heads origin → chỉ còn `main` (2 nhánh temp đã xoá)
+```
+
+**Learning note**
+
+- **Phân biệt "0 run vì hợp lệ" vs "0 run vì bị skip"**: cùng là *không có run*, nhưng PR chỉ-docs là bình thường còn
+  code bị skip là nguy hiểm. Phân biệt bằng **diff của PR**, không bằng "có run hay không".
+- **Tự giẫm bẫy mình vừa viết ra**: commit message giải thích *"nên KHÔNG dùng …"* lại chứa **token skip dạng literal**
+  ⇒ GitHub skip run của chính commit đó (dù diff có `.github/workflows/ci.yml`). Tài liệu hoá một cơ chế thì phải biết
+  nó **đọc ở đâu** — ở đây là **cả body**, không chỉ subject. Đã bổ sung cảnh báo vào rule + `docs/git-flow.md`.
+- **GitHub API không đáng tin tuyệt đối**: trong ~15 phút gặp 3 lỗi tạm thời (`gh pr create` GraphQL, `gh pr close` 502,
+  `gh pr merge` GraphQL) — chạy lại là được. **Debt**: script chưa retry, hiện phải chạy lại tay.
+- **Evidence comment tốt hơn commit**: cùng lượng thông tin (merge sha · run trên `main` · token skip) nhưng **0 commit,
+  0 phút CI**, và nằm ngay cạnh PR để người đọc đối chiếu.
 
 ---
 
@@ -1664,6 +1716,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | process | **Chạy script/test từ đúng working tree**: 2 lần test guard bằng bản script ở nhánh khác (chưa có fix) → kết quả cũ, lại tưởng guard sai. Kiểm `git branch --show-current` trước khi kết luận. |
 | 2026-11-05 | process | **Chốt chặn CI phải rà lại mỗi khi thêm service**: job `build-image` viết ở Phase 0 (khi chỉ có `service-template`) → thêm 2 service thật mà không cập nhật ⇒ CI xanh nhưng **Dockerfile của 2 service thật không được kiểm** = **chốt chặn giả**. Thêm service ⇒ rà **mọi** job CI (cả `test` *và* `build-image`). |
 | 2026-11-05 | process | **Đóng ticket ngay trong PR của nó** (mark done gộp vào commit cuối) thay vì để dành sang PR sau: bớt 1 nhịp chờ, bớt 1 commit, không dính bẫy `[skip ci]` ở HEAD. Đánh đổi: `main` chỉ thấy 1 commit/ticket. |
+| 2026-11-05 | SL-1.14 | **Phân biệt "0 run vì hợp lệ" vs "0 run vì bị skip"**: cùng là *không có run*, nhưng PR chỉ-docs là bình thường còn code bị skip là nguy hiểm. Phân biệt bằng **diff của PR**, không bằng "có run hay không". |
+| 2026-11-05 | SL-1.14 | **Tự giẫm bẫy mình vừa viết ra**: commit message giải thích *"nên KHÔNG dùng …"* lại chứa **token skip dạng literal** ⇒ GitHub skip run của chính commit đó (dù diff có `ci.yml`). Tài liệu hoá một cơ chế thì phải biết nó **đọc ở đâu** — ở đây là **cả body**, không chỉ subject. |
+| 2026-11-05 | SL-1.14 | **GitHub API không đáng tin tuyệt đối**: trong ~15 phút gặp 3 lỗi tạm thời (`gh pr create` GraphQL *Something went wrong*, `gh pr close` 502, `gh pr merge` GraphQL) — chạy lại là được. **Debt**: `merge-pr.sh` chưa có retry, hiện phải chạy lại tay. |
 
 | 2026-11-05 | process | **Đừng dùng backtick trong `--body` của `gh` khi gõ trực tiếp**: shell thực thi phần trong backtick (`tools/merge-pr.sh` → `Permission denied`, `null: command not found`) và **body PR bị hỏng**. Luôn dùng `--body-file` với heredoc (`<<'EOF'`). |
 
@@ -1697,6 +1752,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | Sửa 3 bug tiềm ẩn lộ ra khi có code Java thật: **surefire 2.17** (Tests run: 0 mà vẫn xanh) → pin `3.6.1`; thiếu **`-parameters`** → lỗi runtime ở `@RequestParam`; **Spotless ↔ Checkstyle xung đột** ở block rỗng → bật `allowEmpty*` trong `checkstyle.xml`. |
 | 2026-11-02 | Verify AC "tạo service mới từ template" bằng cách **thực sự** copy ra `smoke-service` theo README → phát hiện test hard-code tên service (template không copy-safe) → sửa test đọc tên từ config; chạy lại `BUILD SUCCESS` rồi xoá `smoke-service`. |
 | 2026-11-05 | Tạo 3 ticket phát sinh sau khi rà CI/compose: `SL-1.12` (job `build-image` hiện **chỉ** build `service-template` — bằng chứng log run `42054583987`; 2 service thật không được CI kiểm Dockerfile), `SL-1.13` (`service-template` vào **compose profile** `template` để `up -d` chỉ dựng hệ thống thật), `SL-1.14` (`merge-pr.sh`: cho phép PR **docs-only** + post comment evidence **hậu merge**). **Đổi process**: mark done **gộp vào commit cuối của ticket** (1 ticket = 1 commit = 1 run CI trên PR), bỏ "fold commit minor sang PR sau"; evidence hậu merge ghi bằng PR comment. Chốt **giữ monorepo** (ghi vào ADR-0003 → Revisit). |
+| 2026-11-05 | `SL-1.14` → `Done`: `tools/merge-pr.sh` (a) cho phép merge PR **chỉ-docs** (0 run là hợp lệ khi **toàn bộ** diff là docs; 0 run mà có file không phải docs → **vẫn chặn**) và (b) tự post **comment evidence hậu merge** (merge sha · run CI trên `main` · token skip · ghi chú chống hiểu nhầm). Verify: **TEST A** PR docs-only #17 → cho phép (`exit=0`); **TEST B** 0 run + `tools/secret-scan.sh` → chặn (`exit=1`); **merge thật** PR #17 → `main` = `4afb3da` + comment evidence tự post ✓. Kèm dọn 2 nhánh temp + xoá file test. |
 
 | 2026-11-02 | Tạo PR [#4](https://github.com/anchu3003/shop-lab-microservices/pull/4) cho `SL-0.4` (nhánh `feat/sl-0.4-service-template`, 5 commit). Merge bằng **squash** theo `docs/git-flow.md`. |
 | 2026-11-03 | `SL-0.5` → `In Progress`: nhánh `feat/sl-0.5-ci-pipeline`. Chốt với user: **giữ remote HTTPS** (token VS Code có scope `workflow`, không cần đổi SSH). |
