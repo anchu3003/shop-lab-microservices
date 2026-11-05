@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (chờ bắt đầu `SL-1.3`) |
+| **Ticket đang làm** | `SL-1.9` (phát sinh — process) |
 | **Ticket tiếp theo** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
-| **Số ticket chi tiết hiện có** | 17 (Phase 0: 8 — archive · Phase 1: 9) |
+| **Số ticket chi tiết hiện có** | 18 (Phase 0: 8 — archive · Phase 1: 10) |
 
 ---
 
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 3 / 9 |
+| 1 | Walking skeleton | 🔵 In Progress | 3 / 10 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -118,6 +118,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | Todo |
 | 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | Todo |
 | 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
+| 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | Todo |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -999,6 +1000,74 @@ Có spec **khớp với thực tế**, đọc được, và **diff được tron
 **Learning note** *(điền khi Done)*
 
 ---
+
+### SL-1.9 — Process: commit docs không cần CI + auto-merge PR (squash + xoá nhánh)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | In Progress |
+| **Phase** | 1 — Walking skeleton *(phát sinh, giống `SL-1.0`)* |
+| **Phụ thuộc** | SL-1.2 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Hai vấn đề lộ ra ngay trong `SL-1.2`:
+
+1. **Commit docs vẫn tốn CI**: ở PR #10, commit `docs(backlog): mark SL-1.2 done…` chỉ sửa `Backlog.md` nhưng vẫn tạo
+   thêm 1 run `pull_request` (~4–5 phút billable). `paths-ignore` **không** cứu được vì nó đánh giá **toàn bộ diff của
+   PR** — PR có code thì diff có code.
+2. **Merge vẫn làm tay** → suýt lặp lại lỗi của `SL-1.1` (commit cuối push race với lúc merge ⇒ squash merge lấy state
+   cũ ⇒ **mất nội dung** khỏi `main`, rồi nhánh bị xoá nên không ai thấy).
+
+**Mục tiêu**
+
+1. Commit **chỉ sửa docs** → **0 phút CI**.
+2. Đủ điều kiện (ticket `Done` + CI xanh + có comment tóm tắt) → **tự động** squash merge + xoá nhánh, có kiểm tra
+   trước khi merge để không mất nội dung.
+
+**In scope**
+
+- Rule + doc: `[skip ci]` cho commit docs-only (kèm bẫy "HEAD commit của PR")
+- `tools/merge-pr.sh`: verify (PR mở · không draft · CI xanh · diff sau commit xanh **phải là docs-only**) → comment
+  tóm tắt → `gh pr merge --squash --delete-branch` → `git checkout main && git pull`
+- Cập nhật `AGENTS.md` §6 + §9 · `.clinerules/10-git-workflow.md` · `docs/git-flow.md` ·
+  `.clinerules/workflows/{close-ticket,git-branch-pr}.md` · comment trong `.github/workflows/ci.yml`
+
+**Out of scope**
+
+- Branch protection / required checks trên GitHub (repo 1 người, chưa cần — xem lại khi có cộng tác viên)
+- Bot/App tự merge (chỉ dùng `gh` CLI ở máy local)
+- Đưa Cline CLI vào CI (ticket riêng khi cần)
+
+**Acceptance Criteria**
+
+- [ ] Commit **docs-only** trong PR có code → **0 run CI mới** (kiểm bằng `gh run list` trước/sau)
+- [ ] PR **chỉ-docs** → 0 run (đã có nhờ `paths-ignore`; verify lại cho chắc)
+- [ ] `tools/merge-pr.sh` **từ chối** khi: PR không OPEN · PR draft · CI chưa `success` · diff sau commit xanh có file
+      **không** phải docs
+- [ ] Merge thật bằng script: có comment tóm tắt · PR `MERGED` bằng **squash** · nhánh feature **bị xoá** (remote) ·
+      `main` local cập nhật
+- [ ] Sau merge: `main` **thật sự có nội dung** (`git show <merge-sha> --stat` + `grep` dòng quan trọng)
+- [ ] Rule ghi ở **một nguồn sự thật** (`AGENTS.md` §6) và đồng bộ ở rule + `docs/git-flow.md` + 2 workflow
+
+**Ghi chú kỹ thuật**
+
+- GitHub đọc skip instruction ở **HEAD commit của PR** (docs: *"in a push, or the HEAD commit of a pull request"*) →
+  commit docs nằm **cuối** PR sẽ skip luôn run của PR ⇒ check treo `Pending`. Vì vậy `merge-pr.sh` kiểm thêm: nếu HEAD
+  khác commit đã xanh thì phần diff phát sinh **buộc** phải docs-only.
+- Từ khoá hợp lệ: `[skip ci]` · `[ci skip]` · `[no ci]` · `[skip actions]` · `[actions skip]` (hoặc trailer
+  `skip-checks: true`). Repo dùng thống nhất **`[skip ci]`**.
+- Merge vào `main` **vẫn** chạy CI trên `main` — đúng, vì `main` phải được kiểm chứng; chỉ **push docs-only** mới được
+  `paths-ignore` bỏ qua.
+- Script dùng `gh` CLI (đã có ở máy dev). Không thêm dependency mới.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+---
+
 
 ## 5. Phase 2 → 8 — Epic outline
 
