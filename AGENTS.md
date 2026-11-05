@@ -134,13 +134,19 @@ Chi tiết ngôn ngữ/framework xem `architecture.md` §11. Quy ước chung:
 - **Branch**: `<type>/<ticket-id>-slug` — ví dụ `feat/sl-2.4-order-saga`, `fix/sl-3.1-...`.
 - **Git workflow**: **GitHub Flow** (base `main` + nhánh ngắn hạn + PR). **Commit sau khi hoàn thành mỗi ticket**
   (sau khi verify thật). Chi tiết: `docs/git-flow.md` + rule `.clinerules/10-git-workflow.md`.
-  - **Commit chỉ sửa docs** (`Backlog.md`, `README.md`, `docs/**`, `.clinerules/**`) → thêm **`[skip ci]`**: không
-    cần CI. PR chỉ-docs và push docs-only lên `main` đã được `paths-ignore` bỏ sẵn.
-  - **Merge tự động**: ticket `Done` + **CI xanh** + **có comment tóm tắt** trên PR → `bash tools/merge-pr.sh <PR>
-    --summary-file <file>` (squash + xoá nhánh feature). Sau merge **phải kiểm `main` có nội dung thật**.
-- **Commit minor — KHÔNG tạo nhánh/PR riêng**: commit nhỏ (đóng ticket, update `Backlog.md`/learning note, sửa doc
-  lặt vặt, tách `Backlog-phase-<N>.md`) **gộp vào nhánh của ticket kế tiếp** — cùng một PR.
-  Chỉ tạo nhánh + PR riêng khi **không còn ticket kế tiếp** (hết phase / dừng dự án).
+  - **1 ticket = 1 commit khi push cuối**: code → verify → **mark `Done` + điền verify/learning ngay trong nhánh đó**,
+    rồi **gộp vào commit cuối** (`git reset --soft origin/main && git commit`, hoặc `git rebase -i` squash) → push
+    **một lần** ⇒ **1 run CI trên PR** + 1 run trên `main`. **Không** để dành docs cho PR sau, **không** sinh commit
+    đóng-ticket riêng. Mark done phải nằm trong commit **có code** (nếu không, commit docs là HEAD ⇒ CI bị skip).
+  - **Commit chỉ sửa docs** tách riêng (`Backlog.md`, `README.md`, `docs/**`, `.clinerules/**`) → thêm **`[skip ci]`**.
+    PR **chỉ-docs** và push docs-only lên `main` đã được `paths-ignore` bỏ sẵn ⇒ **không** cần token.
+  - **Evidence sau merge** (merge sha · run CI trên `main`) không thể nằm trong commit → `tools/merge-pr.sh` **post
+    comment hậu merge** lên PR (không commit, không tốn phút CI).
+  - **Merge tự động**: ticket `Done` + **CI xanh** (PR **chỉ-docs** được miễn vì không có run nào) + **có comment tóm
+    tắt** trên PR → `bash tools/merge-pr.sh <PR> --summary-file <file>` (squash + xoá nhánh feature). Sau merge
+    **phải kiểm `main` có nội dung thật**.
+- **Docs không thuộc ticket nào** (sửa doc lặt vặt, tách `Backlog-phase-<N>.md`) → gộp vào **commit của ticket kế tiếp**;
+  chỉ tạo nhánh + PR riêng khi **không còn ticket kế tiếp** (hết phase / dừng dự án).
   ⚠️ Thay đổi **có code** thì **không** được gộp — phải là ticket riêng (§3.1).
 - **Archive theo phase**: phase xong → tách phần chi tiết (ticket + verify + learning note) sang
   `Backlog-phase-<N>.md`; `Backlog.md` giữ việc đang làm + bảng archive + Learning log + Changelog.

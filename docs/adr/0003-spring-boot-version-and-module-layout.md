@@ -113,3 +113,8 @@ các module.
   lúc đó chi phí bảo trì parent riêng có thể đã lớn hơn lợi ích.
 - Revisit layout multi-module khi **số module > 10** hoặc build toàn repo vượt **2 phút** trên máy dev →
   chuyển mặc định sang build có chọn lọc (`-pl ... -am`) trong tài liệu + CI.
+- **Đã cân nhắc và LOẠI multi-repo (2026-11-05)** — *"1 service = 1 repo + CI/CD riêng"*: tách repo sẽ buộc
+  **publish `shoplab-service-commons` lên registry + versioning liên repo** (đúng thứ ADR-0004 cố tránh), phá commit
+  atomic xuyên service, và nhân số workflow/secret/branch-rule lên theo số service. **Giữ monorepo**; per-service CI/CD
+  vẫn làm được bằng **matrix + path filter** trong cùng workflow (xem `SL-1.12`). Ngưỡng revisit: ≥2 người/service ·
+  cần release cadence độc lập thật · >10 module.

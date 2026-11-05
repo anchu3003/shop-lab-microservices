@@ -13,13 +13,16 @@ Rule behavioral. Base convention ở `AGENTS.md` §6; hướng dẫn đầy đ�
 - Conventional Commits: `feat|fix|docs|refactor|test|chore(scope): mô tả`.
 - **Commit sau khi hoàn thành mỗi ticket** — tức là sau khi đã verify thật, trước khi sang ticket tiếp theo.
   Không để thay đổi treo lơ lửng qua nhiều ticket.
-- 1 ticket có thể có nhiều commit nhỏ; commit cuối đóng ticket (nhắc ticket ID trong body nếu cần).
+- Trong lúc code có thể commit nhiều lần (local, chưa push). **Trước khi push để chạy CI → squash về 1 commit**
+  (code + docs mark done); commit cuối phải có code, nhắc ticket ID trong subject/body.
 - **Không** commit secret / token / connection string.
 
 ## Commit chỉ sửa docs → KHÔNG cần CI
 
 - Commit **chỉ** đụng `*.md` (vd `Backlog.md`, `README.md`), `docs/**`, `.clinerules/**`, `.cline/**`, `LICENSE`
   → **không cần CI**: thêm `[skip ci]` vào **subject** commit.
+- **Mặc định không phải nghĩ tới token**: mark done được gộp vào commit cuối **có code** (mục *Mark done* bên dưới)
+  ⇒ CI chạy bình thường. Token chỉ dùng khi bạn cố ý push một commit docs **tách riêng**.
   ```bash
   git commit -m "docs(backlog): mark SL-1.2 done with CI evidence (SL-1.2) [skip ci]"
   ```
@@ -30,19 +33,34 @@ Rule behavioral. Base convention ở `AGENTS.md` §6; hướng dẫn đầy đ�
   nhưng phải **hiểu rõ** là CI đã xanh ở commit code ngay trước đó).
   → `tools/merge-pr.sh` tự kiểm chuyện này: HEAD khác commit đã xanh thì phần diff phát sinh **phải là docs-only**.
 - Push docs-only lên `main` (sau merge) đã được `paths-ignore` bỏ sẵn — không cần `[skip ci]`.
+- ⚠️ **Đừng viết token skip dạng literal trong commit message nếu bạn MUỐN CI chạy** — GitHub đọc cả **body**, không chỉ
+  subject, ở **HEAD commit của PR**. Đã gặp thật (2026-11-05): commit `docs(process)` sửa `ci.yml` + câu giải thích
+  *"nên KHÔNG dùng `[skip ci]`"* ⇒ run `pull_request` **bị skip**, PR không có check nào. Khi cần nhắc tới token, viết
+  **không có ngoặc** (vd *token skip CI*) hoặc để dạng khác.
 
-## Commit minor — KHÔNG tạo nhánh/PR riêng
+## Mark done — gộp vào commit CUỐI của ticket (không để dành PR sau)
 
-- Commit nhỏ (đóng ticket, update `Backlog.md`/learning note, sửa doc lặt vặt, tách `Backlog-phase-<N>.md`)
-  → **gộp vào nhánh của ticket kế tiếp**, cùng PR đó. Không mở nhánh + PR riêng cho doc.
-- Chỉ tạo nhánh + PR riêng khi **không còn ticket kế tiếp** (hết phase / dừng dự án).
+- Sau khi **verify thật**, sửa `Backlog.md` (status `Done` + Kết quả verify + Learning note + bảng phase + Changelog)
+  **ngay trong nhánh của ticket** → rồi gộp vào commit cuối:
+  ```bash
+  git reset --soft origin/main && git commit -m "..."   # hoặc: git rebase -i origin/main → squash
+  git push --force-with-lease                            # CHỈ nhánh feature — không bao giờ trên main
+  ```
+  ⇒ 1 push = **1 run CI trên PR** (+ 1 run trên `main` sau merge). **Không** tạo commit đóng-ticket rời, **không** mở
+  PR phụ, **không** để ticket "chưa đóng" chờ sang PR sau.
+- **Điều kiện bắt buộc**: commit cuối phải **có code** (hoặc cả PR là docs-only) — nếu commit HEAD là docs-only thì
+  GitHub skip run `pull_request` ⇒ check treo `Pending`.
+- **Evidence sau merge** (merge sha · run CI trên `main`) không thể nằm trong commit → `tools/merge-pr.sh`
+  **post comment hậu merge** lên PR. Không cần commit cho việc này.
+- **Docs không thuộc ticket nào** (sửa doc lặt vặt, tách `Backlog-phase-<N>.md`) → gộp vào **commit của ticket kế tiếp**;
+  chỉ mở nhánh + PR riêng khi **không còn ticket kế tiếp** (hết phase / dừng dự án).
 - Thay đổi **có code** thì **không** gộp — phải là ticket riêng (`AGENTS.md` §3.1).
 
 ## Branch
 
 - Format: `<type>/<ticket-id>-<slug>` — ví dụ `feat/sl-0.2-repo-skeleton`.
 - `type` ∈ {feat, fix, docs, refactor, test, chore}; `ticket-id` = `SL-X.Y`.
-- Tạo nhánh khi **bắt đầu một ticket**; commit minor không tạo nhánh mới.
+- Tạo nhánh khi **bắt đầu một ticket**; docs lặt vặt (không thuộc ticket nào) không tạo nhánh mới.
 - Nhánh ngắn hạn; xoá sau khi merge.
 
 ## PR
