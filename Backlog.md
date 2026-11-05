@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.13` — Compose: `service-template` vào **profile** `template` |
-| **Ticket tiếp theo** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
+| **Ticket đang làm** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
+| **Ticket tiếp theo** | `SL-1.4` — `identity-service`: refresh token + RBAC + `/v1/users/me` |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 8 / 15 |
+| 1 | Walking skeleton | 🔵 In Progress | 9 / 15 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -122,7 +122,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 11 | `SL-1.10` | *(phát sinh)* fix: `[skip ci]` lọt vào squash message → `main` không chạy CI | S | ✅ Done |
 | 12 | `SL-1.11` | *(phát sinh)* fix: message chẩn đoán của `merge-pr.sh` gây hiểu nhầm | S | ✅ Done |
 | 13 | `SL-1.12` | *(phát sinh)* CI: build image cho **mọi** service (matrix) + cắt thời gian build | M | ✅ Done |
-| 14 | `SL-1.13` | *(phát sinh)* compose: `service-template` vào **profile** `template` | S | Todo |
+| 14 | `SL-1.13` | *(phát sinh)* compose: `service-template` vào **profile** `template` | S | ✅ Done |
 | 15 | `SL-1.14` | *(phát sinh)* `merge-pr.sh`: cho phép PR **docs-only** + comment evidence **hậu merge** | S | ✅ Done |
 
 
@@ -1463,7 +1463,7 @@ TỔNG billable        194s                    343s   (+149s ≈ +2,5 phút/run)
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton *(phát sinh khi rà compose sau SL-1.2)* |
 | **Phụ thuộc** | — (SL-0.3/SL-0.4 đã Done) |
 | **Ước lượng** | S |
@@ -1506,9 +1506,34 @@ dựng template không còn cần thiết.
   nhanh + nhẹ hơn.
 - **Không** tách `docker-compose.tools.yml`: phải khai lại network/volume → dễ lệch.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-05 — output thật)*
 
-**Learning note** *(điền khi Done)*
+```console
+$ docker compose -f infra/docker-compose.yml --env-file .env config --services
+postgres · adminer · identity-service · api-gateway · rabbitmq · redis      ← KHÔNG có service-template
+
+$ docker compose -f infra/docker-compose.yml --env-file .env up -d
+... Container shoplab-adminer Started · shoplab-identity-service Healthy
+$ docker ps --format '{{.Names}}' | grep -i template
+(không có shoplab-service-template)                                          ← `up -d` KHÔNG dựng template
+
+$ docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template
+Container shoplab-service-template Started
+$ curl -s -o /dev/null -w '%{http_code}' localhost:8090/ready   → 200
+$ curl -s -o /dev/null -w '%{http_code}' localhost:8090/health  → 200
+$ curl -s localhost:8080/health → 200 (gateway) · localhost:8081/health → 200 (identity)  ← service thật không đổi
+
+$ docker compose ... --profile template stop service-template   (dọn lại, không để template chạy)
+```
+
+**Learning note**
+
+- **Compose profile là cách đúng cho "service optional, chưa dùng thì thôi"**: 1 dòng `profiles: [template]` là `up -d`
+  mặc định không đụng template — không cần xoá gì, đảo ngược được ngay, và template vẫn là "chốt chặn sống" khi bật lại.
+- **`config --services` là chốt check nhanh nhất** để biết service có được dựng hay không **trước** khi chạy thật — đúng
+  tinh thần verify-then-run, không phải chạy xong mới nhìn.
+- **Service mẫu không nên là "mặc định" của stack thật**: nó tốn RAM + thời gian build mà không phục vụ system — chỉ nên
+  on-demand. Cái đáng giữ là *hàm lượng chuẩn* (Dockerfile/healthcheck), không phải việc nó luôn chạy.
 
 ---
 
@@ -1765,6 +1790,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.14 | **Tự giẫm bẫy mình vừa viết ra**: commit message giải thích *"nên KHÔNG dùng …"* lại chứa **token skip dạng literal** ⇒ GitHub skip run của chính commit đó (dù diff có `ci.yml`). Tài liệu hoá một cơ chế thì phải biết nó **đọc ở đâu** — ở đây là **cả body**, không chỉ subject. |
 | 2026-11-05 | SL-1.14 | **GitHub API không đáng tin tuyệt đối**: trong ~15 phút gặp 3 lỗi tạm thời (`gh pr create` GraphQL *Something went wrong*, `gh pr close` 502, `gh pr merge` GraphQL) — chạy lại là được. **Debt**: `merge-pr.sh` chưa có retry, hiện phải chạy lại tay. |
 | 2026-11-05 | SL-1.12 | **Chốt chặn giả sống được 2 ticket**: `build-image` "xanh" suốt `SL-1.1`+`SL-1.2` mà chỉ kiểm 1/3 service — không ai đọc lại job CI khi thêm service. **Song song ≠ rẻ**: 3 image chạy song song giữ nguyên thời gian *chờ* nhưng nhân 3 phút *billable* — đo bằng số, không bằng cảm giác. |
+| 2026-11-05 | SL-1.13 | **Service optional ⇒ dùng compose profile chứ đừng xoá/để mặc định**: profile giữ được "chốt chặn sống" (template vẫn build/chạy được khi cần) mà `up -d` không tốn RAM/build cho nó. |
 
 | 2026-11-05 | process | **Đừng dùng backtick trong `--body` của `gh` khi gõ trực tiếp**: shell thực thi phần trong backtick (`tools/merge-pr.sh` → `Permission denied`, `null: command not found`) và **body PR bị hỏng**. Luôn dùng `--body-file` với heredoc (`<<'EOF'`). |
 
@@ -1800,6 +1826,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | Tạo 3 ticket phát sinh sau khi rà CI/compose: `SL-1.12` (job `build-image` hiện **chỉ** build `service-template` — bằng chứng log run `42054583987`; 2 service thật không được CI kiểm Dockerfile), `SL-1.13` (`service-template` vào **compose profile** `template` để `up -d` chỉ dựng hệ thống thật), `SL-1.14` (`merge-pr.sh`: cho phép PR **docs-only** + post comment evidence **hậu merge**). **Đổi process**: mark done **gộp vào commit cuối của ticket** (1 ticket = 1 commit = 1 run CI trên PR), bỏ "fold commit minor sang PR sau"; evidence hậu merge ghi bằng PR comment. Chốt **giữ monorepo** (ghi vào ADR-0003 → Revisit). |
 | 2026-11-05 | `SL-1.14` → `Done`: `tools/merge-pr.sh` (a) cho phép merge PR **chỉ-docs** (0 run là hợp lệ khi **toàn bộ** diff là docs; 0 run mà có file không phải docs → **vẫn chặn**) và (b) tự post **comment evidence hậu merge** (merge sha · run CI trên `main` · token skip · ghi chú chống hiểu nhầm). Verify: **TEST A** PR docs-only #17 → cho phép (`exit=0`); **TEST B** 0 run + `tools/secret-scan.sh` → chặn (`exit=1`); **merge thật** PR #17 → `main` = `4afb3da` + comment evidence tự post ✓. Kèm dọn 2 nhánh temp + xoá file test. |
 | 2026-11-05 | `SL-1.12` → `Done`: job `build-image` chuyển sang **matrix** (`service-template` · `identity-service` · `api-gateway`, `fail-fast: false`) + `--build-arg SKIP_TESTS=true` (bỏ test trùng trong image — job `test` đã chạy cả reactor). **Test âm thật**: phá `api-gateway/Dockerfile` → run `42064872154` **chỉ** job gateway đỏ (`Child module … does not exist`), 2 job image kia xanh; revert → run `42065751051` **5/5 xanh**. Số đo: billable 194s → 343s (**+2,5 phút/run**, wall-clock gần như không đổi vì chạy song song). Cập nhật `README.md` + `architecture.md` §10.3 + comment `ci.yml`. PR [#20](https://github.com/anchu3003/shop-lab-microservices/pull/20). |
+| 2026-11-05 | `SL-1.13` → `Done`: `service-template` vào **compose profile** `template` ⇒ `up -d` mặc định chỉ dựng hệ thống thật (không tốn RAM/build cho service mẫu). Verify: `config --services` (không profile) **không** có template · `up -d` không tạo `shoplab-service-template` · `--profile template up -d service-template` → Started, `/ready` 200 · gateway/identity vẫn healthy. Cập nhật `README.md` (bảng port + lệnh) + comment `infra/docker-compose.yml`. |
 
 | 2026-11-02 | Tạo PR [#4](https://github.com/anchu3003/shop-lab-microservices/pull/4) cho `SL-0.4` (nhánh `feat/sl-0.4-service-template`, 5 commit). Merge bằng **squash** theo `docs/git-flow.md`. |
 | 2026-11-03 | `SL-0.5` → `In Progress`: nhánh `feat/sl-0.5-ci-pipeline`. Chốt với user: **giữ remote HTTPS** (token VS Code có scope `workflow`, không cần đổi SSH). |
