@@ -483,7 +483,7 @@ INFO tc.postgres:16-alpine -- Container is started (JDBC URL: jdbc:postgresql://
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Review |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.1 |
 | **Ước lượng** | M |
@@ -610,6 +610,17 @@ $ curl -s localhost:8080/health   → {"status":"UP"}  [http 200]   ← liveness
 $ curl -s localhost:8080/ready    → {"status":"DOWN","dependencies":[{"name":"identity-service","status":"DOWN",…}]} [http 503]
 $ docker ps | grep gateway        → Up (healthy)                  ← gateway vẫn sống
 $ docker start shoplab-identity-service → /v1/users/me 200 · /ready 200   (hồi phục, không cần restart gateway)
+
+# --- AC: CI xanh, và job `test` THẬT SỰ chạy test gateway + IT ---
+$ gh run view 42046262655 --json jobs --jq '.jobs[]|"\(.name) -> \(.status)/\(.conclusion)"'
+lint (checkstyle + spotless)   -> completed/success
+test (unit + jacoco gate)      -> completed/success
+build-image (service-template) -> completed/success
+$ gh run view --job <test> --log | grep -E 'API Gateway|Tests run: 71|Tests run: 16'
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0 -- in com.shoplab.identity.IdentityServiceApplicationIT
+[INFO] Tests run: 71, Failures: 0, Errors: 0, Skipped: 0
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [ 19.298 s]
+[INFO] BUILD SUCCESS   Total time:  01:49 min
 ```
 
 **Learning note**
@@ -1163,7 +1174,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | `SL-1.0` → `Done`: tối ưu chi phí CI — `paths-ignore` (bỏ run chỉ-docs), `push` chỉ trên `main` (hết run trùng), kill-switch `vars.CI_ENABLED`, bỏ qua draft PR (`ready_for_review`). Verify thật: push nhánh feature **0 run**, draft → run `skipped` (0 phút), `CI_ENABLED=false` + re-run → `skipped`, `true` → 3/3 xanh, merge → run `main` xanh, **PR chỉ-docs → 0 run**. Cùng kịch bản: **8 phút vs ~19,5 phút (−59%)**. Merge PR [#7](https://github.com/anchu3003/shop-lab-microservices/pull/7) (squash). **Phase 1 → 1 / 1**. |
 | 2026-11-03 | **Breakdown Phase 1** → 9 ticket chi tiết: `SL-1.0` Done · `SL-1.1`…`SL-1.8` Todo (identity register/login + JWT RS256 + JWKS · gateway routing/verify JWT · **E2E sớm** · refresh token + RBAC · catalog CRUD · SKU/paging/seed · E2E đầy đủ + runbook · OpenAPI spec). Chốt 7 quyết định khi breakdown (gateway **MVC tự viết** · JWT **RS256 + JWKS** · **JPA + Flyway** · **có Testcontainers** · OpenAPI **sinh từ code** · smoke chạy **local** · register luôn là `buyer`). |
 | 2026-11-05 | `SL-1.1` → `Done`: nhánh `feat/sl-1.1-identity-service`. `identity-service` (port 8081) — **Flyway** + register/login + **JWT RS256** + **JWKS**; `service-commons` thêm `UNAUTHORIZED`/`FORBIDDEN`; `tools/gen-dev-keys.sh` (khoá dev, không commit); `tools/secret-scan.sh` fix false positive; compose + `.env.example`. Verify thật: container `healthy` · Flyway v1 áp dụng · BCrypt trong DB (60 ký tự) · **chữ ký verify bằng public key từ JWKS** · 401 không lộ email · fail-fast khi thiếu khoá · `/ready` 503 khi DB chết. `mvn verify`: 37 + 39 unit + **16 IT** (Testcontainers); **CI xanh 3/3**, job `test` chạy IT thật (1:24). PR [#9](https://github.com/anchu3003/shop-lab-microservices/pull/9). |
-| 2026-11-05 | `SL-1.2` → `Review`: nhánh `feat/sl-1.2-api-gateway`. `api-gateway` (port 8080) — routing theo config (prefix dài nhất thắng) · verify **JWT RS256 qua JWKS** (cache 5m + nạp lại khi `kid` lạ, có chặn dội) · gắn/ghi đè `x-user-id`/`x-user-role` · propagate `x-correlation-id` · **401** token sai / **503** service đích chết. `service-commons` thêm `UNAVAILABLE` (503). `identity-service` thêm `GET /v1/users/me` (protected). Verify thật: container healthy · register/login qua gateway giống hệt gọi thẳng · 401/200/503 đúng · traceId **trùng** ở log 2 service. `mvn verify`: 37 + 39 + **16 IT** + **71 test gateway**. Đồng thời khôi phục 3 thay đổi doc của `SL-1.1` bị mất do push race lúc merge (xem Learning log). |
+| 2026-11-05 | `SL-1.2` → `Done`: nhánh `feat/sl-1.2-api-gateway`. `api-gateway` (port 8080) — routing theo config (prefix dài nhất thắng) · verify **JWT RS256 qua JWKS** (cache 5m + nạp lại khi `kid` lạ, có chặn dội) · gắn/ghi đè `x-user-id`/`x-user-role` · propagate `x-correlation-id` · **401** token sai / **503** service đích chết. `service-commons` thêm `UNAVAILABLE` (503). `identity-service` thêm `GET /v1/users/me` (protected). Verify thật: container healthy · register/login qua gateway giống hệt gọi thẳng · 401/200/503 đúng · traceId **trùng** ở log 2 service. `mvn verify`: 37 + 39 + **16 IT** + **71 test gateway**; **CI xanh 3/3** (job `test` 1:49). PR [#10](https://github.com/anchu3003/shop-lab-microservices/pull/10). Đồng thời khôi phục 3 thay đổi doc của `SL-1.1` bị mất do push race lúc merge (xem Learning log). |
 
 
 
