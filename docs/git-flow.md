@@ -64,6 +64,16 @@ bash tools/merge-pr.sh 10 --summary-file /tmp/pr-summary.md
 Script **từ chối merge** khi: PR không OPEN, PR là draft, run CI mới nhất không `success`, hoặc commit sau
 lần CI xanh có thay đổi **không phải docs**.
 
+⚠️ **Bẫy `[skip ci]` lọt vào merge commit** (`SL-1.10`): mặc định `gh pr merge --squash` ghép *title PR + subject của
+các commit trong PR* → `[skip ci]` của commit docs nằm luôn trong message của merge commit ⇒ **push lên `main` bị
+skip** (mất lần kiểm chứng `main`). Script đã xử lý: truyền tường minh `--subject`/`--body` + lọc sạch token skip
+khỏi body. Kiểm nhanh sau merge:
+
+```bash
+git log -1 --format=%B <merge-sha> | grep -c 'skip ci'   # mong đợi: 0
+gh run list --branch main --limit 1                       # mong đợi: có run `push` mới
+```
+
 **Sau khi merge — bắt buộc kiểm `main` thật sự có nội dung** (bài học `SL-1.1`: commit cuối push race với lúc
 merge ⇒ squash merge lấy state cũ ⇒ mất nội dung, rồi nhánh bị xoá):
 

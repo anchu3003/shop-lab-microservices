@@ -90,8 +90,16 @@ fi
 # --- 4) Comment tóm tắt rồi squash merge + xoá nhánh --------------------------
 gh pr comment "$pr" --body-file "$summary_file" >/dev/null
 echo "merge-pr: đã comment tóm tắt."
-gh pr merge "$pr" --squash --delete-branch
+
+# Squash message phải ghi TƯỜNG MINH: mặc định `gh pr merge` ghép subject của các commit trong PR, nên
+# `[skip ci]` của commit docs sẽ lọt vào message của merge commit ⇒ push lên `main` bị SKIP (đã gặp thật ở
+# SL-1.9: merge xong `main` không có run CI nào). Body lấy từ summary đã lọc sạch mọi token skip.
+pr_title="$(gh pr view "$pr" --json title --jq .title)"
+sanitized_body="$(sed -E 's/\[(skip ci|ci skip|no ci|skip actions|actions skip)\]//g' "$summary_file")"
+gh pr merge "$pr" --squash --delete-branch --subject "$pr_title" --body "$sanitized_body"
 
 git checkout -q main && git pull -q --ff-only
 echo "merge-pr: xong. main hiện tại:"
 git --no-pager log --oneline -1
+echo "merge-pr: kiểm tra (mong đợi 0 → squash message không có token skip):"
+echo "  skip-ci tokens: $(git log -1 --format=%B | grep -c 'skip ci')"

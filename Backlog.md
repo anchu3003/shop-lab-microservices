@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.9` (phát sinh — process) |
+| **Ticket đang làm** | `SL-1.10` (fix phát sinh từ `SL-1.9`) |
 | **Ticket tiếp theo** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
-| **Số ticket chi tiết hiện có** | 18 (Phase 0: 8 — archive · Phase 1: 10) |
+| **Số ticket chi tiết hiện có** | 19 (Phase 0: 8 — archive · Phase 1: 11) |
 
 ---
 
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 3 / 10 |
+| 1 | Walking skeleton | 🔵 In Progress | 3 / 11 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -119,6 +119,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | Todo |
 | 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
 | 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
+| 11 | `SL-1.10` | *(phát sinh)* fix: `[skip ci]` lọt vào squash message → `main` không chạy CI | S | Todo |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -1117,6 +1118,63 @@ nằm ở **comment PR #11** (do script post) và được bổ sung vào ticket
   thận y như test code.
 - Nit đã biết: khi nhánh **chưa có run nào**, message hiện `conclusion='null'` (jq trả `null` cho mảng rỗng) — vẫn
   từ chối đúng, chỉ chưa đẹp; sửa khi nào rảnh.
+
+---
+
+
+### SL-1.10 — Fix: `[skip ci]` của commit docs lọt vào squash message → `main` không chạy CI
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | In Progress |
+| **Phase** | 1 — Walking skeleton *(phát sinh từ SL-1.9)* |
+| **Phụ thuộc** | SL-1.9 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Merge PR #11 bằng `tools/merge-pr.sh` (squash) → **không có run CI nào trên `main`**, dù commit merge có code
+(`tools/merge-pr.sh`, `.github/workflows/ci.yml`). Nguyên nhân: GitHub ghép squash message từ **subject của các commit
+trong PR**, trong đó có `docs(backlog): mark SL-1.9 done with CI evidence (SL-1.9) [skip ci]` → `[skip ci]` nằm trong
+message của commit được push lên `main` ⇒ run `push` bị skip.
+
+Đây là **tác dụng phụ của rule ở SL-1.9**: "docs commit dùng `[skip ci]`" vô tình làm mất luôn lần kiểm chứng `main` —
+đúng thứ `main` cần nhất.
+
+**Mục tiêu**
+
+Merge xong thì `main` **phải** được CI kiểm chứng, kể cả khi commit docs trong PR có `[skip ci]`.
+
+**In scope**
+
+- `tools/merge-pr.sh`: ghi **tường minh** `--subject` (title PR) + `--body` (summary đã lọc token skip) cho
+  `gh pr merge --squash` → squash message **không** còn `[skip ci]`
+- Ghi cảnh báo vào rule (`.clinerules/10-git-workflow.md`) + `docs/git-flow.md`
+
+**Out of scope**
+
+- Bỏ `[skip ci]` (vẫn cần cho commit docs trong PR có code — xem SL-1.9)
+- Backfill run cho commit `a7d9482` đã merge (sẽ được kiểm chứng gián tiếp qua commit merge của ticket này)
+
+**Acceptance Criteria**
+
+- [ ] `tools/merge-pr.sh` truyền `--subject`/`--body`; body đã lọc `[skip ci]` · `[ci skip]` · `[no ci]` · `[skip actions]` · `[actions skip]`
+- [ ] Merge ticket này: squash message **không** chứa `skip ci` (`git log -1 --format=%B <sha> | grep -c 'skip ci'` → `0`)
+- [ ] **Có run CI `push` trên `main`** cho merge commit đó (bằng chứng fix hoạt động)
+- [ ] Rule + `docs/git-flow.md` ghi rõ bẫy này
+
+**Ghi chú kỹ thuật**
+
+- `gh pr merge --squash` mặc định ghép: **title PR + danh sách subject của các commit trong PR** → đó là đường lọt của
+  `[skip ci]`.
+- Kiểm nhanh sau merge: `git log -1 --format=%B <merge-sha> | grep -c 'skip ci'` (mong đợi `0`) và
+  `gh run list --branch main --limit 1` (mong đợi có run `push` mới).
+- Không sửa script cũng tránh được (đừng để commit docs có `[skip ci]` là commit cuối PR) nhưng đó là kỷ luật tay, dễ
+  quên → sửa script là chốt.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
 
 ---
 
