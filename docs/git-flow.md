@@ -39,6 +39,61 @@
 - Merge kiểu **squash** để `main` sạch.
 - **Không** merge khi chưa verify thật.
 
+## Merge tự động: squash + xoá nhánh
+
+Ba điều kiện **đủ** — không cần hỏi lại user:
+
+1. Ticket `Done` (đã verify thật, output nằm trong `Backlog.md`).
+2. CI **xanh** trên PR.
+3. Đã **comment tóm tắt** trên PR (tóm tắt + bảng AC + lệnh verify).
+
+```bash
+# 1) comment tóm tắt (chuẩn bị sẵn nội dung)
+cat > /tmp/pr-summary.md <<'EOF'
+## Tóm tắt verify
+- `mvn verify`: BUILD SUCCESS — 37 + 39 + 16 IT + 71 test
+- Container healthy · 401/200/503 đúng · traceId trùng ở log 2 service
+- CI: 3/3 xanh (job `test` 1:49)
+EOF
+
+# 2) verify + comment + squash merge + xoá nhánh (cả remote) + cập nhật main local
+bash tools/merge-pr.sh 10 --summary-file /tmp/pr-summary.md
+#   thêm --dry-run nếu chỉ muốn xem script sẽ làm gì
+```
+
+Script **từ chối merge** khi: PR không OPEN, PR là draft, run CI mới nhất không `success`, hoặc commit sau
+lần CI xanh có thay đổi **không phải docs**.
+
+**Sau khi merge — bắt buộc kiểm `main` thật sự có nội dung** (bài học `SL-1.1`: commit cuối push race với lúc
+merge ⇒ squash merge lấy state cũ ⇒ mất nội dung, rồi nhánh bị xoá):
+
+```bash
+git show <merge-sha> --stat | head
+grep -n "<dòng quan trọng>" Backlog.md
+```
+
+Merge vào `main` **sẽ** tạo run CI trên `main` (đúng — `main` phải được kiểm chứng); chỉ **push docs-only** mới
+được bỏ qua.
+
+## Commit chỉ sửa docs → KHÔNG cần CI
+
+Commit **chỉ** đụng `*.md` (`Backlog.md`, `README.md`, …), `docs/**`, `.clinerules/**`, `.cline/**`, `LICENSE`
+→ thêm **`[skip ci]`** vào subject:
+
+```bash
+git commit -m "docs(backlog): mark SL-1.2 done with CI evidence (SL-1.2) [skip ci]"
+```
+
+| Cách | Khi nào đủ | Ghi chú |
+|---|---|---|
+| `paths-ignore` trong `ci.yml` | diff của **push/PR** toàn là docs | Đã có; đủ cho **PR chỉ-docs** và push docs lên `main` |
+| **`[skip ci]`** trong commit message | Commit docs **nằm trong PR có code** | GitHub đọc ở **HEAD commit của PR** → xem cảnh báo dưới |
+
+⚠️ **Bẫy**: nếu commit docs là **commit cuối** của PR, `[skip ci]` sẽ skip luôn run `pull_request` của cả PR →
+check trên PR treo **Pending**. Repo không bật required checks nên vẫn merge được, nhưng phải hiểu: **CI đã xanh ở
+commit code ngay trước đó**, và phần phát sinh chỉ là docs.
+`tools/merge-pr.sh` kiểm chính xác điều này trước khi merge (diff sau commit xanh phải là docs-only).
+
 ## Commit minor — KHÔNG tạo nhánh/PR riêng
 
 Commit nhỏ (đóng ticket, update `Backlog.md`/learning note, sửa doc lặt vặt, tách `Backlog-phase-<N>.md`)

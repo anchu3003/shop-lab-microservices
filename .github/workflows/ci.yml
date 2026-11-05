@@ -49,6 +49,10 @@ on:
       - '.cline/**'
       - 'LICENSE'
   # PR vào main. Thêm `ready_for_review` để PR draft bị skip nhưng chạy ngay khi bấm Ready.
+  #
+  # LƯU Ý: `paths-ignore` chỉ bỏ run khi **toàn bộ** diff là docs. Commit docs nằm trong PR **có code**
+  # vẫn tạo run `pull_request` mới (vì PR diff có code) → commit đó thêm `[skip ci]` trong message.
+  # GitHub đọc skip instruction ở **HEAD commit của PR** (xem .clinerules/10-git-workflow.md).
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]

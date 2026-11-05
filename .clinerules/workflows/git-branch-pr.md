@@ -18,5 +18,9 @@ Tách nhánh mới cho ticket đang làm và tạo Pull Request vào nhánh `mai
 7. Tạo PR:
    - Có `gh`: `gh pr create --base main --fill` (hoặc set `--title`/`--body` rõ ràng: tóm tắt + ticket + verify).
    - Không có `gh`: in hướng dẫn + link so sánh để tạo PR thủ công trên GitHub.
-8. **Report**: link PR, tên nhánh, commit đã tạo, việc còn lại.
+8. **Merge tự động** (khi ticket `Done` + CI xanh + đã có comment tóm tắt):
+   `bash tools/merge-pr.sh <pr-number> --summary-file /tmp/pr-summary.md`
+   → script kiểm điều kiện, comment tóm tắt, `gh pr merge --squash --delete-branch`, cập nhật `main` local.
+9. **Report**: link PR (trạng thái merged), merge sha, nhánh đã xoá, commit đã tạo, việc còn lại.
+   Nhắc: sau merge phải **kiểm `main` có nội dung thật** (bài học push race ở `SL-1.1`).
 </detailed_sequence_of_steps>

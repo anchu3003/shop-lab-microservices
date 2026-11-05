@@ -134,6 +134,10 @@ Chi tiết ngôn ngữ/framework xem `architecture.md` §11. Quy ước chung:
 - **Branch**: `<type>/<ticket-id>-slug` — ví dụ `feat/sl-2.4-order-saga`, `fix/sl-3.1-...`.
 - **Git workflow**: **GitHub Flow** (base `main` + nhánh ngắn hạn + PR). **Commit sau khi hoàn thành mỗi ticket**
   (sau khi verify thật). Chi tiết: `docs/git-flow.md` + rule `.clinerules/10-git-workflow.md`.
+  - **Commit chỉ sửa docs** (`Backlog.md`, `README.md`, `docs/**`, `.clinerules/**`) → thêm **`[skip ci]`**: không
+    cần CI. PR chỉ-docs và push docs-only lên `main` đã được `paths-ignore` bỏ sẵn.
+  - **Merge tự động**: ticket `Done` + **CI xanh** + **có comment tóm tắt** trên PR → `bash tools/merge-pr.sh <PR>
+    --summary-file <file>` (squash + xoá nhánh feature). Sau merge **phải kiểm `main` có nội dung thật**.
 - **Commit minor — KHÔNG tạo nhánh/PR riêng**: commit nhỏ (đóng ticket, update `Backlog.md`/learning note, sửa doc
   lặt vặt, tách `Backlog-phase-<N>.md`) **gộp vào nhánh của ticket kế tiếp** — cùng một PR.
   Chỉ tạo nhánh + PR riêng khi **không còn ticket kế tiếp** (hết phase / dừng dự án).
@@ -180,6 +184,7 @@ Chi tiết ngôn ngữ/framework xem `architecture.md` §11. Quy ước chung:
 - ❌ Đổi kiến trúc mà không update `architecture.md` + viết ADR
 - ❌ Commit secret, token, connection string thật
 - ❌ Đánh dấu ticket `Done` khi chưa chạy verify thật
+- ❌ Merge PR khi CI chưa xanh hoặc chưa có comment tóm tắt (dùng `tools/merge-pr.sh` để không bỏ sót)
 - ❌ Viết doc dài dòng, không có ví dụ / số liệu cụ thể
 - ❌ Tự ý đổi scope của ticket đang làm — có gì mới thì tạo ticket mới
 
