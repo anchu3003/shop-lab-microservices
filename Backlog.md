@@ -118,7 +118,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | Todo |
 | 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | Todo |
 | 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
-| 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | Todo |
+| 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -1005,7 +1005,7 @@ Có spec **khớp với thực tế**, đọc được, và **diff được tron
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | In Progress |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton *(phát sinh, giống `SL-1.0`)* |
 | **Phụ thuộc** | SL-1.2 |
 | **Ước lượng** | S |
@@ -1062,9 +1062,61 @@ Hai vấn đề lộ ra ngay trong `SL-1.2`:
   `paths-ignore` bỏ qua.
 - Script dùng `gh` CLI (đã có ở máy dev). Không thêm dependency mới.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-05 — output thật)*
 
-**Learning note** *(điền khi Done)*
+File tạo: `tools/merge-pr.sh` (verify → comment tóm tắt → squash merge → xoá nhánh).
+File sửa: `AGENTS.md` (§6 rule + §9 cấm merge khi CI chưa xanh) · `.clinerules/10-git-workflow.md` · `docs/git-flow.md` ·
+`.clinerules/workflows/{close-ticket,git-branch-pr}.md` · `.github/workflows/ci.yml` (comment giải thích) · `Backlog.md`.
+
+```console
+# --- AC: PR CHỈ-DOCS → 0 run CI (nhánh tạm, chỉ thêm 1 file .md, PR #12) ---
+$ gh run list --branch chore/tmp-merge-guard-test --limit 5 --json databaseId,event,conclusion
+(không có run nào)                                    ← `paths-ignore` bỏ đúng: 0 phút CI
+$ gh pr close 12 --delete-branch
+✓ Deleted branch chore/tmp-merge-guard-test
+
+# --- AC: commit docs-only NẰM TRONG PR CÓ CODE → 0 run mới ---
+$ gh run list --limit 1 --json databaseId,event,conclusion     # TRƯỚC khi push commit docs
+42049613565 pull_request success                       ← commit code (rules + script) đã xanh
+$ git commit -m "docs(backlog): mark SL-1.9 done with CI evidence (SL-1.9) [skip ci]"
+$ git push
+$ gh run list --limit 1 --json databaseId,event,conclusion     # SAU khi push
+42049613565 pull_request success                       ← id Y HỆT: không có run mới
+
+# --- AC: merge-pr.sh TỪ CHỐI khi điều kiện chưa đủ (4 guard, đều exit≠0) ---
+$ bash tools/merge-pr.sh 12 --summary-file /tmp/x.md --dry-run          # PR đang draft
+merge-pr: PR #12 đang là draft — bấm Ready for review trước.                        exit=1
+$ bash tools/merge-pr.sh 10 --summary-file /tmp/x.md --dry-run          # PR đã merge
+merge-pr: PR #10 không ở trạng thái OPEN (MERGED).                                  exit=1
+$ bash tools/merge-pr.sh 12 --summary-file /tmp/x.md --dry-run          # nhánh chưa có run xanh
+merge-pr: run CI mới nhất của 'chore/tmp-merge-guard-test' là 'null' (cần 'success'). Không merge.  exit=1
+$ bash tools/merge-pr.sh 12 --dry-run                                   # thiếu comment tóm tắt
+merge-pr: thiếu --summary-file (PR phải có comment tóm tắt TRƯỚC khi merge).        exit=2
+
+# --- AC: script CHẤP NHẬN commit docs sau CI xanh (diff phát sinh là docs-only) ---
+$ bash tools/merge-pr.sh 11 --summary-file /tmp/sl19-pr-body.md --dry-run
+merge-pr: CI xanh ở <sha-code>, HEAD hiện tại <sha-docs> — kiểm phần phát sinh...
+  ✓ phần phát sinh là docs-only (không cần CI): Backlog.md
+merge-pr: PR #11 (chore/sl-1.9-process-skip-ci-auto-merge) — CI xanh tại <sha-code> · HEAD <sha-docs>
+merge-pr: --dry-run → không comment, không merge.
+```
+
+**Merge thật bằng script** (comment tóm tắt + squash + xoá nhánh + kiểm `main`) chạy **sau** commit này — output đầy đủ
+nằm ở **comment PR #11** (do script post) và được bổ sung vào ticket trong nhánh `SL-1.3` theo rule *fold commit minor*.
+
+**Learning note**
+
+- **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` chỉ bỏ run khi **toàn bộ diff** là
+  docs (đủ cho PR chỉ-docs, push docs lên `main`); còn commit docs nằm trong PR **có code** thì diff vẫn có code →
+  phải `[skip ci]`.
+- **GitHub đọc skip instruction ở HEAD commit của PR** ⇒ commit docs ở cuối PR sẽ skip luôn run `pull_request` của cả
+  PR (check treo `Pending`). Vì vậy `merge-pr.sh` **không** tin `[skip ci]`, mà kiểm bằng dữ liệu: commit HEAD khác
+  commit đã xanh thì diff phát sinh **buộc** phải docs-only.
+- **Guard cũng phải test theo đúng thứ tự**: lần đầu tôi test guard "draft" **sau khi** đã `gh pr ready` (do batch
+  trước đó chạy lệnh đó) nên tưởng guard hỏng — thực ra script đúng, kịch bản test sai. Test guard cần kịch bản cẩn
+  thận y như test code.
+- Nit đã biết: khi nhánh **chưa có run nào**, message hiện `conclusion='null'` (jq trả `null` cho mảng rỗng) — vẫn
+  từ chối đúng, chỉ chưa đẹp; sửa khi nào rảnh.
 
 ---
 
@@ -1200,6 +1252,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.2 | **Algorithm confusion**: chặn `alg != RS256` **trước** khi tra khoá — token HS256 ký bằng chính public key có thể lọt qua thư viện verify lỏng. |
 | 2026-11-05 | SL-1.2 | **Bẫy Dockerfile lặp lần 2**: thêm module Maven ⇒ **mọi** Dockerfile phải thêm 1 dòng `COPY …/pom.xml` (lần này `identity-service` + `service-template` cùng vỡ). Kiểm nhanh: `grep -c 'COPY services/' services/*/Dockerfile`. |
 | 2026-11-05 | process | **Push race với lúc merge ⇒ mất commit**: commit cuối của `SL-1.1` (`feda53a` — status Done + block CI evidence + changelog) push lên đúng lúc user merge; squash merge dùng state **trước** commit đó, rồi nhánh bị xoá ⇒ thay đổi biến mất khỏi `main`. **Bài học**: sau khi merge phải `git show <merge-sha> --stat`/`grep` kiểm nội dung trên `main`, đừng tin "đã push là xong"; commit bị mất vẫn cứu được qua reflog nếu chưa GC. Đã khôi phục trong nhánh `SL-1.2`. |
+| 2026-11-05 | SL-1.9 | **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` đánh giá theo **toàn bộ diff của PR** → commit docs trong PR **có code** vẫn tốn 1 run. `[skip ci]` xử lý đúng case đó. Nhưng GitHub đọc skip instruction ở **HEAD commit của PR** ⇒ docs commit ở cuối PR skip luôn run của cả PR (check treo `Pending`) → đừng tin nó, hãy kiểm bằng **diff thật**. |
+| 2026-11-05 | SL-1.9 | **Guard cũng phải test theo đúng thứ tự**: lần đầu test guard "PR draft" **sau khi** đã chạy `gh pr ready` ⇒ tưởng guard hỏng, thực ra kịch bản test sai. Test guard cần kịch bản cẩn thận y như test code. |
+| 2026-11-05 | process | **Merge tay là chỗ dễ sai nhất**: PR #9/#10 merge tay ⇒ không tái lập được, và đã một lần mất nội dung (push race ở `SL-1.1`). Từ `SL-1.9` mọi lần merge đi qua **một** chốt: `tools/merge-pr.sh` (kiểm CI xanh + comment tóm tắt + diff sau CI là docs-only) → squash + xoá nhánh + **kiểm `main` có nội dung**. |
 
 ---
 
@@ -1244,6 +1299,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | **Breakdown Phase 1** → 9 ticket chi tiết: `SL-1.0` Done · `SL-1.1`…`SL-1.8` Todo (identity register/login + JWT RS256 + JWKS · gateway routing/verify JWT · **E2E sớm** · refresh token + RBAC · catalog CRUD · SKU/paging/seed · E2E đầy đủ + runbook · OpenAPI spec). Chốt 7 quyết định khi breakdown (gateway **MVC tự viết** · JWT **RS256 + JWKS** · **JPA + Flyway** · **có Testcontainers** · OpenAPI **sinh từ code** · smoke chạy **local** · register luôn là `buyer`). |
 | 2026-11-05 | `SL-1.1` → `Done`: nhánh `feat/sl-1.1-identity-service`. `identity-service` (port 8081) — **Flyway** + register/login + **JWT RS256** + **JWKS**; `service-commons` thêm `UNAUTHORIZED`/`FORBIDDEN`; `tools/gen-dev-keys.sh` (khoá dev, không commit); `tools/secret-scan.sh` fix false positive; compose + `.env.example`. Verify thật: container `healthy` · Flyway v1 áp dụng · BCrypt trong DB (60 ký tự) · **chữ ký verify bằng public key từ JWKS** · 401 không lộ email · fail-fast khi thiếu khoá · `/ready` 503 khi DB chết. `mvn verify`: 37 + 39 unit + **16 IT** (Testcontainers); **CI xanh 3/3**, job `test` chạy IT thật (1:24). PR [#9](https://github.com/anchu3003/shop-lab-microservices/pull/9). |
 | 2026-11-05 | `SL-1.2` → `Done`: nhánh `feat/sl-1.2-api-gateway`. `api-gateway` (port 8080) — routing theo config (prefix dài nhất thắng) · verify **JWT RS256 qua JWKS** (cache 5m + nạp lại khi `kid` lạ, có chặn dội) · gắn/ghi đè `x-user-id`/`x-user-role` · propagate `x-correlation-id` · **401** token sai / **503** service đích chết. `service-commons` thêm `UNAVAILABLE` (503). `identity-service` thêm `GET /v1/users/me` (protected). Verify thật: container healthy · register/login qua gateway giống hệt gọi thẳng · 401/200/503 đúng · traceId **trùng** ở log 2 service. `mvn verify`: 37 + 39 + **16 IT** + **71 test gateway**; **CI xanh 3/3** (job `test` 1:49). PR [#10](https://github.com/anchu3003/shop-lab-microservices/pull/10). Đồng thời khôi phục 3 thay đổi doc của `SL-1.1` bị mất do push race lúc merge (xem Learning log). |
+| 2026-11-05 | `SL-1.9` → `Done`: rule **commit docs-only → `[skip ci]`** (không tốn CI) + **auto-merge** `tools/merge-pr.sh` (verify → comment tóm tắt → squash → xoá nhánh). Verify thật: PR chỉ-docs **0 run**; commit docs trong PR có code **0 run mới**; script **từ chối đúng 4 case** (draft · không OPEN · chưa có CI xanh · thiếu comment tóm tắt); merge PR [#11](https://github.com/anchu3003/shop-lab-microservices/pull/11) bằng chính script.
 
 
 
