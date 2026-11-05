@@ -36,6 +36,9 @@ tmp/
 data/
 infra/data/
 
+# --- Khoá dev (sinh bằng tools/gen-dev-keys.sh — KHÔNG commit, AGENTS.md §9) ---
+infra/keys/
+
 # --- IDE / editor ---
 .idea/
 *.iml

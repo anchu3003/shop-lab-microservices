@@ -179,6 +179,62 @@ services:
     networks:
       - shoplab-net
 
+  # ---------------------------------------------------------------------------
+  # identity-service — service thật đầu tiên (SL-1.1): register/login + JWT RS256.
+  # DB riêng (`identity`) do Flyway migrate lúc khởi động.
+  #
+  # Mount khoá JWT READ-ONLY: file khoá dev sinh bằng `bash tools/gen-dev-keys.sh`
+  # (bị .gitignore nên KHÔNG có trong image — phải mount từ ngoài vào).
+  # ---------------------------------------------------------------------------
+  identity-service:
+    build:
+      context: ..
+      dockerfile: services/identity-service/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-identity-service:local
+    container_name: shoplab-identity-service
+    restart: unless-stopped
+    # Chạy bằng UID/GID của user trên máy dev (vẫn KHÔNG phải root).
+    # Lý do: khoá JWT mount từ host có mode 600 (đúng chuẩn cho private key) — user `shoplab`
+    # trong image có uid hệ thống khác nên sẽ bị AccessDeniedException khi đọc.
+    # Đặt SHOPLAB_UID/SHOPLAB_GID trong `.env` = `id -u` / `id -g` (tools/gen-dev-keys.sh in ra).
+    user: "${SHOPLAB_UID:-1000}:${SHOPLAB_GID:-1000}"
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${IDENTITY_SERVICE_PORT:-8081}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SHOPLAB_DEBUG_ENDPOINTS: ${SHOPLAB_DEBUG_ENDPOINTS:-true}
+      # Trỏ tới service name trong network của compose, KHÔNG phải localhost.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB_IDENTITY: ${POSTGRES_DB_IDENTITY:-identity}
+      POSTGRES_USER: ${POSTGRES_USER:-shoplab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      IDENTITY_JWT_ACCESS_TTL: ${IDENTITY_JWT_ACCESS_TTL:-15m}
+      # Đường dẫn TRONG container (khớp với volume mount bên dưới).
+      IDENTITY_JWT_PRIVATE_KEY_PATH: /app/keys/dev-private.pem
+      IDENTITY_JWT_PUBLIC_KEY_PATH: /app/keys/dev-public.pem
+    volumes:
+      # `./keys` tính theo thư mục chứa compose file (infra/) → infra/keys.
+      - ./keys:/app/keys:ro
+    ports:
+      - "${IDENTITY_SERVICE_PORT:-8081}:${IDENTITY_SERVICE_PORT:-8081}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      # `wget` có sẵn trong eclipse-temurin:21-jre-alpine (busybox).
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${SERVER_PORT}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # Lần đầu chạy Flyway + khởi động JVM nên cần thời gian hơn template.
+      start_period: 60s
+    networks:
+      - shoplab-net
+
 volumes:
   shoplab-pg-data:
     name: shoplab-pg-data
