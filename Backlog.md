@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.10` (fix phát sinh từ `SL-1.9`) |
+| **Ticket đang làm** | `SL-1.11` (fix phát sinh từ `SL-1.9`/`SL-1.10`) |
 | **Ticket tiếp theo** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
-| **Số ticket chi tiết hiện có** | 19 (Phase 0: 8 — archive · Phase 1: 11) |
+| **Số ticket chi tiết hiện có** | 20 (Phase 0: 8 — archive · Phase 1: 12) |
 
 ---
 
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 3 / 11 |
+| 1 | Walking skeleton | 🔵 In Progress | 3 / 12 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -120,6 +120,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
 | 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
 | 11 | `SL-1.10` | *(phát sinh)* fix: `[skip ci]` lọt vào squash message → `main` không chạy CI | S | ✅ Done |
+| 12 | `SL-1.11` | *(phát sinh)* fix: message chẩn đoán của `merge-pr.sh` gây hiểu nhầm | S | Todo |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -1218,6 +1219,60 @@ Bằng chứng merge ở trên được bổ sung sau khi merge — ghi vào nh�
   không" (đúng bài học `SL-1.1`: **luôn kiểm `main` sau merge**, giờ kiểm thêm cả *CI của main*).
 - Suy ra checklist mới sau mỗi merge: `git log -1 --format=%B <sha> | grep -c 'skip ci'` → `0` **và**
   `gh run list --branch main --limit 1` → có run mới.
+
+---
+
+
+### SL-1.11 — Fix: message chẩn đoán của `tools/merge-pr.sh` gây hiểu nhầm
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | In Progress |
+| **Phase** | 1 — Walking skeleton *(phát sinh từ SL-1.9/SL-1.10)* |
+| **Phụ thuộc** | SL-1.10 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Hai dòng chẩn đoán của `tools/merge-pr.sh` báo sai/khó hiểu — và **đã gây nhầm ngay trong lúc verify**:
+
+1. Nhánh **chưa có run CI nào** → in `conclusion='null'` (jq trả `null` cho mảng rỗng). Logic từ chối đúng, nhưng đọc
+   không hiểu gì.
+2. Sau merge, dòng `skip-ci tokens: N` đếm **substring** `skip ci`, nên in `1` khi body chỉ chứa **câu ví dụ**
+   `` `grep -c 'skip ci'` `` — trông như merge bị skip, trong khi run trên `main` vẫn chạy bình thường (GitHub chỉ hiểu
+   token dạng `[skip ci]`).
+
+Tín hiệu sai nguy hiểm hơn không có tín hiệu: lần sau sẽ có người "sửa" thứ không hỏng.
+
+**Mục tiêu**
+
+Message chẩn đoán phản ánh đúng thực tế: nói rõ "chưa có run", và chỉ đếm **token skip đúng chuẩn GitHub**.
+
+**In scope**
+
+- `tools/merge-pr.sh`: nhánh chưa có run → message riêng; đếm token skip bằng regex
+  `\[(skip ci|ci skip|no ci|skip actions|actions skip)\]`
+
+**Out of scope**
+
+- Đổi logic verify/merge (đang đúng)
+- Tự động kiểm "main có run mới" sau merge (run xuất hiện trễ vài giây → giữ ở checklist tay trong rule)
+
+**Acceptance Criteria**
+
+- [ ] `bash tools/merge-pr.sh <PR nhánh chưa có run> --dry-run` → message nói rõ "chưa có run CI nào", **không** in `'null'`
+- [ ] Sau merge: dòng token skip in `0` dù body có câu ví dụ chứa `'skip ci'`
+- [ ] `bash -n` sạch · merge ticket này qua chính script
+
+**Ghi chú kỹ thuật**
+
+- `grep -c` trả exit `1` khi không khớp → cần `|| true` để không vỡ `set -euo pipefail`.
+- Token skip hợp lệ (docs GitHub): `[skip ci]` · `[ci skip]` · `[no ci]` · `[skip actions]` · `[actions skip]` ·
+  trailer `skip-checks: true`.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
 
 ---
 
