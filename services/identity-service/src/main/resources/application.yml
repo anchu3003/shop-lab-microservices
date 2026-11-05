@@ -1,0 +1,79 @@
+# ==============================================================================
+# application.yml — cấu hình identity-service (SL-1.1)
+#
+# Nguyên tắc 12-factor (AGENTS.md §6): mọi giá trị phụ thuộc môi trường đọc từ env;
+# file này chỉ giữ default hợp lý cho máy dev. Không hard-code secret.
+# ==============================================================================
+
+spring:
+  application:
+    name: identity-service
+  lifecycle:
+    # Cho request đang chạy tối đa 30s để hoàn tất trước khi bị cắt (graceful shutdown).
+    timeout-per-shutdown-phase: 30s
+
+  datasource:
+    # Database RIÊNG của service (database per service — AGENTS.md §6).
+    # Tên DB do init script của Postgres tạo sẵn (xem infra/init/01-create-databases.sh).
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB_IDENTITY:identity}
+    username: ${POSTGRES_USER:shoplab}
+    password: ${POSTGRES_PASSWORD:}
+    hikari:
+      # Pool nhỏ ở Phase 1 (1 instance, máy dev 15 GiB RAM). Phase 4 sẽ chỉnh theo số đo thật.
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:5}
+      minimum-idle: 1
+      # Không chờ vô hạn: DB chết thì request phải fail nhanh kèm 503, không treo worker.
+      connection-timeout: 3000
+      pool-name: identity-pool
+
+  jpa:
+    hibernate:
+      # Schema là việc của FLYWAY, không phải của Hibernate. `validate` để entity lệch migration
+      # là chết ngay lúc khởi động — thay vì âm thầm chạy với schema sai.
+      ddl-auto: validate
+    # Tắt Open Session In View: giữ connection suốt request là nguyên nhân kinh điển của
+    # "hết pool" khi tải cao. Entity → DTO phải map trong tầng service.
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # Không baseline: DB do init script tạo là rỗng, phải chạy từ V1.
+    baseline-on-migrate: false
+
+server:
+  port: ${SERVER_PORT:8081}
+  shutdown: graceful
+
+shoplab:
+  env: ${APP_ENV:local}
+  debug-endpoints: ${SHOPLAB_DEBUG_ENDPOINTS:false}
+  git-commit: ${SHOPLAB_GIT_COMMIT:unknown}
+
+  jwt:
+    # `iss` trong token. Phải là dạng URI: Spring Security 7 coi `iss` là URL
+    # (Jwt.getIssuer() ném lỗi nếu không parse được) — đây là quy ước thực tế của claim này.
+    # Không cần resolve được; nó là ĐỊNH DANH của nơi phát token.
+    issuer: ${IDENTITY_JWT_ISSUER:https://identity.shoplab.local}
+    access-token-ttl: ${IDENTITY_JWT_ACCESS_TTL:15m}
+    # Private key CHỈ identity-service có; public key công bố qua JWKS.
+    # Khoá dev sinh bằng: bash tools/gen-dev-keys.sh (không commit — AGENTS.md §9).
+    private-key-path: ${IDENTITY_JWT_PRIVATE_KEY_PATH:infra/keys/dev-private.pem}
+    public-key-path: ${IDENTITY_JWT_PUBLIC_KEY_PATH:infra/keys/dev-public.pem}
+
+  readiness:
+    dependencies:
+      # Phase 1 giữ check mức TCP (như template). Check sâu (SELECT 1) để SL-1.5 — khi có
+      # service thứ hai cùng cần, đúng điều kiện revisit của ADR-0004.
+      - name: postgres
+        host: ${POSTGRES_HOST:localhost}
+        port: ${POSTGRES_PORT:5432}
+        timeout: 500ms
+
+logging:
+  level:
+    root: INFO
+    # Đổi độ chi tiết của log service mà không phải build lại image.
+    com.shoplab: ${LOG_LEVEL:INFO}

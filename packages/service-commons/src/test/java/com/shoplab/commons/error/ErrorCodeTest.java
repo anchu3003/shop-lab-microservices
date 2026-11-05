@@ -12,6 +12,8 @@ class ErrorCodeTest {
   @DisplayName("map đúng các status quen thuộc")
   void shouldMapKnownStatuses() {
     assertThat(ErrorCode.fromHttpStatus(400)).isEqualTo(ErrorCode.VALIDATION_ERROR);
+    assertThat(ErrorCode.fromHttpStatus(401)).isEqualTo(ErrorCode.UNAUTHORIZED);
+    assertThat(ErrorCode.fromHttpStatus(403)).isEqualTo(ErrorCode.FORBIDDEN);
     assertThat(ErrorCode.fromHttpStatus(404)).isEqualTo(ErrorCode.NOT_FOUND);
     assertThat(ErrorCode.fromHttpStatus(409)).isEqualTo(ErrorCode.CONFLICT);
   }
