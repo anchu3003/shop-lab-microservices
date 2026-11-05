@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (chờ bắt đầu `SL-1.1`) |
-| **Ticket tiếp theo** | `SL-1.1` — `identity-service`: register/login + JWT |
+| **Ticket đang làm** | — (chờ bắt đầu `SL-1.2`) |
+| **Ticket tiếp theo** | `SL-1.2` — `api-gateway`: routing + verify JWT |
 | **Số ticket chi tiết hiện có** | 17 (Phase 0: 8 — archive · Phase 1: 9) |
 
 ---
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 1 / 9 |
+| 1 | Walking skeleton | 🔵 In Progress | 2 / 9 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -291,7 +291,7 @@ run            event        concl     att  phút  ghi chú
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Review |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.0 |
 | **Ước lượng** | M |
@@ -329,17 +329,17 @@ và công bố **JWKS** để service khác verify token **mà không cần gi�
 
 **Acceptance Criteria**
 
-- [ ] `docker compose … up -d` → `shoplab-identity-service` **healthy**; `curl localhost:8081/health` → 200
-- [ ] Flyway chạy lúc khởi động: DB `identity` có bảng `users` **và** `flyway_schema_history`
-- [ ] `POST /v1/auth/register` email mới → **201**; gọi lại cùng email → **409** với `ApiError` (`code` rõ ràng)
-- [ ] Mật khẩu lưu **BCrypt**: query DB thấy `$2a$…`, **không** thấy plaintext
-- [ ] `POST /v1/auth/login` đúng → **200** + `accessToken`; decode thấy `sub`, `role`, `exp` ≈ 15 phút
-- [ ] login sai mật khẩu → **401**, message **không** tiết lộ email có tồn tại hay không
-- [ ] `GET /.well-known/jwks.json` → **200**, `kid` **khớp** header của token vừa phát
-- [ ] Verify chữ ký token bằng public key lấy từ JWKS (lệnh thật, dán vào verify) → hợp lệ
-- [ ] Thiếu file private key → service **fail-fast**, message rõ ràng (không chạy nửa vời)
-- [ ] `mvn verify` xanh: **có** IT Testcontainers chạy thật (ghi lại `Tests run: N`)
-- [ ] CI xanh trên PR (job `test` chạy cả IT)
+- [x] `docker compose … up -d` → `shoplab-identity-service` **healthy**; `curl localhost:8081/health` → 200
+- [x] Flyway chạy lúc khởi động: DB `identity` có bảng `users` **và** `flyway_schema_history`
+- [x] `POST /v1/auth/register` email mới → **201**; gọi lại cùng email → **409** với `ApiError` (`code` rõ ràng)
+- [x] Mật khẩu lưu **BCrypt**: query DB thấy `$2a$…`, **không** thấy plaintext
+- [x] `POST /v1/auth/login` đúng → **200** + `accessToken`; decode thấy `sub`, `role`, `exp` ≈ 15 phút
+- [x] login sai mật khẩu → **401**, message **không** tiết lộ email có tồn tại hay không
+- [x] `GET /.well-known/jwks.json` → **200**, `kid` **khớp** header của token vừa phát
+- [x] Verify chữ ký token bằng public key lấy từ JWKS (lệnh thật, dán vào verify) → hợp lệ
+- [x] Thiếu file private key → service **fail-fast**, message rõ ràng (không chạy nửa vời)
+- [x] `mvn verify` xanh: **có** IT Testcontainers chạy thật (ghi lại `Tests run: N`)
+- [x] CI xanh trên PR (job `test` chạy cả IT)
 
 **Ghi chú kỹ thuật**
 
@@ -356,9 +356,114 @@ và công bố **JWKS** để service khác verify token **mà không cần gi�
 - Migration **không sửa file đã chạy** (Flyway checksum) → mọi thay đổi schema là `V2__…`.
 - IT Testcontainers làm job `test` lâu thêm ~1–2 phút (đã biết từ SL-1.0).
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-05 — output thật; WSL2 · JDK 21.0.12.1 · Maven 3.9.12 · Docker 29.9.2)*
 
-**Learning note** *(điền khi Done)*
+File tạo: `services/identity-service/**` (service + Flyway migration + 39 unit test + 16 IT) · `tools/gen-dev-keys.sh`.
+File sửa: `pom.xml` (thêm module + failsafe) · `packages/service-commons/…/ErrorCode.java` (+`UNAUTHORIZED`/`FORBIDDEN`) ·
+`services/service-template/Dockerfile` (fix pom-copy) · `infra/docker-compose.yml` · `.env.example` · `.gitignore` · `README.md`.
+
+```console
+# --- AC: mvn verify (unit + IT Testcontainers + spotless + checkstyle + jacoco gate) ---
+$ mvn -B -pl services/identity-service -am verify
+[INFO] ShopLab :: Service Commons ... Tests run: 37, Failures: 0, Errors: 0   · 0 Checkstyle violations
+[INFO] ShopLab :: Identity Service . Tests run: 39, Failures: 0, Errors: 0   (unit, không cần Docker)
+[INFO]                              Tests run: 16, Failures: 0, Errors: 0   (IT — Postgres thật qua Testcontainers)
+[INFO] You have 0 Checkstyle violations. · All coverage checks have been met.
+[INFO] BUILD SUCCESS
+
+# --- AC: container healthy + /health + /ready ---
+$ docker compose -f infra/docker-compose.yml --env-file .env ps
+shoplab-identity-service   Up (healthy)        shoplab-postgres   Up (healthy)
+$ curl -s -w ' [http %{http_code}]\n' localhost:8081/health
+{"status":"UP"} [http 200]
+$ curl -s localhost:8081/ready
+{"status":"UP","dependencies":[{"name":"postgres","status":"UP","detail":"ok","latency":"PT0.00090926S"}]}
+
+# --- AC: Flyway đã migrate + bảng users trên Postgres thật ---
+$ docker exec shoplab-postgres psql -U shoplab -d identity -c \
+    'select version, description, success from flyway_schema_history;'
+ version | description  | success
+       1 | create users | t
+$ docker exec shoplab-postgres psql -U shoplab -d identity -c '\d users'
+ Indexes: "users_pkey" PRIMARY KEY, btree (id)
+          "ux_users_email" UNIQUE, btree (email)      ← email là định danh đăng nhập
+
+# --- AC: register 201 · trùng email 409 (ApiError) · login 200 ---
+$ curl -s -w '\n[http %{http_code}]\n' -X POST localhost:8081/v1/auth/register -H 'Content-Type: application/json' \
+    -d '{"email":"ac-…@shoplab.local","password":"matkhau123","displayName":"An"}'
+{"id":"162a37e2-f4e3-4820-8c24-8a4763347000","email":"ac-…@shoplab.local","displayName":"An","role":"BUYER","createdAt":"…"}
+[http 201]
+$ (gọi lại đúng email đó)
+{"code":"CONFLICT","message":"Email 'ac-…@shoplab.local' đã được đăng ký","traceId":"2dbb0218-…","path":"/v1/auth/register"}
+[http 409]
+$ (login)
+tokenType= Bearer   expiresIn= 900   token len= 613
+
+# --- AC: mật khẩu lưu BCrypt trong DB (không plaintext) ---
+$ docker exec shoplab-postgres psql -U shoplab -d identity -tAc \
+    "select email, left(password_hash,29) || '...', length(password_hash) from users;"
+ac-1793885102@shoplab.local|$2a$10$Wt0tu76V6vwh.9xuZMzWo....|60
+
+# --- AC: claims của token (exp - iat = 900s = 15 phút) ---
+claims: {"iss": "https://identity.shoplab.local", "sub": "162a37e2-f4e3-4820-8c24-8a4763347000",
+         "role": "BUYER", "exp": 1793886002, "iat": 1793885102}
+```
+
+```console
+# --- AC: verify CHỮ KÝ bằng public key lấy từ JWKS (không dùng private key) ---
+$ curl -s localhost:8081/.well-known/jwks.json
+{"keys":[{"kty":"RSA","e":"AQAB","kid":"FfQyQesnP7c818474zybGHCrMxU_w7FjtR_dbpIWfcA","n":"…"}]}
+JWKS kid        : FfQyQesnP7c818474zybGHCrMxU_w7FjtR_dbpIWfcA
+JWKS co field d?: False
+token header    : {'kid': 'FfQyQesnP7c818474zybGHCrMxU_w7FjtR_dbpIWfcA', 'alg': 'RS256'}
+=> CHU KY HOP LE (verify bang public key lay tu JWKS, khong dung private key)
+
+# --- AC: 401 không lộ email đã đăng ký (2 response chỉ khác traceId/timestamp) ---
+$ (login sai mật khẩu)  → {"code":"UNAUTHORIZED","message":"Email hoặc mật khẩu không đúng",…} [http 401]
+$ (login email không tồn tại) → CÙNG code + CÙNG message                              [http 401]
+$ (password "123")      → {"code":"VALIDATION_ERROR","details":[{"field":"password",
+                            "message":"password phải từ 8 đến 72 ký tự"}]}             [http 400]
+
+# --- AC: fail-fast khi thiếu private key (service KHÔNG chạy nửa vời) ---
+$ docker run --rm … -e IDENTITY_JWT_PRIVATE_KEY_PATH=/app/keys/khong-ton-tai.pem shoplab-identity-service:local
+Caused by: com.shoplab.identity.auth.jwt.JwtKeyException: Thiếu private key: không đọc được file
+'/app/keys/khong-ton-tai.pem'. Sinh khoá dev: bash tools/gen-dev-keys.sh (file bị .gitignore — KHÔNG commit, AGENTS.md §9).
+exit=1
+
+# --- AC: /ready 503 khi DB chết · /health vẫn 200 (đúng thiết kế liveness) · hồi phục ---
+$ docker stop shoplab-postgres
+$ curl -s -w ' [http %{http_code}]' localhost:8081/ready
+{"status":"DOWN","dependencies":[{"name":"postgres","status":"DOWN","detail":"SocketTimeoutException: Connect timed out"}]} [http 503]
+$ curl -s -w ' [http %{http_code}]' localhost:8081/health
+{"status":"UP"} [http 200]
+$ docker start shoplab-postgres → /ready http=200
+```
+
+**Learning note**
+
+- **Spring Boot 4 tách auto-configuration theo từng công nghệ** → khai dependency trần là **im lặng không hoạt động**:
+  `flyway-core` một mình **không** kích hoạt Flyway (phải dùng `spring-boot-starter-flyway`); JPA nằm trong module
+  `spring-boot-hibernate`. Triệu chứng gặp thật: `Schema validation: missing table [users]` — Hibernate `validate` chạy
+  trước, còn Flyway thì chưa từng chạy. **Bài học**: thêm dependency mới phải kiểm chứng nó *thật sự chạy* bằng log,
+  không chỉ "build xanh".
+- **Jackson 3**: Boot 4 dùng `tools.jackson.databind.ObjectMapper` (KHÔNG còn `com.fasterxml.jackson.databind`) ⇒ import
+  cũ lỗi compile ngay (ồn ào, dễ thấy — khác case Flyway ở trên).
+- **`spring-boot:repackage` chạy TRƯỚC failsafe** ⇒ failsafe lấy classpath theo artifact jar "fat" (class nằm trong
+  `BOOT-INF/classes/`) nên báo `NoClassDefFoundError` cho chính class của module. Fix: khai tường minh
+  `<classesDirectory>${project.build.outputDirectory}</classesDirectory>`. Bẫy này chỉ xuất hiện khi **vừa có failsafe
+  vừa có spring-boot repackage**.
+- **Spring Security 7 coi claim `iss` là URL**: `Jwt.getIssuer()` ném `Unable to convert claim 'iss' to URL` nếu `iss` là
+  chuỗi thường ⇒ đổi `iss` sang dạng URI (`https://identity.shoplab.local`), cũng đúng quy ước thực tế của claim này.
+- **Non-root container + bind-mount secret = uid mismatch**: private key mode 600 của user host (uid 1000) không đọc được
+  bởi user `shoplab` trong image (uid hệ thống) ⇒ `AccessDeniedException`. Fix: `user: "${SHOPLAB_UID}:${SHOPLAB_GID}"`
+  (vẫn non-root mà đọc được khoá). Nhờ fail-fast, lỗi hiện ra thành message đọc được ngay thay vì 401 bí ẩn sau này.
+- **Mọi Dockerfile phải copy pom của TẤT CẢ module** trong `<modules>`: thêm module thứ 3 làm image build của cả
+  `service-template` chết với `Child module ... does not exist` (Dockerfile cũ chỉ copy 2 pom). Đã fix cả 2 Dockerfile +
+  ghi vào checklist README.
+- **Test "đỏ vì đồng hồ"**: token phát với `Clock` cố định bị decoder coi là hết hạn vì nó so với giờ thật → phải cho
+  `JwtTimestampValidator` dùng **cùng** clock đó. Đây chính là lý do tiêm `Clock` thay vì gọi `Instant.now()` trong code.
+- **Assert "không lộ email" phải so đúng phần có nghĩa**: so cả body sẽ luôn fail vì `ApiError` chứa `traceId`/`timestamp`
+  khác nhau mỗi request → so `code` + `message`.
 
 ---
 
@@ -903,6 +1008,10 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | SL-1.0 | **`paths` filter trên `pull_request` đánh giá theo TOÀN BỘ diff của PR** (không phải commit cuối) → commit docs trong PR có code vẫn kích hoạt workflow. Muốn commit docs "miễn phí" thì phải là PR chỉ-docs hoặc `[skip ci]`. |
 | 2026-11-03 | SL-1.0 | **Job `skipped` = 0 phút, nhưng REST jobs API trả `started_at` GIẢ cho job skipped** (started == completed) → đo chi phí bằng REST sẽ tính dư ~1 phút/job. Dùng GraphQL (`gh run view --json jobs`, `started_at = null`) hoặc lọc `conclusion == 'skipped'`. |
 | 2026-11-03 | SL-1.0 | **Đo trước khi tối ưu, đừng đoán**: 71 phút/18 run với 62% là run docs-only — trực giác nghĩ "build-image đắt nhất" (đúng 46%) nhưng thứ **đáng bỏ** nhất là run docs-only. Re-run cũng **đánh giá lại `vars`** → test kill-switch không cần commit giả. |
+| 2026-11-05 | SL-1.1 | **Spring Boot 4 tách auto-configuration theo công nghệ**: khai `flyway-core` trần ⇒ Flyway **không chạy** (im lặng!) → Hibernate `validate` báo `missing table [users]`. Phải dùng `spring-boot-starter-flyway`. **Dependency mới phải kiểm chứng bằng log, không chỉ "build xanh".** |
+| 2026-11-05 | SL-1.1 | **`spring-boot:repackage` chạy TRƯỚC failsafe** ⇒ failsafe lấy classpath từ jar "fat" → `NoClassDefFoundError` cho class của chính module; fix bằng `<classesDirectory>${project.build.outputDirectory}</classesDirectory>`. Kèm: **Jackson 3** đổi package (`tools.jackson.databind`). |
+| 2026-11-05 | SL-1.1 | **Non-root container + bind-mount secret = uid mismatch**: private key mode 600 của host (uid 1000) không đọc được bởi uid hệ thống trong image → chạy container bằng `user: "${SHOPLAB_UID}:${SHOPLAB_GID}"`. Và **mọi Dockerfile phải copy pom của TẤT CẢ module** — thêm module thứ 3 làm build image của `service-template` chết với `Child module ... does not exist`. |
+| 2026-11-05 | SL-1.1 | **Spring Security 7 coi `iss` là URL** (`Jwt.getIssuer()` ném lỗi nếu không parse được) → đặt `iss` dạng URI. **Test với `Clock` cố định**: decoder phải dùng cùng clock, nếu không test "đỏ vì đồng hồ" chứ không phải vì logic sai. |
 
 ---
 
@@ -945,6 +1054,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | Tạo **tag + GitHub Release `phase-0`** trên merge commit `259a7e9` (ADR-0005). Verify: push tag **không** trigger CI (workflow chỉ khai `on.push.branches`) → 0 phút Actions; `git show phase-0:<file>` đọc được snapshot. |
 | 2026-11-03 | `SL-1.0` → `Done`: tối ưu chi phí CI — `paths-ignore` (bỏ run chỉ-docs), `push` chỉ trên `main` (hết run trùng), kill-switch `vars.CI_ENABLED`, bỏ qua draft PR (`ready_for_review`). Verify thật: push nhánh feature **0 run**, draft → run `skipped` (0 phút), `CI_ENABLED=false` + re-run → `skipped`, `true` → 3/3 xanh, merge → run `main` xanh, **PR chỉ-docs → 0 run**. Cùng kịch bản: **8 phút vs ~19,5 phút (−59%)**. Merge PR [#7](https://github.com/anchu3003/shop-lab-microservices/pull/7) (squash). **Phase 1 → 1 / 1**. |
 | 2026-11-03 | **Breakdown Phase 1** → 9 ticket chi tiết: `SL-1.0` Done · `SL-1.1`…`SL-1.8` Todo (identity register/login + JWT RS256 + JWKS · gateway routing/verify JWT · **E2E sớm** · refresh token + RBAC · catalog CRUD · SKU/paging/seed · E2E đầy đủ + runbook · OpenAPI spec). Chốt 7 quyết định khi breakdown (gateway **MVC tự viết** · JWT **RS256 + JWKS** · **JPA + Flyway** · **có Testcontainers** · OpenAPI **sinh từ code** · smoke chạy **local** · register luôn là `buyer`). |
+| 2026-11-05 | `SL-1.1` → `Review`: nhánh `feat/sl-1.1-identity-service`. `identity-service` (port 8081) — **Flyway** + register/login + **JWT RS256** + **JWKS**; `service-commons` thêm `UNAUTHORIZED`/`FORBIDDEN`; `tools/gen-dev-keys.sh` (khoá dev, không commit); compose + `.env.example`. Verify thật: container `healthy` · Flyway v1 áp dụng · BCrypt trong DB (60 ký tự) · **chữ ký verify bằng public key từ JWKS** · 401 không lộ email · fail-fast khi thiếu khoá · `/ready` 503 khi DB chết. `mvn verify`: 37 + 39 unit + **16 IT** (Testcontainers). |
 
 
 
