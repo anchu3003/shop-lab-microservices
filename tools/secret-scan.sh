@@ -37,3 +37,5 @@ EOF
 fi
 
 exit 0
+
+# temp line de test guard 0-run cua merge-pr.sh (SL-1.14)
