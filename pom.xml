@@ -28,6 +28,7 @@
   <modules>
     <module>packages/service-commons</module>
     <module>services/service-template</module>
+    <module>services/identity-service</module>
   </modules>
 
   <properties>
@@ -46,6 +47,11 @@
       Đây là kiểu lỗi nguy hiểm nhất: xanh nhưng không test gì. Phát hiện ở SL-0.4.
     -->
     <maven-surefire-plugin.version>3.6.1</maven-surefire-plugin.version>
+    <!--
+      Failsafe chạy integration test (*IT.java) ở phase integration-test. Pin cùng dòng version với
+      surefire; super-POM mặc định bản rất cũ (2.12) không hỗ trợ JUnit Platform → "Tests run: 0".
+    -->
+    <maven-failsafe-plugin.version>3.6.1</maven-failsafe-plugin.version>
     <spotless-maven-plugin.version>3.10.4</spotless-maven-plugin.version>
     <maven-checkstyle-plugin.version>3.6.0</maven-checkstyle-plugin.version>
     <jacoco-maven-plugin.version>0.8.16</jacoco-maven-plugin.version>
@@ -116,6 +122,17 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-surefire-plugin</artifactId>
           <version>${maven-surefire-plugin.version}</version>
+        </plugin>
+
+        <!--
+          Failsafe: integration test (*IT.java). Tách khỏi surefire vì IT cần hạ tầng ngoài
+          (Testcontainers → Docker), còn unit test phải chạy được ở mọi nơi.
+          `mvn verify -DskipITs` để bỏ qua IT (dùng trong `docker build`, nơi không có Docker socket).
+        -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-failsafe-plugin</artifactId>
+          <version>${maven-failsafe-plugin.version}</version>
         </plugin>
 
         <!-- JaCoCo: version tập trung; rule coverage khai báo ở từng module cần. -->

@@ -20,9 +20,13 @@ FROM maven:3.9-eclipse-temurin-21-alpine AS build
 WORKDIR /workspace
 
 # Copy pom trước để tận dụng Docker layer cache: đổi source không phải tải lại dependency.
+#
+# ⚠️ PHẢI copy pom của MỌI module trong reactor (parent pom liệt kê `<modules>`): thiếu một cái là
+#    Maven chết với "Child module ... does not exist". Thêm service mới ⇒ thêm 1 dòng ở đây.
 COPY pom.xml ./
 COPY packages/service-commons/pom.xml packages/service-commons/
 COPY services/service-template/pom.xml services/service-template/
+COPY services/identity-service/pom.xml services/identity-service/
 RUN mvn -B -q -pl services/service-template -am dependency:go-offline
 
 COPY packages/ packages/

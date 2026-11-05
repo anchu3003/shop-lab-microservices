@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.shoplab</groupId>
+    <artifactId>shoplab-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>shoplab-identity-service</artifactId>
+  <packaging>jar</packaging>
+
+  <name>ShopLab :: Identity Service</name>
+  <description>
+    Service định danh (SL-1.1): đăng ký, đăng nhập, phát hành JWT RS256 + công bố JWKS.
+    Database riêng (`identity`), schema do Flyway quản lý — database per service (AGENTS.md §6).
+  </description>
+
+  <!--
+    Ghi chú dependency (version do BOM `spring-boot-dependencies` quản lý — không khai version):
+    - `spring-security-crypto`  : chỉ BCrypt, KHÔNG kéo filter chain (security chain đầy đủ ở SL-1.4).
+    - `spring-security-oauth2-jose`: JWT/JWS + Nimbus JOSE (kèm theo) — dùng để KÝ token và (SL-1.2)
+      verify token. Chọn artifact này thay vì khai `com.nimbusds:nimbus-jose-jwt` trực tiếp vì
+      Nimbus KHÔNG được BOM quản lý → khai trực tiếp là phải tự đoán/pin version.
+    - Flyway cần cả `flyway-core` + `flyway-database-postgresql` (từ Flyway 10 tách module DB).
+  -->
+
+  <dependencies>
+    <dependency>
+      <groupId>com.shoplab</groupId>
+      <artifactId>shoplab-service-commons</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-jpa</artifactId>
+    </dependency>
+
+    <!--
+      Flyway — PHẢI dùng starter, không dùng `flyway-core` trần: từ Spring Boot 4 phần
+      auto-configuration được tách thành module riêng (`spring-boot-flyway`), nên chỉ khai
+      `flyway-core` thì Flyway **không chạy** và Hibernate `validate` sẽ báo
+      "Schema validation: missing table [...]" (đã gặp thật ở SL-1.1).
+      `flyway-database-postgresql` vẫn phải khai tường minh (từ Flyway 10 tách module theo DB).
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-jose</artifactId>
+    </dependency>
+
+    <!-- ===================== test ===================== -->
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!--
+      Integration test chạm Postgres thật qua Testcontainers (Docker).
+      Testcontainers 2.x đổi tên artifact: có tiền tố `testcontainers-` (KHÔNG còn
+      `org.testcontainers:postgresql` như 1.x).
+    -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <!-- Không kế thừa spring-boot-starter-parent → phải bind goal tường minh. -->
+          <execution>
+            <id>repackage</id>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+          <!-- Sinh META-INF/build-info.properties → bean BuildProperties cho GET /version. -->
+          <execution>
+            <id>build-info</id>
+            <goals>
+              <goal>build-info</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!--
+        Failsafe: integration test (*IT.java) — cần Docker (Testcontainers) nên KHÔNG chạy được
+        trong `docker build`. Dockerfile gọi `mvn verify -DskipITs`.
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <!--
+            BẮT BUỘC phải khai tường minh: `spring-boot:repackage` (phase package) thay artifact jar
+            bằng jar "fat" — class nằm trong BOOT-INF/classes chứ không ở gốc jar. Failsafe mặc định
+            lấy classpath theo artifact đó ⇒ NoClassDefFoundError cho chính class của module.
+            Trỏ về target/classes để IT chạy trên class thật.
+          -->
+          <classesDirectory>${project.build.outputDirectory}</classesDirectory>
+        </configuration>
+        <executions>
+          <execution>
+            <id>integration-tests</id>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>jacoco-prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>jacoco-report</id>
+            <phase>test</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+          <!--
+            Coverage gate ≥ 80% LINE cho 3 package "dễ sai và đắt nếu sai": config (fail-fast),
+            health (probe), auth/jwt (khoá + chữ ký). Phần web/domain chưa ép ở Phase 1 để tránh
+            gate hình thức (ép số mà test không kiểm chứng gì).
+          -->
+          <execution>
+            <id>jacoco-check</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+            <configuration>
+              <includes>
+                <include>com/shoplab/identity/config/*</include>
+                <include>com/shoplab/identity/health/*</include>
+                <include>com/shoplab/identity/auth/jwt/*</include>
+              </includes>
+              <rules>
+                <rule>
+                  <element>BUNDLE</element>
+                  <limits>
+                    <limit>
+                      <counter>LINE</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>0.80</minimum>
+                    </limit>
+                  </limits>
+                </rule>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

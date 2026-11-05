@@ -19,6 +19,17 @@ public enum ErrorCode {
    */
   REQUEST_ERROR(HttpStatus.BAD_REQUEST, "Request không hợp lệ"),
 
+  /**
+   * Chưa xác thực: thiếu token, token hết hạn/sai chữ ký, hoặc sai thông tin đăng nhập.
+   *
+   * <p>Phân biệt với {@link #FORBIDDEN}: 401 = "chưa biết bạn là ai", 403 = "biết bạn là ai nhưng
+   * không đủ quyền". Sai quy ước này là nguồn bug khó tìm ở phía client.
+   */
+  UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "Chưa xác thực"),
+
+  /** Đã xác thực nhưng không đủ quyền với tài nguyên này. */
+  FORBIDDEN(HttpStatus.FORBIDDEN, "Không có quyền truy cập"),
+
   /** Không tìm thấy tài nguyên. */
   NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy tài nguyên"),
 
@@ -54,6 +65,12 @@ public enum ErrorCode {
   public static ErrorCode fromHttpStatus(int status) {
     if (status == HttpStatus.BAD_REQUEST.value()) {
       return VALIDATION_ERROR;
+    }
+    if (status == HttpStatus.UNAUTHORIZED.value()) {
+      return UNAUTHORIZED;
+    }
+    if (status == HttpStatus.FORBIDDEN.value()) {
+      return FORBIDDEN;
     }
     if (status == HttpStatus.NOT_FOUND.value()) {
       return NOT_FOUND;

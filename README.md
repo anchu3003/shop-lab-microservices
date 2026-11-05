@@ -16,7 +16,8 @@
 | Git workflow | [`docs/git-flow.md`](docs/git-flow.md) |
 
 **Trạng thái hiện tại**: Phase 0 — Foundation ✅ **Done (8/8)** — chi tiết ở [`Backlog-phase-0.md`](Backlog-phase-0.md).
-Phase 1 (Walking skeleton) chưa bắt đầu. Chưa có business logic.
+Phase 1 (Walking skeleton) 🔵 **In Progress**: `identity-service` chạy được (register/login + JWT + JWKS) — xem
+[Backlog.md](Backlog.md) → `SL-1.1`.
 
 ---
 
@@ -86,12 +87,14 @@ Bỏ qua hook khi thật cần (hạn chế tối đa): `LEFTHOOK=0 git commit -
 ```
 .
 ├── services/                     # mỗi service 1 thư mục kebab-case — Phase 1+
-│   └── service-template/         # service mẫu (SL-0.4) — copy ra để tạo service mới
+│   ├── service-template/         # service mẫu (SL-0.4) — copy ra để tạo service mới
+│   └── identity-service/         # định danh + JWT RS256 + JWKS (SL-1.1) — DB riêng, Flyway
 ├── packages/                     # shared library hạ tầng (không chứa business logic của service)
 │   └── service-commons/          # log JSON · error response · correlation id · health check · env validator
 ├── infra/                        # docker compose, init SQL, config hạ tầng local — SL-0.3
-│   ├── docker-compose.yml        # Postgres · Redis · RabbitMQ · Adminer · service-template
-│   └── init/                     # script tạo database lần đầu (chạy 1 lần khi volume rỗng)
+│   ├── docker-compose.yml        # Postgres · Redis · RabbitMQ · Adminer · service-template · identity-service
+│   ├── init/                     # script tạo database lần đầu (chạy 1 lần khi volume rỗng)
+│   └── keys/                     # khoá JWT dev — SINH bằng tools/gen-dev-keys.sh, KHÔNG commit
 ├── tools/                        # script phụ trợ (git hooks, reset infra...)
 ├── config/checkstyle/            # Checkstyle config cho Java
 ├── docs/adr/                     # Architecture Decision Records
@@ -110,12 +113,24 @@ Maven là **multi-module**: parent `pom.xml` khai `<modules>`, version Spring Bo
 ```bash
 # Java — format (sửa file) rồi check (CI dùng check)
 mvn -q spotless:apply
-mvn -q verify                 # spotless:check + checkstyle:check + test + jacoco:check
+mvn -q verify                 # spotless:check + checkstyle:check + test + IT + jacoco:check
+mvn -q verify -DskipITs       # bỏ qua integration test (máy không có Docker)
 ```
 
 Convention: **Spotless + google-java-format** (format) · **Checkstyle** (lint) · **JUnit 5/6 + AssertJ** (test)
-· **JaCoCo** (coverage gate ≥ 80% LINE cho package `config` + `health`).
+· **JaCoCo** (coverage gate ≥ 80% LINE cho package `config` + `health` + `auth/jwt`).
 Line-ending do `.gitattributes` ép **LF**; editor theo `.editorconfig`.
+
+**Unit test vs integration test** — tách bằng tên file, không bằng comment:
+
+| Loại | Tên file | Chạy bởi | Cần gì |
+|---|---|---|---|
+| Unit | `*Test.java` | surefire (phase `test`) | chỉ JVM — chạy ở mọi máy |
+| Integration | `*IT.java` | **failsafe** (phase `integration-test`) | **Docker** (Testcontainers) |
+
+Service có DB dùng **Testcontainers** cho IT (Postgres thật, Flyway migrate thật). Cố ý **không** auto-skip khi
+thiếu Docker — skip im lặng sẽ tạo cảm giác "đã verify" trong khi thực tế chưa chạy gì; máy không có Docker thì
+dùng `-DskipITs` và biết rõ là đã bỏ qua.
 
 
 ---
@@ -286,6 +301,40 @@ docker start shoplab-postgres
 
 ---
 
+### identity-service — `SL-1.1`
+
+Service thật đầu tiên: đăng ký, đăng nhập, phát hành **JWT RS256** và công bố **JWKS**. DB riêng (`identity`),
+schema do **Flyway** migrate lúc khởi động.
+
+```bash
+# 1) Sinh khoá JWT dev (1 lần). Private key KHÔNG commit; script in ra 2 dòng cần thêm vào .env
+bash tools/gen-dev-keys.sh
+#    SHOPLAB_UID=$(id -u)   # container chạy cùng uid để đọc được private key mode 600
+#    SHOPLAB_GID=$(id -g)
+
+# 2) Chạy service (kèm Postgres)
+docker compose -f infra/docker-compose.yml --env-file .env up -d --build identity-service
+
+# 3) Thử luồng đăng ký → đăng nhập
+EMAIL="demo-$(date +%s)@shoplab.local"
+curl -s -X POST localhost:8081/v1/auth/register -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"password\":\"matkhau123\",\"displayName\":\"Demo\"}"
+TOKEN=$(curl -s -X POST localhost:8081/v1/auth/login -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"password\":\"matkhau123\"}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["accessToken"])')
+curl -s localhost:8081/.well-known/jwks.json          # public key để service khác verify
+```
+
+| Endpoint | Trả về | Ghi chú |
+|---|---|---|
+| `POST /v1/auth/register` | `201` + user (không có hash) · trùng email → `409` | luôn tạo role `BUYER` |
+| `POST /v1/auth/login` | `200` + `{accessToken, tokenType, expiresIn}` · sai → `401` | message 401 giống nhau cho mọi trường hợp sai (không lộ email đã đăng ký) |
+| `GET /.well-known/jwks.json` | JWK Set (chỉ `n`, `e`, `kid`) | service khác verify **không cần khoá ký** |
+
+Khoá JWT: `iss` phải dạng URI (`https://identity.shoplab.local`) vì Spring Security coi `iss` là URL khi verify.
+TTL mặc định 15 phút (`IDENTITY_JWT_ACCESS_TTL`).
+
+---
+
 ## Tạo service mới từ template
 
 Ví dụ tạo `order-service`:
@@ -325,13 +374,24 @@ curl -s localhost:<port>/health
   `mvn -pl services/<svc> -am dependency:go-offline`, `mvn -pl services/<svc> -am verify`, và
   `COPY --from=build /workspace/services/<svc>/target/shoplab-<svc>-*.jar app.jar`.
   Build context vẫn phải là **gốc repo** (cần parent pom + `packages/service-commons`).
+- ⚠️ **Mọi `Dockerfile` phải copy pom của TẤT CẢ module** trong `<modules>` của parent pom — thiếu một cái là
+  Maven chết ngay với `Child module ... does not exist` (gặp thật ở SL-1.1 khi thêm module thứ 3).
+  Thêm service mới ⇒ thêm 1 dòng `COPY services/<svc>/pom.xml ...` vào **từng** Dockerfile.
 - **Test không cần sửa** — template cố ý không hard-code tên service (đọc từ `spring.application.name`).
   Nếu bạn thêm test có assert tên service thì nhớ đọc từ config, đừng viết cứng.
+- Service **có DB** → dùng **Testcontainers** cho IT và tách đúng chỗ:
+  `*IT.java` (failsafe) cho test cần DB; `*Test.java` (surefire) phải chạy được **không cần Docker**.
+  Dockerfile phải thêm `-DskipITs` vì trong `docker build` **không có Docker socket**.
+  Thêm `<classesDirectory>${project.build.outputDirectory}</classesDirectory>` cho failsafe — nếu không,
+  `spring-boot:repackage` (chạy trước failsafe) làm failsafe không thấy class của chính module.
 - Nếu service cần check dependency sâu hơn TCP (query DB thật) → implement `DependencyHealthCheck`
   trong service, đừng nhét JDBC driver vào shared lib.
 - Service cần một **database riêng** → thêm biến `POSTGRES_DB_<SVC>` vào `.env.example` và
   `infra/docker-compose.yml`, rồi thêm vào `infra/init/01-create-databases.sh` (nhớ `docker compose down -v`
   để init script chạy lại — nó chỉ chạy khi volume rỗng).
+- Service **đọc file bí mật** (khoá, cert) → đừng nhét vào image: mount read-only từ host và chạy container
+  bằng **cùng uid/gid với user trên host** (`user: "${SHOPLAB_UID}:${SHOPLAB_GID}"`) — nếu không, file mode 600
+  sẽ cho `AccessDeniedException` vì user trong image có uid khác.
 
 **Nguyên tắc cho shared lib** (`packages/service-commons`): chỉ để **hạ tầng** (log, config, error,
 health, correlation id). **Tuyệt đối không** để domain logic hay entity/database dùng chung — làm vậy

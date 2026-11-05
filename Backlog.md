@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (chờ breakdown tiếp Phase 1) |
-| **Ticket tiếp theo** | Phase 1 (epic — breakdown tiếp khi tới lượt) |
-| **Số ticket chi tiết hiện có** | 9 (Phase 0: 8 — archive · Phase 1: 1) |
+| **Ticket đang làm** | — (chờ bắt đầu `SL-1.2`) |
+| **Ticket tiếp theo** | `SL-1.2` — `api-gateway`: routing + verify JWT |
+| **Số ticket chi tiết hiện có** | 17 (Phase 0: 8 — archive · Phase 1: 9) |
 
 ---
 
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 1 / 1 |
+| 1 | Walking skeleton | 🔵 In Progress | 2 / 9 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -105,13 +105,24 @@ Pattern / thư viện / trade-off đã chấp nhận.
 > **Điều kiện hoàn thành phase**: register → login → lấy token → gọi API product qua gateway chạy end-to-end ·
 > CI xanh · có OpenAPI spec · tách archive + tag `phase-1` (ADR-0005).
 
-**Epic — chưa breakdown hết, chỉ breakdown khi tới lượt** (`AGENTS.md` §3.1)
+**Đã breakdown thành 9 ticket chi tiết** (`SL-1.0` … `SL-1.8`) — thứ tự thực hiện:
 
-- `api-gateway` bản mỏng: routing, verify JWT, correlation id, error response thống nhất
-- `identity-service`: đăng ký, đăng nhập, refresh token, JWT, RBAC cơ bản
-- `catalog-service`: CRUD product/SKU/category, migration + seed data, phân trang & filter
-- E2E smoke test: register → login → create product (seller) → list product (guest) qua gateway
-- OpenAPI spec cho các endpoint Phase 1
+| # | Ticket | Epic item | Ước lượng | Trạng thái |
+|---|---|---|---|---|
+| 1 | `SL-1.0` | *(phát sinh)* tối ưu chi phí CI | S | ✅ Done |
+| 2 | `SL-1.1` | `identity-service`: register/login + JWT | M | Todo |
+| 3 | `SL-1.2` | `api-gateway` bản mỏng | M | Todo |
+| 4 | `SL-1.3` | **E2E sớm**: register → login qua gateway | S | Todo |
+| 5 | `SL-1.4` | `identity-service`: refresh token + RBAC | M | Todo |
+| 6 | `SL-1.5` | `catalog-service`: CRUD category/product | M | Todo |
+| 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | Todo |
+| 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | Todo |
+| 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
+
+**Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
+JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
+**có Testcontainers** ngay Phase 1 · OpenAPI **sinh từ code** · E2E smoke chạy **local** (chưa vào CI) ·
+register luôn tạo `buyer` (seller/admin qua seed).
 
 ---
 
@@ -276,6 +287,607 @@ run            event        concl     att  phút  ghi chú
 
 ---
 
+### SL-1.1 — `identity-service`: skeleton + Flyway + register/login + JWT (RS256)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Review |
+| **Phase** | 1 — Walking skeleton |
+| **Phụ thuộc** | SL-1.0 |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Phase 1 cần một **nguồn token** cho mọi thứ phía sau. Hiện repo mới có `service-template` (chứng minh hạ tầng, **không** có
+DB thật — health check mới ở mức TCP) nên chưa chứng minh được "database per service" chạy được. Đây là service thật đầu
+tiên: schema do migration quản lý, dữ liệu ghi/đọc thật, test integration chạm Postgres thật.
+
+**Mục tiêu**
+
+`identity-service` (port **8081**) chạy trong compose, schema do **Flyway** quản lý, đăng ký + đăng nhập trả **JWT RS256**,
+và công bố **JWKS** để service khác verify token **mà không cần giữ khoá ký**.
+
+**In scope**
+
+- Copy `service-template` → `services/identity-service` (đổi artifactId/package/tên service/port **8081**/Dockerfile theo
+  README "Tạo service mới từ template"); đăng ký module vào parent `pom.xml`
+- DB `identity` (init script đã tạo sẵn) + Flyway `V1__create_users.sql`:
+  `users(id uuid pk, email unique not null, password_hash, display_name, role, created_at, updated_at)`
+- Hash mật khẩu bằng **BCrypt** (`spring-security-crypto` — **chưa** kéo `spring-boot-starter-security`)
+- `POST /v1/auth/register` (email, password, displayName) → **201** + user (không trả hash) · trùng email → **409**
+- `POST /v1/auth/login` → **200** + `{accessToken, tokenType, expiresIn}` · sai → **401**
+- JWT RS256: `iss`, `sub`=userId, `role`, `exp` 15 phút; private key đọc từ file, **fail-fast** nếu thiếu
+- `GET /.well-known/jwks.json` → public key (kèm `kid`)
+- `tools/gen-dev-keys.sh` — sinh keypair dev vào `infra/keys/` (**gitignored**)
+- Thêm service vào `infra/docker-compose.yml` + `.env.example` (`IDENTITY_SERVICE_PORT`, `IDENTITY_JWT_*`)
+- Test: unit (validate, JWT service) + **integration Testcontainers** (Postgres), tách bằng maven-failsafe (`*IT.java`)
+
+**Out of scope**
+
+- Refresh token / rotate / logout → **SL-1.4** · RBAC đầy đủ → **SL-1.4** · gateway/route/verify ở cửa vào → **SL-1.2**
+- Rate limit (Phase 4) · email verification · reset/forgot password · social login · MFA
+
+**Acceptance Criteria**
+
+- [x] `docker compose … up -d` → `shoplab-identity-service` **healthy**; `curl localhost:8081/health` → 200
+- [x] Flyway chạy lúc khởi động: DB `identity` có bảng `users` **và** `flyway_schema_history`
+- [x] `POST /v1/auth/register` email mới → **201**; gọi lại cùng email → **409** với `ApiError` (`code` rõ ràng)
+- [x] Mật khẩu lưu **BCrypt**: query DB thấy `$2a$…`, **không** thấy plaintext
+- [x] `POST /v1/auth/login` đúng → **200** + `accessToken`; decode thấy `sub`, `role`, `exp` ≈ 15 phút
+- [x] login sai mật khẩu → **401**, message **không** tiết lộ email có tồn tại hay không
+- [x] `GET /.well-known/jwks.json` → **200**, `kid` **khớp** header của token vừa phát
+- [x] Verify chữ ký token bằng public key lấy từ JWKS (lệnh thật, dán vào verify) → hợp lệ
+- [x] Thiếu file private key → service **fail-fast**, message rõ ràng (không chạy nửa vời)
+- [x] `mvn verify` xanh: **có** IT Testcontainers chạy thật (ghi lại `Tests run: N`)
+- [x] CI xanh trên PR (job `test` chạy cả IT)
+
+**Ghi chú kỹ thuật**
+
+- ⚠️ **Testcontainers không chạy được trong `docker build`** (không có Docker socket) → tách IT bằng **maven-failsafe**
+  (`*IT.java`), Dockerfile đổi sang `mvn verify -DskipITs`; CI job `test` chạy IT (runner `ubuntu-latest` có sẵn Docker).
+- **RS256 (D2)** vì verifier (gateway/catalog) **không được** giữ khoá ký; JWKS cho phép rotate khoá sau này không phải
+  deploy lại mọi service.
+- **Khoá dev không commit** (`AGENTS.md` §9): `tools/gen-dev-keys.sh` sinh vào `infra/keys/`, thêm vào `.gitignore`; compose
+  mount **read-only**; service fail-fast nếu thiếu (nhất quán với `EnvValidator` của commons).
+- Dùng `spring-security-crypto` (BCrypt) chứ **chưa** kéo `spring-boot-starter-security` → tránh filter chain ảnh hưởng
+  `/health` `/ready` `/version` hiện có; security chain đầy đủ ở SL-1.2 (gateway) và SL-1.4.
+- ID dùng **UUID** (không lộ số lượng user, thuận lợi khi sharding ở Phase 8).
+- **JPA + Flyway (D3)**: JPA tiện CRUD nhưng sinh SQL ngầm — chấp nhận ở Phase 1, đo bằng số liệu ở Phase 4.
+- Migration **không sửa file đã chạy** (Flyway checksum) → mọi thay đổi schema là `V2__…`.
+- IT Testcontainers làm job `test` lâu thêm ~1–2 phút (đã biết từ SL-1.0).
+
+**Kết quả verify** *(2026-11-05 — output thật; WSL2 · JDK 21.0.12.1 · Maven 3.9.12 · Docker 29.9.2)*
+
+File tạo: `services/identity-service/**` (service + Flyway migration + 39 unit test + 16 IT) · `tools/gen-dev-keys.sh`.
+File sửa: `pom.xml` (thêm module + failsafe) · `packages/service-commons/…/ErrorCode.java` (+`UNAUTHORIZED`/`FORBIDDEN`) ·
+`services/service-template/Dockerfile` (fix pom-copy) · `infra/docker-compose.yml` · `.env.example` · `.gitignore` · `README.md`.
+
+```console
+# --- AC: mvn verify (unit + IT Testcontainers + spotless + checkstyle + jacoco gate) ---
+$ mvn -B -pl services/identity-service -am verify
+[INFO] ShopLab :: Service Commons ... Tests run: 37, Failures: 0, Errors: 0   · 0 Checkstyle violations
+[INFO] ShopLab :: Identity Service . Tests run: 39, Failures: 0, Errors: 0   (unit, không cần Docker)
+[INFO]                              Tests run: 16, Failures: 0, Errors: 0   (IT — Postgres thật qua Testcontainers)
+[INFO] You have 0 Checkstyle violations. · All coverage checks have been met.
+[INFO] BUILD SUCCESS
+
+# --- AC: container healthy + /health + /ready ---
+$ docker compose -f infra/docker-compose.yml --env-file .env ps
+shoplab-identity-service   Up (healthy)        shoplab-postgres   Up (healthy)
+$ curl -s -w ' [http %{http_code}]\n' localhost:8081/health
+{"status":"UP"} [http 200]
+$ curl -s localhost:8081/ready
+{"status":"UP","dependencies":[{"name":"postgres","status":"UP","detail":"ok","latency":"PT0.00090926S"}]}
+
+# --- AC: Flyway đã migrate + bảng users trên Postgres thật ---
+$ docker exec shoplab-postgres psql -U shoplab -d identity -c \
+    'select version, description, success from flyway_schema_history;'
+ version | description  | success
+       1 | create users | t
+$ docker exec shoplab-postgres psql -U shoplab -d identity -c '\d users'
+ Indexes: "users_pkey" PRIMARY KEY, btree (id)
+          "ux_users_email" UNIQUE, btree (email)      ← email là định danh đăng nhập
+
+# --- AC: register 201 · trùng email 409 (ApiError) · login 200 ---
+$ curl -s -w '\n[http %{http_code}]\n' -X POST localhost:8081/v1/auth/register -H 'Content-Type: application/json' \
+    -d '{"email":"ac-…@shoplab.local","password":"matkhau123","displayName":"An"}'
+{"id":"162a37e2-f4e3-4820-8c24-8a4763347000","email":"ac-…@shoplab.local","displayName":"An","role":"BUYER","createdAt":"…"}
+[http 201]
+$ (gọi lại đúng email đó)
+{"code":"CONFLICT","message":"Email 'ac-…@shoplab.local' đã được đăng ký","traceId":"2dbb0218-…","path":"/v1/auth/register"}
+[http 409]
+$ (login)
+tokenType= Bearer   expiresIn= 900   token len= 613
+
+# --- AC: mật khẩu lưu BCrypt trong DB (không plaintext) ---
+$ docker exec shoplab-postgres psql -U shoplab -d identity -tAc \
+    "select email, left(password_hash,29) || '...', length(password_hash) from users;"
+ac-1793885102@shoplab.local|$2a$10$Wt0tu76V6vwh.9xuZMzWo....|60
+
+# --- AC: claims của token (exp - iat = 900s = 15 phút) ---
+claims: {"iss": "https://identity.shoplab.local", "sub": "162a37e2-f4e3-4820-8c24-8a4763347000",
+         "role": "BUYER", "exp": 1793886002, "iat": 1793885102}
+```
+
+```console
+# --- AC: verify CHỮ KÝ bằng public key lấy từ JWKS (không dùng private key) ---
+$ curl -s localhost:8081/.well-known/jwks.json
+{"keys":[{"kty":"RSA","e":"AQAB","kid":"FfQyQesnP7c818474zybGHCrMxU_w7FjtR_dbpIWfcA","n":"…"}]}
+JWKS kid        : FfQyQesnP7c818474zybGHCrMxU_w7FjtR_dbpIWfcA
+JWKS co field d?: False
+token header    : {'kid': 'FfQyQesnP7c818474zybGHCrMxU_w7FjtR_dbpIWfcA', 'alg': 'RS256'}
+=> CHU KY HOP LE (verify bang public key lay tu JWKS, khong dung private key)
+
+# --- AC: 401 không lộ email đã đăng ký (2 response chỉ khác traceId/timestamp) ---
+$ (login sai mật khẩu)  → {"code":"UNAUTHORIZED","message":"Email hoặc mật khẩu không đúng",…} [http 401]
+$ (login email không tồn tại) → CÙNG code + CÙNG message                              [http 401]
+$ (password "123")      → {"code":"VALIDATION_ERROR","details":[{"field":"password",
+                            "message":"password phải từ 8 đến 72 ký tự"}]}             [http 400]
+
+# --- AC: fail-fast khi thiếu private key (service KHÔNG chạy nửa vời) ---
+$ docker run --rm … -e IDENTITY_JWT_PRIVATE_KEY_PATH=/app/keys/khong-ton-tai.pem shoplab-identity-service:local
+Caused by: com.shoplab.identity.auth.jwt.JwtKeyException: Thiếu private key: không đọc được file
+'/app/keys/khong-ton-tai.pem'. Sinh khoá dev: bash tools/gen-dev-keys.sh (file bị .gitignore — KHÔNG commit, AGENTS.md §9).
+exit=1
+
+# --- AC: /ready 503 khi DB chết · /health vẫn 200 (đúng thiết kế liveness) · hồi phục ---
+$ docker stop shoplab-postgres
+$ curl -s -w ' [http %{http_code}]' localhost:8081/ready
+{"status":"DOWN","dependencies":[{"name":"postgres","status":"DOWN","detail":"SocketTimeoutException: Connect timed out"}]} [http 503]
+$ curl -s -w ' [http %{http_code}]' localhost:8081/health
+{"status":"UP"} [http 200]
+$ docker start shoplab-postgres → /ready http=200
+```
+
+**Learning note**
+
+- **Spring Boot 4 tách auto-configuration theo từng công nghệ** → khai dependency trần là **im lặng không hoạt động**:
+  `flyway-core` một mình **không** kích hoạt Flyway (phải dùng `spring-boot-starter-flyway`); JPA nằm trong module
+  `spring-boot-hibernate`. Triệu chứng gặp thật: `Schema validation: missing table [users]` — Hibernate `validate` chạy
+  trước, còn Flyway thì chưa từng chạy. **Bài học**: thêm dependency mới phải kiểm chứng nó *thật sự chạy* bằng log,
+  không chỉ "build xanh".
+- **Jackson 3**: Boot 4 dùng `tools.jackson.databind.ObjectMapper` (KHÔNG còn `com.fasterxml.jackson.databind`) ⇒ import
+  cũ lỗi compile ngay (ồn ào, dễ thấy — khác case Flyway ở trên).
+- **`spring-boot:repackage` chạy TRƯỚC failsafe** ⇒ failsafe lấy classpath theo artifact jar "fat" (class nằm trong
+  `BOOT-INF/classes/`) nên báo `NoClassDefFoundError` cho chính class của module. Fix: khai tường minh
+  `<classesDirectory>${project.build.outputDirectory}</classesDirectory>`. Bẫy này chỉ xuất hiện khi **vừa có failsafe
+  vừa có spring-boot repackage**.
+- **Spring Security 7 coi claim `iss` là URL**: `Jwt.getIssuer()` ném `Unable to convert claim 'iss' to URL` nếu `iss` là
+  chuỗi thường ⇒ đổi `iss` sang dạng URI (`https://identity.shoplab.local`), cũng đúng quy ước thực tế của claim này.
+- **Non-root container + bind-mount secret = uid mismatch**: private key mode 600 của user host (uid 1000) không đọc được
+  bởi user `shoplab` trong image (uid hệ thống) ⇒ `AccessDeniedException`. Fix: `user: "${SHOPLAB_UID}:${SHOPLAB_GID}"`
+  (vẫn non-root mà đọc được khoá). Nhờ fail-fast, lỗi hiện ra thành message đọc được ngay thay vì 401 bí ẩn sau này.
+- **Mọi Dockerfile phải copy pom của TẤT CẢ module** trong `<modules>`: thêm module thứ 3 làm image build của cả
+  `service-template` chết với `Child module ... does not exist` (Dockerfile cũ chỉ copy 2 pom). Đã fix cả 2 Dockerfile +
+  ghi vào checklist README.
+- **Test "đỏ vì đồng hồ"**: token phát với `Clock` cố định bị decoder coi là hết hạn vì nó so với giờ thật → phải cho
+  `JwtTimestampValidator` dùng **cùng** clock đó. Đây chính là lý do tiêm `Clock` thay vì gọi `Instant.now()` trong code.
+- **Assert "không lộ email" phải so đúng phần có nghĩa**: so cả body sẽ luôn fail vì `ApiError` chứa `traceId`/`timestamp`
+  khác nhau mỗi request → so `code` + `message`.
+
+---
+
+### SL-1.2 — `api-gateway`: routing + verify JWT + correlation id + error thống nhất
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton |
+| **Phụ thuộc** | SL-1.1 |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Nếu client gọi thẳng từng service thì auth bị rải khắp nơi, đổi địa chỉ service là vỡ client, và không có chỗ tập trung để
+gắn rate limit (Phase 4) / circuit breaker (Phase 5). Cần **một cửa vào** làm 3 việc: route theo path, verify token một chỗ,
+giữ `traceId` xuyên suốt để debug.
+
+**Mục tiêu**
+
+`api-gateway` (port **8080**) là cửa duy nhất: `/v1/**` được route tới service tương ứng; request thiếu/sai token → **401**
+theo `ApiError`; `x-correlation-id` được giữ và truyền tiếp để log 2 đầu **cùng một traceId**.
+
+**In scope**
+
+- Service `services/api-gateway` (port 8080), dùng `service-commons` (log JSON, correlation id, error format)
+- **Routing table từ config** (`shoplab.gateway.routes[]`: path prefix → base URL), nạp từ env — không hard-code
+- Verify JWT RS256 bằng public key lấy từ **JWKS** của identity (cache + refetch khi gặp `kid` lạ)
+- **Public route** (không cần token): `/v1/auth/**`, `/.well-known/**`, `/health`, `/ready`; còn lại **bắt buộc** token
+- Forward method/body/query/header cần thiết; trả nguyên status + body của service đích; gắn `x-user-id`, `x-user-role`
+  (ghi **đè** giá trị client gửi)
+- **401** khi thiếu/hết hạn/sai chữ ký · **503** khi service đích không tới được (kèm `ApiError` thống nhất)
+- Thêm vào compose + `.env.example` (`API_GATEWAY_PORT=8080`, `IDENTITY_SERVICE_URL`)
+- Test: unit (match route, JWT filter với mock, mapping lỗi)
+
+**Out of scope**
+
+- Rate limit (Phase 4) · retry/circuit breaker/bulkhead (Phase 5) · aggregation/BFF · TLS · load balancing nhiều instance
+- WebFlux/reactive (xem trade-off) · route động từ DB/UI (Phase 7)
+
+**Acceptance Criteria**
+
+- [ ] `curl localhost:8080/health` → 200; container `healthy` trong compose
+- [ ] `POST /v1/auth/register` **qua gateway (8080)** → 201, response **giống hệt** khi gọi thẳng 8081
+- [ ] Gọi endpoint protected **không** token → **401** `ApiError` (`code`, `traceId` có giá trị)
+- [ ] Gọi với token hợp lệ → 200; service đích **nhận được** `x-user-id`/`x-user-role` (chứng minh bằng log)
+- [ ] `x-correlation-id` do client gửi được **giữ nguyên** xuyên gateway → identity (so log 2 bên)
+- [ ] Không gửi `x-correlation-id` → gateway tự sinh; log 2 bên **cùng** một traceId
+- [ ] Token hết hạn / sai chữ ký → 401, **không** lộ chi tiết nội bộ
+- [ ] `docker stop` identity → gọi qua gateway trả **503** `ApiError`, gateway **không** sập
+- [ ] `/ready` của gateway phản ánh dependency (503 khi identity chết) — giống cơ chế của template
+- [ ] `mvn verify` xanh + CI xanh
+
+**Ghi chú kỹ thuật**
+
+- **Tự viết gateway MVC (D1)** để dùng lại 100% `service-commons` (đều servlet-based). Trade-off: **không** reactive/streaming,
+  **không** có route động/actuator sẵn. **Revisit** khi cần streaming/WebSocket hoặc route config động (Phase 7) → khi đó cân
+  nhắc Spring Cloud Gateway (WebFlux) và chấp nhận viết lại correlation/error cho reactive.
+- Dùng `RestClient` + `ClientHttpRequestFactory` có **timeout bắt buộc** (không timeout = treo vô hạn — mầm của Phase 5,
+  nhưng phải có sẵn ngay từ đây).
+- **JWKS cache** có TTL + refetch khi gặp `kid` lạ (rotate khoá không cần restart gateway).
+- Header `x-user-*` do gateway **ghi đè**; service downstream phải **bỏ qua** giá trị client gửi trực tiếp — đây là lý do
+  SL-1.5 verify JWT ở cả service (defense in depth).
+- **Không** bọc lại response của service đích (tránh double-encode); lỗi do gateway sinh ra dùng `ApiError` của commons.
+- Giữ nguyên `permissions: contents: read` + `concurrency` của CI (SL-1.0).
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-1.3 — Walking skeleton E2E: register → login qua gateway
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton |
+| **Phụ thuộc** | SL-1.2 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+SL-1.1 và SL-1.2 tạo 2 service riêng lẻ nhưng **chưa có bằng chứng** đường đi "client → gateway → service → DB → response"
+chạy thông. Đây là **điều kiện hoàn thành của phase**, nên phải chứng minh **sớm** — nếu vỡ ở tầng tích hợp thì sửa bây giờ
+rẻ hơn nhiều so với sau khi đã đắp thêm catalog/RBAC.
+
+**Mục tiêu**
+
+Một script chạy được toàn bộ đường đi và in ra bằng chứng thật (dán được vào ticket); kèm tài liệu để người mới tự chạy lại.
+
+**In scope**
+
+- `tools/e2e-smoke.sh` (bash, `set -euo pipefail`), các bước:
+  1) health gateway + identity · 2) register email **random** → 201 · 3) login → lấy token · 4) gọi endpoint protected
+  **qua gateway** bằng token → 200 · 5) gọi lại **không** token → 401 · in `PASS/FAIL` từng bước + exit code đúng
+- `README.md`: mục "Chạy E2E smoke" + bảng port (8080 gateway · 8081 identity · 8082 catalog — để dành)
+- Ghi lại số đo: thời gian script chạy + số request
+
+**Out of scope**
+
+- Catalog (SL-1.5+) · đưa script vào CI (D6 — để Phase 2) · load test (Phase 4) · chaos test (Phase 5)
+
+**Acceptance Criteria**
+
+- [ ] `docker compose … up -d` → gateway + identity **healthy**
+- [ ] `bash tools/e2e-smoke.sh` → **tất cả bước PASS**, exit **0**
+- [ ] Chạy lại **nhiều lần** vẫn pass (email random, không phụ thuộc state cũ)
+- [ ] `docker stop` identity rồi chạy lại → script **fail đúng bước**, exit ≠ 0, in rõ bước nào fail
+- [ ] Log của identity thấy request đến từ gateway với **cùng traceId** mà script gửi
+- [ ] README có mục chạy script + output mẫu
+
+**Ghi chú kỹ thuật**
+
+- Script chỉ dùng `curl` + `python3` (đã có trong máy — xem README "Yêu cầu môi trường") để parse JSON; **không** thêm `jq`
+  (máy này **không** có `jq`, đã gặp trong SL-0.5/SL-1.0).
+- Script phải **assert trường hợp mong đợi lỗi** (401), không chỉ "khác 200" — nếu chỉ check `!= 200` thì 500 cũng "pass"
+  (đúng bẫy "test âm" đã học ở SL-0.5).
+- Chạy **local**; đưa vào CI ở Phase 2 khi số service tăng (mỗi lần thêm `docker compose up` vào CI tốn ~3–5 phút/run — D6).
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+---
+
+### SL-1.4 — `identity-service`: refresh token + RBAC + `/v1/users/me`
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton |
+| **Phụ thuộc** | SL-1.3 |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Access token sống 15 phút → không có refresh thì user bị logout liên tục. Và "RBAC cơ bản" trong epic hiện **chưa có gì**:
+chưa endpoint nào cần quyền, nên chưa chứng minh được phân quyền có tác dụng thật (chỉ mới có `role` nằm trong token).
+
+**Mục tiêu**
+
+Vòng đời token đầy đủ (access ngắn + refresh dài, có **rotate** và thu hồi) và ít nhất 1 endpoint protected thật để chứng
+minh phân quyền hoạt động đúng (401 vs 403).
+
+**In scope**
+
+- Flyway `V2__create_refresh_tokens.sql`: `refresh_tokens(id, user_id, token_hash, expires_at, revoked_at, replaced_by)`
+- `POST /v1/auth/refresh` → cặp token **mới** + **rotate** (token cũ bị revoke); dùng lại token đã rotate → **revoke cả chuỗi**
+  (phát hiện token bị đánh cắp)
+- `POST /v1/auth/logout` → revoke refresh token hiện tại
+- `GET /v1/users/me` (cần token) → trả user hiện tại
+- `GET /v1/admin/users` (**chỉ** `admin`) → dùng để chứng minh 403
+- Seed/migration tạo `seller@shoplab.local` + `admin@shoplab.local` (D7 — mật khẩu dev ghi trong README, **không** dùng prod)
+- `spring-boot-starter-security` + security filter chain; map **401/403** sang `ApiError`
+- Test: unit (rotate + phát hiện reuse) + IT (luồng refresh + phân quyền)
+
+**Out of scope**
+
+- Social login/OAuth2 · MFA · reset/forgot password · UI quản lý session · rotate khoá ký tự động (đã có JWKS để làm sau)
+
+**Acceptance Criteria**
+
+- [ ] login → refresh → access token **mới** hoạt động; refresh token **cũ** dùng lại → **401** và cả chuỗi bị revoke
+- [ ] `GET /v1/users/me` không token → **401**; có token → **200** đúng user
+- [ ] `GET /v1/admin/users` bằng token `admin` → **200**; bằng token `buyer` → **403** (không phải 401)
+- [ ] 401/403 trả **đúng `ApiError`** (`code`, `message`, `traceId`) — **không** trả HTML mặc định của Spring Security
+- [ ] Refresh token lưu **hash** trong DB: query thấy hash, **không** thấy token thật
+- [ ] `logout` → refresh token đó không dùng được nữa
+- [ ] Migration `V1` **không** bị sửa; schema mới là `V2`
+- [ ] `mvn verify` + CI xanh
+
+**Ghi chú kỹ thuật**
+
+- Refresh token là **chuỗi random 256-bit** (không phải JWT) và **lưu hash** → thu hồi được, không cần DB lớn; access token
+  vẫn là JWT (stateless).
+- **Rotation + reuse detection** là pattern chuẩn: nếu token đã rotate bị dùng lại ⇒ kẻ tấn công đang giữ token cũ ⇒ revoke
+  cả chuỗi, buộc login lại. Đây là bài học "security là state machine, không phải boolean" — sẽ ghi learning note.
+- Role lấy từ **claim trong JWT** (đã có ở SL-1.1) nên không query DB mỗi request. **Trade-off**: đổi role cần token mới
+  (tối đa 15 phút). **Revisit** nếu cần thu hồi quyền tức thời (khi đó: token version/blacklist — nhưng phải trả giá bằng
+  state ở mọi request).
+- Thêm `spring-boot-starter-security` ở đây (không thêm ở SL-1.1) để cô lập thay đổi filter chain vào 1 ticket; phải khai
+  **permitAll** cho `/health` `/ready` `/version` để không phá probe + graceful shutdown của SL-0.4.
+- Endpoint `/debug/*` (dev-only) cũng phải nằm trong danh sách permitAll hoặc tắt ở môi trường ngoài local.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-1.5 — `catalog-service`: skeleton + Flyway + category/product CRUD
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton |
+| **Phụ thuộc** | SL-1.3 |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Đây là service **read-heavy đầu tiên** (guest xem sản phẩm) — đúng bài toán mà Phase 4 sẽ tối ưu bằng cache, nên phải có
+API + dữ liệu thật ngay từ Phase 1 thì Phase 4 mới có cái để **đo**. Đồng thời đây là service đầu tiên cần **ghi dữ liệu
+có phân quyền** (chỉ seller/admin được tạo sản phẩm).
+
+**Mục tiêu**
+
+`catalog-service` (port **8082**) có schema riêng do Flyway quản lý, CRUD category/product hoạt động: ai cũng **đọc** được,
+chỉ `seller`/`admin` **ghi** được.
+
+**In scope**
+
+- Service `services/catalog-service` (port 8082) + DB `catalog` + Flyway `V1__create_catalog.sql` (`category`, `product`)
+- API:
+  - `POST /v1/categories` (seller/admin) · `GET /v1/categories` (public)
+  - `POST /v1/products` (seller/admin) · `PUT /v1/products/{id}` · `DELETE /v1/products/{id}`
+  - `GET /v1/products/{id}` (public)
+- Validate input bằng `@Valid`; lỗi 400 trả `ApiError` kèm `details` theo field
+- **Verify JWT tại service** (defense in depth, không tin hoàn toàn gateway) + dùng `x-user-id`/`x-user-role`
+  **do gateway gắn** (bỏ qua header client tự gửi)
+- 404 khi id không tồn tại (dùng `NotFoundException` có sẵn trong commons)
+- Test: unit (service/validate) + IT Testcontainers (CRUD + phân quyền 403/401)
+- Thêm vào compose + `.env.example` (`CATALOG_SERVICE_PORT=8082`, `CATALOG_SERVICE_URL` cho gateway)
+
+**Out of scope**
+
+- SKU · phân trang/filter · seed data → **SL-1.6**
+- Cache (Phase 4) · search engine (Phase 3/8) · upload ảnh · tồn kho (Phase 2) · promotion/giá theo campaign (Phase 2)
+
+**Acceptance Criteria**
+
+- [ ] container **healthy**; `/health` → 200; DB `catalog` có `category`/`product` + `flyway_schema_history`
+- [ ] `POST /v1/categories` bằng token **seller** → **201**; bằng token **buyer** → **403**
+- [ ] `POST /v1/products` (seller) → **201**; `GET /v1/products/{id}` → **200** đúng dữ liệu
+- [ ] `PUT`/`DELETE` sản phẩm không tồn tại → **404** `ApiError`
+- [ ] Body sai (thiếu `name`, `price` âm) → **400**, `details` nêu rõ field sai
+- [ ] Gọi **thẳng** `:8082` **không** token → **401** (không phụ thuộc gateway)
+- [ ] Client tự gửi `x-user-role: admin` tới gateway → **không** leo được quyền (gateway ghi đè — verify bằng cách gọi qua 8080)
+- [ ] `GET /v1/products/{id}` **không** token → 200 (public cho guest)
+- [ ] `mvn verify` + CI xanh
+
+**Ghi chú kỹ thuật**
+
+- `price` dùng **`BigDecimal` + `numeric(12,2)`** — **không** dùng `double` cho tiền (sai số làm tròn sẽ thành bug thật ở Phase 2).
+- FK `product.category_id → category.id`; index trên `category_id` (Phase 4 sẽ đo lại).
+- Thêm `@Version` (optimistic locking) cho `product` ngay từ đầu: rẻ bây giờ, và Phase 2 (đặt hàng) sẽ cần.
+- **Verify JWT ở cả service** (không chỉ gateway): nếu chỉ tin gateway thì service trở thành "tin tuyệt đối" vào 1 lớp; đây là
+  defense in depth tiêu chuẩn.
+- Quy ước lỗi: **401** = chưa xác thực · **403** = đã xác thực nhưng thiếu quyền. Sai quy ước này là nguồn bug khó tìm ở client.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-1.6 — `catalog-service`: SKU + phân trang/filter + seed data
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton |
+| **Phụ thuộc** | SL-1.5 |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Một dòng `product` chưa đủ cho e-commerce: cần **SKU** (biến thể màu/size). Và guest cần **duyệt** danh sách → cần phân
+trang + filter, nếu không Phase 4 không có gì để đo p99/throughput. Cuối cùng, cần **seed data** để mọi người (và chính mình
+sau này) luôn có dữ liệu demo thay vì DB rỗng.
+
+**Mục tiêu**
+
+Catalog có dữ liệu mẫu dùng được ngay sau `up -d`, API duyệt sản phẩm cho guest có phân trang/filter/sort **ổn định** và
+**không** cho phép sort tuỳ ý (tránh lộ schema + tránh full scan).
+
+**In scope**
+
+- Flyway `V2__create_sku.sql`: `sku(id, product_id fk, code unique, price_override, stock_hint, created_at)`
+- API SKU lồng trong product (`GET /v1/products/{id}` trả kèm danh sách SKU; `POST /v1/products/{id}/skus` cho seller/admin)
+- `GET /v1/products?page=&size=&categoryId=&q=&sort=` → response dạng page: `{content, page, size, totalElements, totalPages}`
+  — **public** (không cần token)
+- Filter `categoryId` · `q` (tìm theo tên, **không** phân biệt hoa thường) · `sort` theo **whitelist**
+  (`price,asc|desc` · `createdAt,asc|desc`)
+- **Seed data** (Flyway repeatable `R__seed_dev_data.sql`): ~5 category + ~20 product + SKU, tên rõ ràng là dữ liệu dev
+- Index: `category_id`, `created_at`, `lower(name)`
+- Test: IT cho phân trang (page 0/1, size, tổng số), filter, sort, whitelist sort; unit cho validate param
+
+**Out of scope**
+
+- Search engine/OpenSearch (Phase 3/8) · full-text search · cache (Phase 4) · ảnh · giá theo thời điểm · tồn kho thật (Phase 2)
+
+**Acceptance Criteria**
+
+- [ ] `GET /v1/products?page=0&size=5` → 5 phần tử + `totalElements` = số seed; `page=1` khác trang 0 và **không** trùng id
+- [ ] `size=0` · `size=1000` · `page=-1` → hành vi **đã chọn** (400 hoặc clamp) và verify đúng hành vi đó (ghi rõ trong ticket)
+- [ ] `categoryId=<id>` → chỉ trả sản phẩm thuộc category đó
+- [ ] `q=iphone` (gõ hoa/thường khác nhau) → trả đúng kết quả
+- [ ] `sort=price,desc` → đúng thứ tự; `sort=drop table` → **400** (không lọt vào SQL)
+- [ ] `GET /v1/products` **không** token → **200** (public cho guest)
+- [ ] Sau `docker compose down -v && up -d`: seed data **có** trong DB
+- [ ] `up -d` lần thứ hai **không** nhân đôi dữ liệu (migration idempotent)
+- [ ] `EXPLAIN` query list **dùng index** (dán output vào verify)
+- [ ] `mvn verify` + CI xanh
+
+**Ghi chú kỹ thuật**
+
+- Phân trang **offset** (`Pageable`) là đủ ở Phase 1. **Keyset pagination** là bài toán của Phase 4 khi dữ liệu lớn
+  (offset sâu ⇒ `OFFSET 100000` quét bỏ rất nhiều row) → ghi vào revisit, sẽ đo bằng số liệu.
+- **Sort whitelist** (không nhận field tự do) để: (a) không lộ schema, (b) chỉ cho sort trên cột **có index** — nếu không
+  index thì sort sẽ thành full scan + sort in memory.
+- `q` dùng `lower(name) LIKE` + index functional `lower(name)`; **chưa** dùng full-text (`tsvector`) — để Phase 3/8 khi cần.
+- Seed dùng **repeatable migration** (`R__`) để chạy lại được khi cần reset dữ liệu dev mà không phải viết migration mới;
+  **không** dùng cho dữ liệu prod (ghi rõ trong comment file).
+- Giới hạn `size` tối đa (ví dụ 100) để tránh client xin 1 triệu row — đây là dạng "rate limit ở tầng dữ liệu" đầu tiên.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-1.7 — E2E smoke test đầy đủ + runbook Phase 1
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton |
+| **Phụ thuộc** | SL-1.6 (và SL-1.4) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+`tools/e2e-smoke.sh` hiện chỉ có phần identity (SL-1.3). Điều kiện hoàn thành Phase 1 yêu cầu đúng luồng:
+**register → login → create product (seller) → list product (guest)** qua gateway. Ngoài ra khi hệ có 3 service, lỗi sẽ
+xuất hiện ở nhiều tầng → cần **runbook** ngắn để không phải mò lại từ đầu mỗi lần vỡ.
+
+**Mục tiêu**
+
+Một lệnh chứng minh toàn bộ luồng Phase 1 chạy đúng (kể cả phân quyền), và một runbook đủ để tự debug khi có tầng chết.
+
+**In scope**
+
+- Mở rộng `tools/e2e-smoke.sh`: thêm bước tạo category + product bằng token **seller** (seed từ SL-1.4) → 201;
+  list product bằng **guest** (không token) → thấy sản phẩm vừa tạo; tạo product bằng **buyer** → **403** (assert đúng 403)
+- `docs/runbook-phase-1.md`: sơ đồ luồng request (client → gateway → service → DB), bảng port, lệnh kiểm tra **từng tầng**,
+  và **5 lỗi thường gặp** + cách xử lý (401 · 403 · 404 · 503 · timeout)
+- Cập nhật `README.md`: trạng thái Phase 1 + link runbook
+
+**Out of scope**
+
+- Chạy trong CI (D6 — để Phase 2) · load test (Phase 4) · chaos test (Phase 5) · UI/client thật
+
+**Acceptance Criteria**
+
+- [ ] `bash tools/e2e-smoke.sh` → **PASS toàn bộ**, exit 0, in ra id của product vừa tạo
+- [ ] Guest list được product vừa tạo (chứng minh đọc public **qua gateway**)
+- [ ] Bước "buyer tạo product" trả **403** và script **không** coi đó là fail (assert đúng kỳ vọng)
+- [ ] Chạy lại nhiều lần vẫn pass (dữ liệu random, không phụ thuộc state cũ)
+- [ ] Tắt 1 trong 3 service → script fail **đúng bước**, in gợi ý lệnh kiểm tra tương ứng trong runbook
+- [ ] Runbook có đủ 5 lỗi + lệnh kiểm tra từng tầng; **thực sự làm theo** runbook để debug 1 lỗi giả lập (ghi lại vào verify)
+- [ ] README trỏ tới runbook + script
+
+**Ghi chú kỹ thuật**
+
+- Script phải **assert trường hợp mong đợi lỗi** (403/401), không chỉ "khác 200" — nếu chỉ check `!= 200` thì 500 cũng "pass"
+  (bẫy đã gặp ở SL-0.5 khi test âm).
+- Runbook viết dạng bảng: **triệu chứng → lệnh kiểm tra → nguyên nhân thường gặp → cách xử lý**, mỗi lỗi ≤ 5 dòng.
+- Đây là "runbook" đầu tiên của repo — Phase 5 sẽ mở rộng thành runbook sự cố đầy đủ (`SL-5.x`), nên đặt file theo tên
+  `docs/runbook-phase-1.md` để sau này gom lại.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-1.8 — OpenAPI spec cho các endpoint Phase 1
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton |
+| **Phụ thuộc** | SL-1.7 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Đến đây API Phase 1 đã ổn định (auth + catalog + phân quyền). Chưa có **contract** nào để người khác — hoặc chính mình 3
+tháng sau — đọc mà không phải mở code. `AGENTS.md` §6 yêu cầu: *"API: REST version qua path `/v1/...`, contract mô tả bằng
+OpenAPI"*.
+
+**Mục tiêu**
+
+Có spec **khớp với thực tế**, đọc được, và **diff được trong git** — làm nền cho client/contract test ở phase sau.
+
+**In scope**
+
+- Thêm `springdoc-openapi` cho 3 service, expose `/v3/api-docs` (**tắt** ở môi trường ngoài local)
+- Annotation ngắn: mô tả endpoint, request/response, mã lỗi, **security scheme bearer** cho endpoint protected
+- `tools/export-openapi.sh`: gom spec của 3 service → **`docs/api/openapi.yaml`** (1 file, `servers` trỏ gateway) rồi commit
+- `docs/api/README.md`: cách đọc + cách cập nhật spec (khi thêm endpoint)
+- Verify spec **khớp thực tế**: gọi vài endpoint và đối chiếu với spec (ghi vào verify)
+
+**Out of scope**
+
+- Sinh client SDK · contract testing tự động (Pact) · import spec vào gateway · nhiều version API (chỉ `/v1`)
+
+**Acceptance Criteria**
+
+- [ ] `GET /v3/api-docs` trên **cả 3 service** → 200 + JSON hợp lệ
+- [ ] `bash tools/export-openapi.sh` → sinh `docs/api/openapi.yaml` **không lỗi** và file được commit
+- [ ] Spec liệt kê **đủ** endpoint Phase 1 — đếm và ghi con số vào verify; **không** thiếu endpoint nào đang có
+- [ ] Trong spec: có security scheme **bearer** + endpoint protected được đánh dấu cần auth
+- [ ] Response lỗi trong spec dùng schema **`ApiError`** (400/401/403/404/409)
+- [ ] Spec **validate pass** (spectral / swagger-cli; nếu không cài được thì dùng `python3` + `yaml.safe_load` + kiểm tra khoá bắt buộc — ghi rõ cách đã dùng)
+- [ ] `/v3/api-docs` **không** bật khi `APP_ENV != local` (verify bằng env thật)
+
+**Ghi chú kỹ thuật**
+
+- Chọn **sinh từ code (D5)** để spec không lệch thực tế. **Trade-off**: spec là *hệ quả* của code, không phải *nguồn* → nếu
+  sau này có client bên ngoài/nhiều team thì nên chuyển **contract-first** (viết YAML trước, code theo) — ghi vào revisit.
+- Export script phải chạy **offline** khi stack đang chạy local (curl `:8080/v3/api-docs`), không cần công cụ ngoài;
+  format YAML bằng `python3` (máy **không** có `jq`).
+- Đặt spec ở `docs/api/openapi.yaml` để nằm cùng chỗ với các doc khác và **diff được theo phase** (Phase 2 sẽ thấy rõ API
+  mới thêm gì).
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+---
+
 ## 5. Phase 2 → 8 — Epic outline
 
 > Các phase này **chỉ ở mức epic**. Chỉ breakdown thành ticket chi tiết khi tới lượt — breakdown sớm sẽ phải viết lại
@@ -396,6 +1008,10 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | SL-1.0 | **`paths` filter trên `pull_request` đánh giá theo TOÀN BỘ diff của PR** (không phải commit cuối) → commit docs trong PR có code vẫn kích hoạt workflow. Muốn commit docs "miễn phí" thì phải là PR chỉ-docs hoặc `[skip ci]`. |
 | 2026-11-03 | SL-1.0 | **Job `skipped` = 0 phút, nhưng REST jobs API trả `started_at` GIẢ cho job skipped** (started == completed) → đo chi phí bằng REST sẽ tính dư ~1 phút/job. Dùng GraphQL (`gh run view --json jobs`, `started_at = null`) hoặc lọc `conclusion == 'skipped'`. |
 | 2026-11-03 | SL-1.0 | **Đo trước khi tối ưu, đừng đoán**: 71 phút/18 run với 62% là run docs-only — trực giác nghĩ "build-image đắt nhất" (đúng 46%) nhưng thứ **đáng bỏ** nhất là run docs-only. Re-run cũng **đánh giá lại `vars`** → test kill-switch không cần commit giả. |
+| 2026-11-05 | SL-1.1 | **Spring Boot 4 tách auto-configuration theo công nghệ**: khai `flyway-core` trần ⇒ Flyway **không chạy** (im lặng!) → Hibernate `validate` báo `missing table [users]`. Phải dùng `spring-boot-starter-flyway`. **Dependency mới phải kiểm chứng bằng log, không chỉ "build xanh".** |
+| 2026-11-05 | SL-1.1 | **`spring-boot:repackage` chạy TRƯỚC failsafe** ⇒ failsafe lấy classpath từ jar "fat" → `NoClassDefFoundError` cho class của chính module; fix bằng `<classesDirectory>${project.build.outputDirectory}</classesDirectory>`. Kèm: **Jackson 3** đổi package (`tools.jackson.databind`). |
+| 2026-11-05 | SL-1.1 | **Non-root container + bind-mount secret = uid mismatch**: private key mode 600 của host (uid 1000) không đọc được bởi uid hệ thống trong image → chạy container bằng `user: "${SHOPLAB_UID}:${SHOPLAB_GID}"`. Và **mọi Dockerfile phải copy pom của TẤT CẢ module** — thêm module thứ 3 làm build image của `service-template` chết với `Child module ... does not exist`. |
+| 2026-11-05 | SL-1.1 | **Spring Security 7 coi `iss` là URL** (`Jwt.getIssuer()` ném lỗi nếu không parse được) → đặt `iss` dạng URI. **Test với `Clock` cố định**: decoder phải dùng cùng clock, nếu không test "đỏ vì đồng hồ" chứ không phải vì logic sai. |
 
 ---
 
@@ -437,6 +1053,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | Chốt **ADR-[0005](docs/adr/0005-phase-snapshot-and-release.md)** + dựng `docs/phases/` ([index](docs/phases/README.md) + [`phase-0.md`](docs/phases/phase-0.md)): tag `phase-N` + **GitHub Release** + doc snapshot, **không** dùng release branch ("lazy D"). `AGENTS.md` §5 thêm **DoD của một phase**; `/close-ticket.md` thêm bước 8 & 10 (tách archive, tag/release sau merge). |
 | 2026-11-03 | Tạo **tag + GitHub Release `phase-0`** trên merge commit `259a7e9` (ADR-0005). Verify: push tag **không** trigger CI (workflow chỉ khai `on.push.branches`) → 0 phút Actions; `git show phase-0:<file>` đọc được snapshot. |
 | 2026-11-03 | `SL-1.0` → `Done`: tối ưu chi phí CI — `paths-ignore` (bỏ run chỉ-docs), `push` chỉ trên `main` (hết run trùng), kill-switch `vars.CI_ENABLED`, bỏ qua draft PR (`ready_for_review`). Verify thật: push nhánh feature **0 run**, draft → run `skipped` (0 phút), `CI_ENABLED=false` + re-run → `skipped`, `true` → 3/3 xanh, merge → run `main` xanh, **PR chỉ-docs → 0 run**. Cùng kịch bản: **8 phút vs ~19,5 phút (−59%)**. Merge PR [#7](https://github.com/anchu3003/shop-lab-microservices/pull/7) (squash). **Phase 1 → 1 / 1**. |
+| 2026-11-03 | **Breakdown Phase 1** → 9 ticket chi tiết: `SL-1.0` Done · `SL-1.1`…`SL-1.8` Todo (identity register/login + JWT RS256 + JWKS · gateway routing/verify JWT · **E2E sớm** · refresh token + RBAC · catalog CRUD · SKU/paging/seed · E2E đầy đủ + runbook · OpenAPI spec). Chốt 7 quyết định khi breakdown (gateway **MVC tự viết** · JWT **RS256 + JWKS** · **JPA + Flyway** · **có Testcontainers** · OpenAPI **sinh từ code** · smoke chạy **local** · register luôn là `buyer`). |
+| 2026-11-05 | `SL-1.1` → `Review`: nhánh `feat/sl-1.1-identity-service`. `identity-service` (port 8081) — **Flyway** + register/login + **JWT RS256** + **JWKS**; `service-commons` thêm `UNAUTHORIZED`/`FORBIDDEN`; `tools/gen-dev-keys.sh` (khoá dev, không commit); compose + `.env.example`. Verify thật: container `healthy` · Flyway v1 áp dụng · BCrypt trong DB (60 ký tự) · **chữ ký verify bằng public key từ JWKS** · 401 không lộ email · fail-fast khi thiếu khoá · `/ready` 503 khi DB chết. `mvn verify`: 37 + 39 unit + **16 IT** (Testcontainers). |
 
 
 
