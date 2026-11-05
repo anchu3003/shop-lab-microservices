@@ -33,6 +33,15 @@ public enum ErrorCode {
   /** Không tìm thấy tài nguyên. */
   NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy tài nguyên"),
 
+  /**
+   * Dependency không tới được: service đích chết/timeout, hoặc không lấy được dữ liệu cần để phục
+   * vụ request (vd JWKS).
+   *
+   * <p>Phân biệt với {@link #INTERNAL_ERROR}: 503 = "lỗi tạm thời, thử lại được" — client/load
+   * balancer nên retry. Dùng 500 cho lỗi lập trình của chính service.
+   */
+  UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "Dịch vụ tạm thời không sẵn sàng"),
+
   /** Xung đột trạng thái (tạo trùng, version lệch...). */
   CONFLICT(HttpStatus.CONFLICT, "Xung đột dữ liệu"),
 
@@ -77,6 +86,12 @@ public enum ErrorCode {
     }
     if (status == HttpStatus.CONFLICT.value()) {
       return CONFLICT;
+    }
+    // 502/503/504 đều là "phía sau có vấn đề, thử lại được" → cùng một mã cho client dễ xử lý.
+    if (status == HttpStatus.BAD_GATEWAY.value()
+        || status == HttpStatus.SERVICE_UNAVAILABLE.value()
+        || status == HttpStatus.GATEWAY_TIMEOUT.value()) {
+      return UNAVAILABLE;
     }
     if (status >= 400 && status < 500) {
       return REQUEST_ERROR;

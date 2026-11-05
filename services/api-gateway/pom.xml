@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.shoplab</groupId>
+    <artifactId>shoplab-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>shoplab-api-gateway</artifactId>
+  <packaging>jar</packaging>
+
+  <name>ShopLab :: API Gateway</name>
+  <description>
+    Cửa vào duy nhất của ShopLab (SL-1.2): routing theo path prefix (config, không hard-code) · verify JWT RS256
+    bằng public key lấy từ JWKS của identity-service · giữ/propagate correlation id · error response thống nhất.
+    KHÔNG sở hữu business data (architecture.md §5) → không có DB, không có Flyway.
+  </description>
+
+  <!--
+    Vì sao KHÔNG có `spring-boot-starter-data-jpa` / Flyway / Testcontainers: gateway chỉ là proxy + verify token,
+    không có dữ liệu riêng. Thêm DB vào đây là sai ranh giới service (AGENTS.md §6: không share DB, và gateway
+    không sở hữu data nào).
+  -->
+  <dependencies>
+    <dependency>
+      <groupId>com.shoplab</groupId>
+      <artifactId>shoplab-service-commons</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!--
+      JWT/JWS + Nimbus JOSE (kèm theo): dùng để VERIFY chữ ký RS256 và parse JWKS.
+      Chọn artifact này (BOM quản lý) thay vì khai `com.nimbusds:nimbus-jose-jwt` trực tiếp vì Nimbus
+      không có trong BOM → khai trực tiếp là phải tự đoán/pin version (bài học từ SL-1.1).
+      Cố ý KHÔNG kéo `spring-boot-starter-security`: gateway tự viết filter mỏng (xem JwtAuthFilter).
+    -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-jose</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <!-- Không kế thừa spring-boot-starter-parent → phải bind goal tường minh. -->
+          <execution>
+            <id>repackage</id>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+          <!-- Sinh META-INF/build-info.properties → bean BuildProperties cho GET /version. -->
+          <execution>
+            <id>build-info</id>
+            <goals>
+              <goal>build-info</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>jacoco-prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>jacoco-report</id>
+            <phase>test</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+          <!--
+            Coverage gate ≥ 80% LINE cho các package "dễ sai và đắt nếu sai": config (fail-fast),
+            health (probe), auth (verify token + JWKS), routing (match + forward).
+          -->
+          <execution>
+            <id>jacoco-check</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+            <configuration>
+              <includes>
+                <include>com/shoplab/gateway/config/*</include>
+                <include>com/shoplab/gateway/health/*</include>
+                <include>com/shoplab/gateway/auth/*</include>
+                <include>com/shoplab/gateway/routing/*</include>
+              </includes>
+              <rules>
+                <rule>
+                  <element>BUNDLE</element>
+                  <limits>
+                    <limit>
+                      <counter>LINE</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>0.80</minimum>
+                    </limit>
+                  </limits>
+                </rule>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

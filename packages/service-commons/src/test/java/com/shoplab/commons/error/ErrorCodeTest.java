@@ -16,6 +16,9 @@ class ErrorCodeTest {
     assertThat(ErrorCode.fromHttpStatus(403)).isEqualTo(ErrorCode.FORBIDDEN);
     assertThat(ErrorCode.fromHttpStatus(404)).isEqualTo(ErrorCode.NOT_FOUND);
     assertThat(ErrorCode.fromHttpStatus(409)).isEqualTo(ErrorCode.CONFLICT);
+    assertThat(ErrorCode.fromHttpStatus(502)).isEqualTo(ErrorCode.UNAVAILABLE);
+    assertThat(ErrorCode.fromHttpStatus(503)).isEqualTo(ErrorCode.UNAVAILABLE);
+    assertThat(ErrorCode.fromHttpStatus(504)).isEqualTo(ErrorCode.UNAVAILABLE);
   }
 
   @Test
@@ -26,10 +29,9 @@ class ErrorCodeTest {
   }
 
   @Test
-  @DisplayName("5xx và status lạ → INTERNAL_ERROR")
+  @DisplayName("5xx và status lạ → INTERNAL_ERROR (trừ 502/503/504 = UNAVAILABLE)")
   void shouldFallBackToInternalError() {
     assertThat(ErrorCode.fromHttpStatus(500)).isEqualTo(ErrorCode.INTERNAL_ERROR);
-    assertThat(ErrorCode.fromHttpStatus(503)).isEqualTo(ErrorCode.INTERNAL_ERROR);
     assertThat(ErrorCode.fromHttpStatus(200)).isEqualTo(ErrorCode.INTERNAL_ERROR);
   }
 

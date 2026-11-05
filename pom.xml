@@ -29,6 +29,7 @@
     <module>packages/service-commons</module>
     <module>services/service-template</module>
     <module>services/identity-service</module>
+    <module>services/api-gateway</module>
   </modules>
 
   <properties>

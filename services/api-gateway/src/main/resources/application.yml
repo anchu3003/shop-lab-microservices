@@ -1,0 +1,69 @@
+# ==============================================================================
+# application.yml — cấu hình api-gateway (SL-1.2)
+#
+# 12-factor (AGENTS.md §6): giá trị phụ thuộc môi trường đọc từ env; file này chỉ giữ default
+# hợp lý cho máy dev. Bảng routing nằm ở đây — KHÔNG hard-code trong code.
+# ==============================================================================
+
+spring:
+  application:
+    name: api-gateway
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+shoplab:
+  env: ${APP_ENV:local}
+  debug-endpoints: ${SHOPLAB_DEBUG_ENDPOINTS:false}
+  git-commit: ${SHOPLAB_GIT_COMMIT:unknown}
+
+  # Readiness = TCP check tới identity (đúng cơ chế của template). Gateway không có DB nên không
+  # check DB. Host/port khai riêng (không suy ra từ URL) vì đây là cơ chế chung của commons.
+  readiness:
+    dependencies:
+      - name: identity-service
+        host: ${IDENTITY_SERVICE_HOST:localhost}
+        port: ${IDENTITY_SERVICE_PORT:8081}
+        timeout: 500ms
+
+  gateway:
+    # Path KHÔNG cần token. Mọi path khác bắt buộc token (kể cả /version).
+    public-paths:
+      - /v1/auth/**
+      - /.well-known/**
+      - /health
+      - /ready
+
+    jwt:
+      # Lấy JWKS qua mạng nội bộ, KHÔNG qua chính gateway (tránh phụ thuộc vòng).
+      jwks-uri: ${IDENTITY_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+      # Phải KHỚP `IDENTITY_JWT_ISSUER` của identity-service, nếu không mọi token đều bị 401.
+      issuer: ${IDENTITY_JWT_ISSUER:https://identity.shoplab.local}
+      jwks-cache-ttl: ${GATEWAY_JWKS_CACHE_TTL:5m}
+      # Khoảng cách tối thiểu giữa 2 lần nạp lại JWKS do gặp kid lạ (chặn dội).
+      min-refresh-interval: ${GATEWAY_JWKS_MIN_REFRESH_INTERVAL:10s}
+      clock-skew: ${GATEWAY_JWT_CLOCK_SKEW:30s}
+
+    # Timeout bắt buộc: không có timeout = service đích treo sẽ kéo sập gateway.
+    timeouts:
+      connect: ${GATEWAY_CONNECT_TIMEOUT:2s}
+      read: ${GATEWAY_READ_TIMEOUT:5s}
+
+    # Bảng route: prefix dài nhất thắng. Thêm service mới = thêm 1 dòng ở đây, không sửa code.
+    routes:
+      - path-prefix: /v1/auth
+        base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}
+      - path-prefix: /v1/users
+        base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}
+      # JWKS công bố qua gateway để client chỉ cần biết MỘT địa chỉ.
+      - path-prefix: /.well-known
+        base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}
+
+logging:
+  level:
+    root: INFO
+    com.shoplab: ${LOG_LEVEL:INFO}
+
