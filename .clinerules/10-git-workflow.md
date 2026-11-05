@@ -68,9 +68,14 @@ Script tự: kiểm PR mở/không draft → kiểm CI xanh → kiểm phần di
 comment tóm tắt → `gh pr merge --squash --delete-branch` → `git checkout main && git pull`.
 
 - Merge kiểu **squash** (1 commit sạch trên `main`) + **xoá nhánh feature** (cả remote).
+- ⚠️ **Bẫy `[skip ci]` lọt vào merge commit** (`SL-1.10`): mặc định `gh pr merge --squash` ghép *title PR + subject của
+  các commit trong PR* → `[skip ci]` của commit docs nằm luôn trong message của merge commit ⇒ **push lên `main` bị
+  skip** (mất luôn lần kiểm chứng `main`). `tools/merge-pr.sh` xử lý bằng cách truyền tường minh
+  `--subject`/`--body` và lọc sạch token skip khỏi body.
 - Merge xong **bắt buộc kiểm** `main` thật sự có nội dung mới (`git show <merge-sha> --stat` hoặc `grep` file
   quan trọng) — bài học `SL-1.1`: commit cuối push race với lúc merge ⇒ mất nội dung khỏi `main`.
 - Merge vào `main` sẽ **có** run CI trên `main` (đúng: `main` phải được kiểm chứng) — khác với docs-only push.
+  Nếu **không** thấy run: kiểm `git log -1 --format=%B <merge-sha> | grep -c 'skip ci'` (xem bẫy trên).
 - Ticket chỉ được coi là `Done` khi commit đóng ticket **đã có trên `main`**.
 
 ## An toàn

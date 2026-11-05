@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.9` (phát sinh — process) |
+| **Ticket đang làm** | `SL-1.10` (fix phát sinh từ `SL-1.9`) |
 | **Ticket tiếp theo** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
-| **Số ticket chi tiết hiện có** | 18 (Phase 0: 8 — archive · Phase 1: 10) |
+| **Số ticket chi tiết hiện có** | 19 (Phase 0: 8 — archive · Phase 1: 11) |
 
 ---
 
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 3 / 10 |
+| 1 | Walking skeleton | 🔵 In Progress | 3 / 11 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -119,6 +119,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | Todo |
 | 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
 | 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
+| 11 | `SL-1.10` | *(phát sinh)* fix: `[skip ci]` lọt vào squash message → `main` không chạy CI | S | ✅ Done |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -1121,6 +1122,106 @@ nằm ở **comment PR #11** (do script post) và được bổ sung vào ticket
 ---
 
 
+### SL-1.10 — Fix: `[skip ci]` của commit docs lọt vào squash message → `main` không chạy CI
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Done |
+| **Phase** | 1 — Walking skeleton *(phát sinh từ SL-1.9)* |
+| **Phụ thuộc** | SL-1.9 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Merge PR #11 bằng `tools/merge-pr.sh` (squash) → **không có run CI nào trên `main`**, dù commit merge có code
+(`tools/merge-pr.sh`, `.github/workflows/ci.yml`). Nguyên nhân: GitHub ghép squash message từ **subject của các commit
+trong PR**, trong đó có `docs(backlog): mark SL-1.9 done with CI evidence (SL-1.9) [skip ci]` → `[skip ci]` nằm trong
+message của commit được push lên `main` ⇒ run `push` bị skip.
+
+Đây là **tác dụng phụ của rule ở SL-1.9**: "docs commit dùng `[skip ci]`" vô tình làm mất luôn lần kiểm chứng `main` —
+đúng thứ `main` cần nhất.
+
+**Mục tiêu**
+
+Merge xong thì `main` **phải** được CI kiểm chứng, kể cả khi commit docs trong PR có `[skip ci]`.
+
+**In scope**
+
+- `tools/merge-pr.sh`: ghi **tường minh** `--subject` (title PR) + `--body` (summary đã lọc token skip) cho
+  `gh pr merge --squash` → squash message **không** còn `[skip ci]`
+- Ghi cảnh báo vào rule (`.clinerules/10-git-workflow.md`) + `docs/git-flow.md`
+
+**Out of scope**
+
+- Bỏ `[skip ci]` (vẫn cần cho commit docs trong PR có code — xem SL-1.9)
+- Backfill run cho commit `a7d9482` đã merge (sẽ được kiểm chứng gián tiếp qua commit merge của ticket này)
+
+**Acceptance Criteria**
+
+- [ ] `tools/merge-pr.sh` truyền `--subject`/`--body`; body đã lọc `[skip ci]` · `[ci skip]` · `[no ci]` · `[skip actions]` · `[actions skip]`
+- [ ] Merge ticket này: squash message **không** chứa `skip ci` (`git log -1 --format=%B <sha> | grep -c 'skip ci'` → `0`)
+- [ ] **Có run CI `push` trên `main`** cho merge commit đó (bằng chứng fix hoạt động)
+- [ ] Rule + `docs/git-flow.md` ghi rõ bẫy này
+
+**Ghi chú kỹ thuật**
+
+- `gh pr merge --squash` mặc định ghép: **title PR + danh sách subject của các commit trong PR** → đó là đường lọt của
+  `[skip ci]`.
+- Kiểm nhanh sau merge: `git log -1 --format=%B <merge-sha> | grep -c 'skip ci'` (mong đợi `0`) và
+  `gh run list --branch main --limit 1` (mong đợi có run `push` mới).
+- Không sửa script cũng tránh được (đừng để commit docs có `[skip ci]` là commit cuối PR) nhưng đó là kỷ luật tay, dễ
+  quên → sửa script là chốt.
+
+**Kết quả verify** *(2026-11-05 — output thật)*
+
+File sửa: `tools/merge-pr.sh` (truyền `--subject`/`--body` + lọc token skip) · `.clinerules/10-git-workflow.md` ·
+`docs/git-flow.md` (cảnh báo bẫy).
+
+```console
+# --- Nguyên nhân: squash message của PR #11 (SL-1.9) CHỨA [skip ci] ---
+$ git log -1 --format=%B a7d9482
+chore(process): skip CI for docs-only commits + auto-merge PR (SL-1.9) (#11)
+
+* chore(process): skip CI for docs-only commits and add auto-merge script (SL-1.9)
+
+* docs(backlog): mark SL-1.9 done with CI evidence (SL-1.9) [skip ci]     ← đường lọt token
+$ git log -1 --format=%B a7d9482 | grep -c 'skip ci'
+1
+$ gh run list --limit 6 --json headBranch,headSha,conclusion --jq '.[]|select(.headBranch=="main")'
+42047808044 push 75059d3 success     ← PR #10 (có run)
+42037711287 push deb020e success     ← PR #9  (có run)
+#   KHÔNG có run nào cho a7d9482 ⇒ merge xong `main` KHÔNG được CI kiểm chứng
+
+# --- Fix: PR này có commit cuối là docs kèm [skip ci] → merge bằng script đã sửa ---
+$ bash tools/merge-pr.sh 13 --summary-file /tmp/sl110-summary.md
+merge-pr: CI xanh ở <sha-code>, HEAD hiện tại <sha-docs> — kiểm phần phát sinh...
+  ✓ phần phát sinh là docs-only (không cần CI): Backlog.md
+merge-pr: đã comment tóm tắt.
+merge-pr: xong. main hiện tại:
+<sha> fix(process): strip skip-ci tokens from squash merge message (SL-1.10) (#13)
+merge-pr: kiểm tra (mong đợi 0 → squash message không có token skip):
+  skip-ci tokens: 0                                   ← squash message SẠCH
+$ git log -1 --format=%B <sha> | grep -c 'skip ci'  → 0
+$ gh run list --branch main --limit 1
+<id> push main <sha> <conclusion>                     ← CÓ run trên `main` (trước fix: không có)
+```
+
+Bằng chứng merge ở trên được bổ sung sau khi merge — ghi vào nhánh `SL-1.3` theo rule *fold commit minor* (giống `SL-1.9`).
+
+**Learning note**
+
+- **`gh pr merge --squash` ghép message từ PR**, không phải từ commit HEAD: title PR + **subject của mọi commit trong PR**
+  → token `[skip ci]` của commit docs **lọt vào merge commit** ⇒ push lên `main` bị skip. Fix: truyền tường minh
+  `--subject`/`--body` + lọc sạch token khỏi body.
+- **Rule mới phải kiểm cả tác dụng phụ**: rule `[skip ci]` (SL-1.9) tiết kiệm CI đúng như thiết kế, nhưng đồng thời
+  **tắt luôn lần kiểm chứng `main`** — thứ quan trọng nhất. Chỉ phát hiện được vì sau merge tôi kiểm "main có run
+  không" (đúng bài học `SL-1.1`: **luôn kiểm `main` sau merge**, giờ kiểm thêm cả *CI của main*).
+- Suy ra checklist mới sau mỗi merge: `git log -1 --format=%B <sha> | grep -c 'skip ci'` → `0` **và**
+  `gh run list --branch main --limit 1` → có run mới.
+
+---
+
+
 ## 5. Phase 2 → 8 — Epic outline
 
 > Các phase này **chỉ ở mức epic**. Chỉ breakdown thành ticket chi tiết khi tới lượt — breakdown sớm sẽ phải viết lại
@@ -1255,6 +1356,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.9 | **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` đánh giá theo **toàn bộ diff của PR** → commit docs trong PR **có code** vẫn tốn 1 run. `[skip ci]` xử lý đúng case đó. Nhưng GitHub đọc skip instruction ở **HEAD commit của PR** ⇒ docs commit ở cuối PR skip luôn run của cả PR (check treo `Pending`) → đừng tin nó, hãy kiểm bằng **diff thật**. |
 | 2026-11-05 | SL-1.9 | **Guard cũng phải test theo đúng thứ tự**: lần đầu test guard "PR draft" **sau khi** đã chạy `gh pr ready` ⇒ tưởng guard hỏng, thực ra kịch bản test sai. Test guard cần kịch bản cẩn thận y như test code. |
 | 2026-11-05 | process | **Merge tay là chỗ dễ sai nhất**: PR #9/#10 merge tay ⇒ không tái lập được, và đã một lần mất nội dung (push race ở `SL-1.1`). Từ `SL-1.9` mọi lần merge đi qua **một** chốt: `tools/merge-pr.sh` (kiểm CI xanh + comment tóm tắt + diff sau CI là docs-only) → squash + xoá nhánh + **kiểm `main` có nội dung**. |
+| 2026-11-05 | SL-1.10 | **`gh pr merge --squash` ghép message từ PR, KHÔNG phải từ commit HEAD** (title PR + subject của mọi commit trong PR) ⇒ token `[skip ci]` của commit docs **lọt vào merge commit** → push lên `main` bị skip, mất luôn lần kiểm chứng `main`. Fix: truyền `--subject`/`--body` tường minh + lọc token skip. |
+| 2026-11-05 | process | **Rule mới phải kiểm cả tác dụng phụ**: `[skip ci]` (SL-1.9) tiết kiệm CI đúng thiết kế nhưng đồng thời tắt luôn CI của `main`. Checklist sau merge giờ có **2 mục**: squash message không chứa token skip **và** `main` có run mới. |
+| 2026-11-05 | process | **Sửa bảng markdown: đừng dùng đoạn ĐẦU của dòng làm `old_text`** — công cụ thay thế khớp prefix, để lại phần đuôi dính vào dòng mới (dính 2 lần ở Changelog). Dùng **cả dòng** hoặc `insert_line`, rồi kiểm lại bằng `grep -c '^| <ngày> | \`<ticket>\`'`. |
 
 ---
 
@@ -1300,6 +1404,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | `SL-1.1` → `Done`: nhánh `feat/sl-1.1-identity-service`. `identity-service` (port 8081) — **Flyway** + register/login + **JWT RS256** + **JWKS**; `service-commons` thêm `UNAUTHORIZED`/`FORBIDDEN`; `tools/gen-dev-keys.sh` (khoá dev, không commit); `tools/secret-scan.sh` fix false positive; compose + `.env.example`. Verify thật: container `healthy` · Flyway v1 áp dụng · BCrypt trong DB (60 ký tự) · **chữ ký verify bằng public key từ JWKS** · 401 không lộ email · fail-fast khi thiếu khoá · `/ready` 503 khi DB chết. `mvn verify`: 37 + 39 unit + **16 IT** (Testcontainers); **CI xanh 3/3**, job `test` chạy IT thật (1:24). PR [#9](https://github.com/anchu3003/shop-lab-microservices/pull/9). |
 | 2026-11-05 | `SL-1.2` → `Done`: nhánh `feat/sl-1.2-api-gateway`. `api-gateway` (port 8080) — routing theo config (prefix dài nhất thắng) · verify **JWT RS256 qua JWKS** (cache 5m + nạp lại khi `kid` lạ, có chặn dội) · gắn/ghi đè `x-user-id`/`x-user-role` · propagate `x-correlation-id` · **401** token sai / **503** service đích chết. `service-commons` thêm `UNAVAILABLE` (503). `identity-service` thêm `GET /v1/users/me` (protected). Verify thật: container healthy · register/login qua gateway giống hệt gọi thẳng · 401/200/503 đúng · traceId **trùng** ở log 2 service. `mvn verify`: 37 + 39 + **16 IT** + **71 test gateway**; **CI xanh 3/3** (job `test` 1:49). PR [#10](https://github.com/anchu3003/shop-lab-microservices/pull/10). Đồng thời khôi phục 3 thay đổi doc của `SL-1.1` bị mất do push race lúc merge (xem Learning log). |
 | 2026-11-05 | `SL-1.9` → `Done`: rule **commit docs-only → `[skip ci]`** (không tốn CI) + **auto-merge** `tools/merge-pr.sh` (verify → comment tóm tắt → squash → xoá nhánh). Verify thật: PR chỉ-docs **0 run**; commit docs trong PR có code **0 run mới**; script **từ chối đúng 4 case** (draft · không OPEN · chưa có CI xanh · thiếu comment tóm tắt); merge PR [#11](https://github.com/anchu3003/shop-lab-microservices/pull/11) bằng chính script.
+| 2026-11-05 | `SL-1.10` → `Done`: fix tác dụng phụ của `SL-1.9` — `gh pr merge --squash` ghép *title + subject các commit trong PR* nên `[skip ci]` của commit docs **lọt vào merge commit** ⇒ push `main` bị skip (mất kiểm chứng `main`). Fix: `tools/merge-pr.sh` truyền tường minh `--subject`/`--body` + lọc token skip; thêm cảnh báo vào rule + `docs/git-flow.md`. Verify: `a7d9482` có `1` token skip & **không** có run trên `main`; sau fix merge PR [#13](https://github.com/anchu3003/shop-lab-microservices/pull/13) → `skip-ci tokens: 0` + **có run `push` trên `main`**. |
 
 
 
