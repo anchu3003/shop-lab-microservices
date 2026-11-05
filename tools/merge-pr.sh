@@ -58,6 +58,11 @@ read -r state is_draft branch head_sha mergeable pr_url < <(
 read -r conclusion verified_sha < <(
   gh run list --branch "$branch" --limit 1 --json conclusion,headSha --jq '.[0] | "\(.conclusion) \(.headSha)"'
 )
+# `.[0]` trên mảng rỗng trả `null` → nói rõ "chưa có run" thay vì in 'null' (dễ bị hiểu là lỗi lạ).
+if [ -z "$conclusion" ] || [ "$conclusion" = "null" ]; then
+  echo "merge-pr: nhánh '$branch' chưa có run CI nào (cần ít nhất 1 run 'success'). Không merge." >&2
+  exit 1
+fi
 if [ "$conclusion" != "success" ]; then
   echo "merge-pr: run CI mới nhất của '$branch' là '$conclusion' (cần 'success'). Không merge." >&2
   exit 1
@@ -101,5 +106,7 @@ gh pr merge "$pr" --squash --delete-branch --subject "$pr_title" --body "$saniti
 git checkout -q main && git pull -q --ff-only
 echo "merge-pr: xong. main hiện tại:"
 git --no-pager log --oneline -1
-echo "merge-pr: kiểm tra (mong đợi 0 → squash message không có token skip):"
-echo "  skip-ci tokens: $(git log -1 --format=%B | grep -c 'skip ci')"
+# Chỉ đếm TOKEN đúng chuẩn GitHub (`[skip ci]` …). Đếm substring 'skip ci' sẽ báo sai khi body có câu ví dụ
+# (đã gặp ở SL-1.10: in `skip-ci tokens: 1` trong khi run trên `main` vẫn chạy bình thường).
+skip_tokens="$(git log -1 --format=%B | grep -cE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]' || true)"
+echo "merge-pr: token skip trong merge message: $skip_tokens (mong đợi 0 → push lên 'main' sẽ chạy CI)"

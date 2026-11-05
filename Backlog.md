@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.10` (fix phát sinh từ `SL-1.9`) |
+| **Ticket đang làm** | `SL-1.11` (fix phát sinh từ `SL-1.9`/`SL-1.10`) |
 | **Ticket tiếp theo** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
-| **Số ticket chi tiết hiện có** | 19 (Phase 0: 8 — archive · Phase 1: 11) |
+| **Số ticket chi tiết hiện có** | 20 (Phase 0: 8 — archive · Phase 1: 12) |
 
 ---
 
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 3 / 11 |
+| 1 | Walking skeleton | 🔵 In Progress | 3 / 12 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -120,6 +120,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
 | 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
 | 11 | `SL-1.10` | *(phát sinh)* fix: `[skip ci]` lọt vào squash message → `main` không chạy CI | S | ✅ Done |
+| 12 | `SL-1.11` | *(phát sinh)* fix: message chẩn đoán của `merge-pr.sh` gây hiểu nhầm | S | ✅ Done |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -1102,8 +1103,28 @@ merge-pr: PR #11 (chore/sl-1.9-process-skip-ci-auto-merge) — CI xanh tại <sh
 merge-pr: --dry-run → không comment, không merge.
 ```
 
-**Merge thật bằng script** (comment tóm tắt + squash + xoá nhánh + kiểm `main`) chạy **sau** commit này — output đầy đủ
-nằm ở **comment PR #11** (do script post) và được bổ sung vào ticket trong nhánh `SL-1.3` theo rule *fold commit minor*.
+**Merge thật bằng script** *(bổ sung sau merge — fold vào nhánh `SL-1.11` theo rule commit minor)*:
+
+```console
+$ bash tools/merge-pr.sh 11 --summary-file /tmp/sl19-summary.md
+merge-pr: CI xanh ở <sha-code>, HEAD hiện tại <sha-docs> — kiểm phần phát sinh...
+  ✓ phần phát sinh là docs-only (không cần CI): Backlog.md
+merge-pr: đã comment tóm tắt.
+Updating 75059d3..a7d9482   main -> origin/main   (Fast-forward)
+ 8 files changed, 338 insertions(+), 7 deletions(-)
+ create mode 100644 tools/merge-pr.sh
+merge-pr: xong. main hiện tại:
+a7d9482 chore(process): skip CI for docs-only commits + auto-merge PR (SL-1.9) (#11)
+
+$ gh pr view 11 --json state,mergeCommit → MERGED · a7d94822ca15f8d96c7edc60eb9cf3881dc89ed8
+$ gh pr view 11 --json comments --jq '.comments[-1].body' | head -3
+## Tóm tắt verify (SL-1.9)          ← script đã post comment tóm tắt
+$ git ls-remote --heads origin → chỉ còn `main`   ← nhánh feature đã xoá
+$ ls tools/merge-pr.sh ; grep -c 'SL-1.9` → `Done' Backlog.md → 1   ← main có nội dung thật
+
+# NHƯNG: `main` KHÔNG có run CI nào cho a7d9482 → phát hiện lỗi `[skip ci]` lọt vào merge commit
+#        (xử lý ngay trong SL-1.10, không để lại)
+```
 
 **Learning note**
 
@@ -1206,7 +1227,25 @@ $ gh run list --branch main --limit 1
 <id> push main <sha> <conclusion>                     ← CÓ run trên `main` (trước fix: không có)
 ```
 
-Bằng chứng merge ở trên được bổ sung sau khi merge — ghi vào nhánh `SL-1.3` theo rule *fold commit minor* (giống `SL-1.9`).
+Bằng chứng merge *(bổ sung sau merge — fold vào nhánh `SL-1.11` theo rule commit minor)*:
+
+```console
+$ bash tools/merge-pr.sh 13 --summary-file /tmp/sl110-summary.md
+merge-pr: CI xanh ở <sha-code>, HEAD hiện tại <sha-docs> — kiểm phần phát sinh...
+  ✓ phần phát sinh là docs-only (không cần CI): Backlog.md
+merge-pr: đã comment tóm tắt.
+Updating a7d9482..741591c  main -> origin/main   (Fast-forward)
+ 4 files changed, 132 insertions(+), 4 deletions(-)
+merge-pr: xong. main hiện tại:
+741591c fix(process): strip skip-ci tokens from squash merge message (SL-1.10)
+merge-pr: token skip trong merge message: 1        ← DÒNG NÀY BÁO SAI (đếm substring) — fix ở SL-1.11
+$ gh run list --branch main --limit 1
+42052854394 push 741591c completed/success         ← CÓ run trên `main` ⇒ fix HOẠT ĐỘNG
+$ gh run view 42052854394 --json jobs --jq '.jobs[]|"\(.name) -> \(.conclusion)"'
+lint (checkstyle + spotless)   -> success
+test (unit + jacoco gate)      -> success
+build-image (service-template) -> success
+```
 
 **Learning note**
 
@@ -1218,6 +1257,91 @@ Bằng chứng merge ở trên được bổ sung sau khi merge — ghi vào nh�
   không" (đúng bài học `SL-1.1`: **luôn kiểm `main` sau merge**, giờ kiểm thêm cả *CI của main*).
 - Suy ra checklist mới sau mỗi merge: `git log -1 --format=%B <sha> | grep -c 'skip ci'` → `0` **và**
   `gh run list --branch main --limit 1` → có run mới.
+
+---
+
+
+### SL-1.11 — Fix: message chẩn đoán của `tools/merge-pr.sh` gây hiểu nhầm
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Done |
+| **Phase** | 1 — Walking skeleton *(phát sinh từ SL-1.9/SL-1.10)* |
+| **Phụ thuộc** | SL-1.10 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Hai dòng chẩn đoán của `tools/merge-pr.sh` báo sai/khó hiểu — và **đã gây nhầm ngay trong lúc verify**:
+
+1. Nhánh **chưa có run CI nào** → in `conclusion='null'` (jq trả `null` cho mảng rỗng). Logic từ chối đúng, nhưng đọc
+   không hiểu gì.
+2. Sau merge, dòng `skip-ci tokens: N` đếm **substring** `skip ci`, nên in `1` khi body chỉ chứa **câu ví dụ**
+   `` `grep -c 'skip ci'` `` — trông như merge bị skip, trong khi run trên `main` vẫn chạy bình thường (GitHub chỉ hiểu
+   token dạng `[skip ci]`).
+
+Tín hiệu sai nguy hiểm hơn không có tín hiệu: lần sau sẽ có người "sửa" thứ không hỏng.
+
+**Mục tiêu**
+
+Message chẩn đoán phản ánh đúng thực tế: nói rõ "chưa có run", và chỉ đếm **token skip đúng chuẩn GitHub**.
+
+**In scope**
+
+- `tools/merge-pr.sh`: nhánh chưa có run → message riêng; đếm token skip bằng regex
+  `\[(skip ci|ci skip|no ci|skip actions|actions skip)\]`
+
+**Out of scope**
+
+- Đổi logic verify/merge (đang đúng)
+- Tự động kiểm "main có run mới" sau merge (run xuất hiện trễ vài giây → giữ ở checklist tay trong rule)
+
+**Acceptance Criteria**
+
+- [ ] `bash tools/merge-pr.sh <PR nhánh chưa có run> --dry-run` → message nói rõ "chưa có run CI nào", **không** in `'null'`
+- [ ] Sau merge: dòng token skip in `0` dù body có câu ví dụ chứa `'skip ci'`
+- [ ] `bash -n` sạch · merge ticket này qua chính script
+
+**Ghi chú kỹ thuật**
+
+- `grep -c` trả exit `1` khi không khớp → cần `|| true` để không vỡ `set -euo pipefail`.
+- Token skip hợp lệ (docs GitHub): `[skip ci]` · `[ci skip]` · `[no ci]` · `[skip actions]` · `[actions skip]` ·
+  trailer `skip-checks: true`.
+
+**Kết quả verify** *(2026-11-05 — output thật)*
+
+```console
+$ bash -n tools/merge-pr.sh
+(im lặng) → OK
+
+# --- AC: nhánh CHƯA có run CI → message nói rõ (trước đây in 'null') ---
+#   (nhánh tạm chỉ-docs → `paths-ignore` bỏ run: cũng xác nhận lại "PR chỉ-docs = 0 run")
+$ gh run list --branch chore/tmp-diagnostic-test --limit 3 --json databaseId
+(rỗng)
+$ bash tools/merge-pr.sh 15 --summary-file /tmp/sl111-pr-body.md --dry-run      # bản ĐÃ fix
+merge-pr: nhánh 'chore/tmp-diagnostic-test' chưa có run CI nào (cần ít nhất 1 run 'success'). Không merge.
+exit=1
+$ gh pr close 15 --delete-branch
+✓ Deleted branch chore/tmp-diagnostic-test
+
+# --- AC: đếm TOKEN skip đúng chuẩn, không đếm substring ---
+#   Merge commit của SL-1.10 có câu ví dụ chứa 'skip ci' trong body → cách đếm cũ in 1 (SAI),
+#   cách đếm mới phải in 0:
+$ git log -1 --format=%B 741591c | grep -c 'skip ci'                                  # cách CŨ (substring)
+1
+$ git log -1 --format=%B 741591c | grep -cE '\[(skip ci|ci skip|no ci|skip actions|actions skip)\]'   # cách MỚI
+0
+```
+
+**Learning note**
+
+- **Tín hiệu sai còn tệ hơn không có tín hiệu**: dòng `skip-ci tokens: 1` (đếm substring) đã làm tôi tưởng fix của
+  `SL-1.10` không chạy, tốn một vòng kiểm tra lại — trong khi `gh run list --branch main` mới là bằng chứng thật.
+  Công cụ tự động hoá phải in ra thứ **đúng định nghĩa** của nó, không phải "gần đúng".
+- **Đừng so khớp theo substring cho thứ có cú pháp riêng** (token skip, mã lỗi, version): dùng regex đúng chuẩn, nếu
+  không sẽ vừa bỏ sót vừa báo nhầm.
+- **Chạy script từ đúng working tree**: hai lần tôi test guard bằng bản script ở nhánh khác (`main` chưa có fix) → ra
+  kết quả cũ rồi tưởng guard sai. Kiểm `git branch --show-current` trước khi kết luận.
 
 ---
 
@@ -1359,6 +1483,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.10 | **`gh pr merge --squash` ghép message từ PR, KHÔNG phải từ commit HEAD** (title PR + subject của mọi commit trong PR) ⇒ token `[skip ci]` của commit docs **lọt vào merge commit** → push lên `main` bị skip, mất luôn lần kiểm chứng `main`. Fix: truyền `--subject`/`--body` tường minh + lọc token skip. |
 | 2026-11-05 | process | **Rule mới phải kiểm cả tác dụng phụ**: `[skip ci]` (SL-1.9) tiết kiệm CI đúng thiết kế nhưng đồng thời tắt luôn CI của `main`. Checklist sau merge giờ có **2 mục**: squash message không chứa token skip **và** `main` có run mới. |
 | 2026-11-05 | process | **Sửa bảng markdown: đừng dùng đoạn ĐẦU của dòng làm `old_text`** — công cụ thay thế khớp prefix, để lại phần đuôi dính vào dòng mới (dính 2 lần ở Changelog). Dùng **cả dòng** hoặc `insert_line`, rồi kiểm lại bằng `grep -c '^| <ngày> | \`<ticket>\`'`. |
+| 2026-11-05 | SL-1.11 | **Tín hiệu sai tệ hơn không có tín hiệu**: dòng chẩn đoán đếm substring `skip ci` in `1` khi body chỉ chứa **câu ví dụ** → tôi tưởng fix `SL-1.10` hỏng, tốn 1 vòng kiểm. Công cụ phải in đúng **định nghĩa** (token `[skip ci]`), và bằng chứng thật là `gh run list --branch main`. |
+| 2026-11-05 | process | **Chạy script/test từ đúng working tree**: 2 lần test guard bằng bản script ở nhánh khác (chưa có fix) → kết quả cũ, lại tưởng guard sai. Kiểm `git branch --show-current` trước khi kết luận. |
+| 2026-11-05 | process | **Đừng dùng backtick trong `--body` của `gh` khi gõ trực tiếp**: shell thực thi phần trong backtick (`tools/merge-pr.sh` → `Permission denied`, `null: command not found`) và **body PR bị hỏng**. Luôn dùng `--body-file` với heredoc (`<<'EOF'`). |
 
 ---
 
@@ -1395,6 +1522,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | `SL-0.5`: **sửa lỗi thiết kế `concurrency`** — gom push+PR chung group làm run PR huỷ run push, để lại check `cancelled` trên commit; đổi sang `group: ${{ github.workflow }}-${{ github.ref }}`. Cập nhật `README.md` + ticket + learning log. |
 | 2026-11-03 | Merge PR [#5](https://github.com/anchu3003/shop-lab-microservices/pull/5) bằng **squash** (`60e8afe`). Run trên `main` xanh: 3/3 job, 2m13s → badge CI `passing`. |
 | 2026-11-03 | Đóng `SL-0.5` → `Done`: **6/6 AC** đạt. **Phase 0 → 8 / 8 ✅ Done** — điều kiện hoàn thành phase đã đủ: `docker compose up` infra `healthy` · service template `/health` 200 · CI xanh · `architecture.md` §11 không còn chữ "cần chốt". Việc tiếp theo: breakdown **Phase 1** (epic → ticket chi tiết). |
+| 2026-11-05 | `SL-1.11` → `Done`: fix 2 dòng chẩn đoán gây hiểu nhầm của `tools/merge-pr.sh` (nhánh chưa có run → nói rõ thay vì in `'null'`; đếm token skip bằng regex `\[(skip ci|…)\]` thay vì substring). Verify: message mới trên nhánh tạm (`exit=1`); `grep -c 'skip ci'` = **1** (cách cũ, SAI) vs `grep -cE '\[(skip ci|…)\]'` = **0** (cách mới). PR [#14](https://github.com/anchu3003/shop-lab-microservices/pull/14). Kèm fold bằng chứng merge của `SL-1.9` + `SL-1.10`. |
+
 | 2026-11-03 | **Tách archive**: chuyển toàn bộ Phase 0 (8 ticket + bối cảnh/AC/quyết định/verify/learning note) sang [`Backlog-phase-0.md`](Backlog-phase-0.md); `Backlog.md` còn **260 dòng** (bảng phase · convention · pointer + bảng archive · epic Phase 1–8 · Learning log · Changelog). Cập nhật tham chiếu ở `README.md`, `architecture.md`, ADR-0001…0004, `.clinerules/00-context.md`, `AGENTS.md` §1/§6. |
 | 2026-11-03 | **Sửa rule git**: commit minor (đóng ticket / update backlog / sửa doc / tách archive) **không** tạo nhánh + PR riêng — gộp vào nhánh của **ticket kế tiếp**; chỉ tách PR riêng khi hết ticket kế tiếp. Ghi vào `AGENTS.md` §6 · `.clinerules/10-git-workflow.md` · `docs/git-flow.md` · workflow `/close-ticket.md` (bước 8–9). |
 | 2026-11-03 | Chốt **ADR-[0005](docs/adr/0005-phase-snapshot-and-release.md)** + dựng `docs/phases/` ([index](docs/phases/README.md) + [`phase-0.md`](docs/phases/phase-0.md)): tag `phase-N` + **GitHub Release** + doc snapshot, **không** dùng release branch ("lazy D"). `AGENTS.md` §5 thêm **DoD của một phase**; `/close-ticket.md` thêm bước 8 & 10 (tách archive, tag/release sau merge). |
