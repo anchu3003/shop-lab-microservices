@@ -179,9 +179,19 @@ class IdentityServiceApplicationIT {
   }
 
   @Test
-  @DisplayName("path không tồn tại → 404 với body thống nhất, KHÔNG bị biến thành 500")
+  @DisplayName(
+      "path không tồn tại: KHÔNG token → 401; CÓ token → 404 body thống nhất (không thành 500)")
   void unknownPathShouldReturnUnifiedNotFoundBody() throws Exception {
-    HttpResponse<String> response = get("/khong-ton-tai", null);
+    // Không token: security chặn TRƯỚC khi biết route có tồn tại hay không ⇒ 401, không phải 404.
+    // Đây là hành vi có chủ ý (không cho người lạ dò danh sách route) — thay đổi từ SL-1.4.
+    HttpResponse<String> anonymous = get("/khong-ton-tai", null);
+    assertThat(anonymous.statusCode()).isEqualTo(401);
+    assertThat(anonymous.body()).contains("\"code\":\"UNAUTHORIZED\"");
+
+    // Có token: qua security rồi mới 404 → body lỗi thống nhất.
+    Map<String, Object> session = loginNewUser(uniqueEmail(), "matkhau123");
+    HttpResponse<String> response =
+        getWithToken("/khong-ton-tai", (String) session.get("accessToken"));
 
     assertThat(response.statusCode()).isEqualTo(404);
     assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"").contains("\"traceId\"");
@@ -345,5 +355,130 @@ class IdentityServiceApplicationIT {
     Map<String, Object> key = keys.get(0);
     assertThat(key).containsEntry("kty", "RSA").containsEntry("kid", jwtService.keyId());
     assertThat(key).containsKeys("n", "e").doesNotContainKey("d");
+  }
+
+  // ---------------------------------------------------------------------------
+  // SL-1.4 — refresh token (rotation + reuse detection), RBAC, 401/403 dạng ApiError
+  // ---------------------------------------------------------------------------
+
+  private HttpResponse<String> getWithToken(String path, String token) throws Exception {
+    return httpClient.send(
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+            .timeout(Duration.ofSeconds(10))
+            .header("Authorization", "Bearer " + token)
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  /** Đăng ký + đăng nhập user mới; trả body login ({@code accessToken} + {@code refreshToken}). */
+  private Map<String, Object> loginNewUser(String email, String password) throws Exception {
+    post("/v1/auth/register", registerBody(email, password));
+    HttpResponse<String> login =
+        post("/v1/auth/login", Map.of("email", email, "password", password));
+    assertThat(login.statusCode()).isEqualTo(200);
+    return objectMapper.readValue(login.body(), Map.class);
+  }
+
+  @Test
+  @DisplayName("SL-1.4: /v1/users/me lấy danh tính từ TOKEN (không cần header của gateway)")
+  void meShouldReturnIdentityFromToken() throws Exception {
+    Map<String, Object> session = loginNewUser(uniqueEmail(), "matkhau123");
+
+    HttpResponse<String> response =
+        getWithToken("/v1/users/me", (String) session.get("accessToken"));
+
+    assertThat(response.statusCode()).isEqualTo(200);
+    assertThat(response.body()).contains("\"role\":\"BUYER\"");
+  }
+
+  @Test
+  @DisplayName("SL-1.4: thiếu/sai token → 401 dạng ApiError (JSON, có traceId — không phải HTML)")
+  void missingOrBadTokenShouldReturnApiError() throws Exception {
+    HttpResponse<String> missing = get("/v1/users/me", null);
+    assertThat(missing.statusCode()).isEqualTo(401);
+    assertThat(missing.body()).contains("\"code\":\"UNAUTHORIZED\"").contains("\"traceId\"");
+
+    HttpResponse<String> garbage = getWithToken("/v1/users/me", "khong-phai-jwt");
+    assertThat(garbage.statusCode()).isEqualTo(401);
+    assertThat(garbage.body()).contains("\"code\":\"UNAUTHORIZED\"");
+  }
+
+  @Test
+  @DisplayName(
+      "SL-1.4: refresh → cặp token MỚI dùng được; dùng lại token cũ → 401 và cả chuỗi bị thu hồi")
+  void refreshShouldRotateAndDetectReuse() throws Exception {
+    Map<String, Object> session = loginNewUser(uniqueEmail(), "matkhau123");
+    String refresh1 = (String) session.get("refreshToken");
+
+    HttpResponse<String> refreshed = post("/v1/auth/refresh", Map.of("refreshToken", refresh1));
+    assertThat(refreshed.statusCode()).isEqualTo(200);
+    Map<String, Object> rotated = objectMapper.readValue(refreshed.body(), Map.class);
+    String refresh2 = (String) rotated.get("refreshToken");
+    assertThat(refresh2).isNotEqualTo(refresh1);
+
+    // Access token mới phải dùng được ngay.
+    assertThat(getWithToken("/v1/users/me", (String) rotated.get("accessToken")).statusCode())
+        .isEqualTo(200);
+
+    // Dùng LẠI token đã rotate ⇒ 401 (phát hiện bị đánh cắp) ...
+    HttpResponse<String> reuse = post("/v1/auth/refresh", Map.of("refreshToken", refresh1));
+    assertThat(reuse.statusCode()).isEqualTo(401);
+    assertThat(reuse.body()).contains("\"code\":\"UNAUTHORIZED\"");
+
+    // ... và cả chuỗi bị thu hồi: token mới nhất cũng chết.
+    assertThat(post("/v1/auth/refresh", Map.of("refreshToken", refresh2)).statusCode())
+        .isEqualTo(401);
+  }
+
+  @Test
+  @DisplayName("SL-1.4: DB chỉ lưu HASH của refresh token — không thấy token thật")
+  void refreshTokenShouldBeStoredAsHash() throws Exception {
+    String email = uniqueEmail();
+    Map<String, Object> session = loginNewUser(email, "matkhau123");
+    String rawRefresh = (String) session.get("refreshToken");
+
+    var hashes =
+        jdbc.queryForList(
+            "select rt.token_hash from refresh_tokens rt join users u on u.id = rt.user_id"
+                + " where u.email = ?",
+            String.class,
+            email);
+
+    assertThat(hashes).isNotEmpty().doesNotContain(rawRefresh);
+    assertThat(hashes).allMatch(hash -> hash.length() == 64);
+  }
+
+  @Test
+  @DisplayName("SL-1.4: logout → 204, refresh token đó không dùng được nữa")
+  void logoutShouldInvalidateRefreshToken() throws Exception {
+    Map<String, Object> session = loginNewUser(uniqueEmail(), "matkhau123");
+    String refresh = (String) session.get("refreshToken");
+
+    HttpResponse<String> logout = post("/v1/auth/logout", Map.of("refreshToken", refresh));
+    assertThat(logout.statusCode()).isEqualTo(204);
+
+    assertThat(post("/v1/auth/refresh", Map.of("refreshToken", refresh)).statusCode())
+        .isEqualTo(401);
+  }
+
+  @Test
+  @DisplayName("SL-1.4: /v1/admin/users — admin 200, buyer 403 (403 chứ KHÔNG phải 401)")
+  void adminEndpointShouldDistinguishRole() throws Exception {
+    // admin seed sẵn khi shoplab.env=local (LocalDevUserSeeder) — mật khẩu dev giống README.
+    HttpResponse<String> adminLogin =
+        post("/v1/auth/login", Map.of("email", "admin@shoplab.local", "password", "matkhau123"));
+    assertThat(adminLogin.statusCode()).isEqualTo(200);
+    String adminToken =
+        (String) objectMapper.readValue(adminLogin.body(), Map.class).get("accessToken");
+
+    assertThat(getWithToken("/v1/admin/users", adminToken).statusCode()).isEqualTo(200);
+
+    Map<String, Object> buyer = loginNewUser(uniqueEmail(), "matkhau123");
+    HttpResponse<String> forbidden =
+        getWithToken("/v1/admin/users", (String) buyer.get("accessToken"));
+
+    assertThat(forbidden.statusCode()).isEqualTo(403);
+    assertThat(forbidden.body()).contains("\"code\":\"FORBIDDEN\"");
   }
 }

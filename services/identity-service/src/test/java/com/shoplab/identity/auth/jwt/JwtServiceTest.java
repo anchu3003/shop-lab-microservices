@@ -45,7 +45,11 @@ class JwtServiceTest {
 
   private static JwtProperties properties(Path privateKey, Path publicKey) {
     return new JwtProperties(
-        ISSUER, Duration.ofMinutes(15), privateKey.toString(), publicKey.toString());
+        ISSUER,
+        Duration.ofMinutes(15),
+        Duration.ofDays(14),
+        privateKey.toString(),
+        publicKey.toString());
   }
 
   private Jwt decode(String token) {

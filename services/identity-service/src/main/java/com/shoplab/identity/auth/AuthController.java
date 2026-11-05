@@ -35,4 +35,26 @@ public class AuthController {
   public AuthTokenResponse login(@Valid @RequestBody LoginRequest request) {
     return AuthTokenResponse.bearer(authService.login(request.email(), request.password()));
   }
+
+  /**
+   * Đổi refresh token lấy cặp token mới (SL-1.4). Token cũ bị vô hiệu hoá ngay (rotation).
+   *
+   * <p>Dùng lại token đã rotate ⇒ 401 <b>và</b> toàn bộ chuỗi token của phiên đó bị thu hồi.
+   */
+  @PostMapping("/refresh")
+  public AuthTokenResponse refresh(@Valid @RequestBody RefreshTokenRequest request) {
+    return AuthTokenResponse.bearer(authService.refresh(request.refreshToken()));
+  }
+
+  /**
+   * Thu hồi refresh token hiện tại (SL-1.4).
+   *
+   * <p>Trả <b>204</b> (không nội dung) kể cả khi token không tồn tại — idempotent, và không tạo
+   * oracle để dò token.
+   */
+  @PostMapping("/logout")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void logout(@Valid @RequestBody LogoutRequest request) {
+    authService.logout(request.refreshToken());
+  }
 }

@@ -84,6 +84,26 @@
       <artifactId>spring-security-oauth2-jose</artifactId>
     </dependency>
 
+    <!--
+      Security filter chain đầy đủ (SL-1.4): 401/403 chuẩn ApiError + phân quyền theo role.
+      Ở SL-1.1 cố ý KHÔNG kéo starter này vì chưa có endpoint nào cần phân quyền — thêm sớm chỉ
+      tạo bề mặt phải bảo vệ mà không kiểm chứng được gì.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
+    <!--
+      `oauth2-resource-server` (SL-1.4): verify JWT NGAY TẠI identity bằng public key của chính nó
+      (defense in depth — gateway cũng verify). Cần cho `oauth2ResourceServer(jwt)` +
+      `NimbusJwtDecoder`. Gateway forward header `Authorization` (xem RequestForwarder).
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+    </dependency>
+
     <!-- ===================== test ===================== -->
 
     <dependency>
