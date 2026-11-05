@@ -390,6 +390,39 @@ khi gặp `kid` lạ — rotate khoá không cần restart, có chặn dội). T
 được → **503** (retry được).
 
 ---
+### E2E smoke — `SL-1.3`
+
+Bằng chứng end-to-end **client → gateway → identity → DB** bằng **1 lệnh**: health → register → login → gọi endpoint
+protected qua gateway → assert 401 khi thiếu token → đối chiếu `traceId` trong log identity. In `PASS/FAIL` từng bước +
+exit code (`0` nếu tất cả pass).
+
+```bash
+docker compose -f infra/docker-compose.yml --env-file .env up -d    # gateway + identity phải healthy
+bash tools/e2e-smoke.sh
+```
+
+Output mẫu:
+
+```text
+== E2E smoke — client → gateway → identity → DB
+   email=smoke-1752340000-1234@shoplab.local  correlation=smoke-1752340000
+  PASS [1] 1a health gateway
+  PASS [2] 1b health identity
+  PASS [3] 2 register
+  PASS [4] 3 login
+  PASS [5] 4 protected /v1/users/me (có token)
+  PASS [6] 5 /v1/users/me KHÔNG token → 401
+  PASS [7] 6 traceId smoke-1752340000 có trong log identity (gateway forward header)
+
+== Kết quả: 7 PASS / 0 FAIL · 6 request · 1234 ms
+E2E smoke: OK
+```
+
+- Script chỉ dùng `curl` + `python3` (không cần `jq`); **email ngẫu nhiên mỗi lần** nên chạy lại vẫn pass.
+- Bước trái phép assert **đúng 401** (không phải "khác 200") — tránh bẫy 500 cũng bị tính là pass.
+- Bước 6 chứng minh `traceId` xuyên service: script gửi `x-correlation-id`, identity log đúng id đó (gateway forward header).
+
+
 
 ## Tạo service mới từ template
 

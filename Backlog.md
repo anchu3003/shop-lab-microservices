@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
-| **Ticket tiếp theo** | `SL-1.4` — `identity-service`: refresh token + RBAC + `/v1/users/me` |
+| **Ticket đang làm** | `SL-1.4` — `identity-service`: refresh token + RBAC + `/v1/users/me` |
+| **Ticket tiếp theo** | `SL-1.5` — `catalog-service`: skeleton + Flyway + category/product CRUD |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 9 / 15 |
+| 1 | Walking skeleton | 🔵 In Progress | 10 / 15 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -112,7 +112,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 1 | `SL-1.0` | *(phát sinh)* tối ưu chi phí CI | S | ✅ Done |
 | 2 | `SL-1.1` | `identity-service`: register/login + JWT | M | ✅ Done |
 | 3 | `SL-1.2` | `api-gateway` bản mỏng | M | ✅ Done |
-| 4 | `SL-1.3` | **E2E sớm**: register → login qua gateway | S | Todo |
+| 4 | `SL-1.3` | **E2E sớm**: register → login qua gateway | S | ✅ Done |
 | 5 | `SL-1.4` | `identity-service`: refresh token + RBAC | M | Todo |
 | 6 | `SL-1.5` | `catalog-service`: CRUD category/product | M | Todo |
 | 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | Todo |
@@ -657,7 +657,7 @@ $ gh run view --job <test> --log | grep -E 'API Gateway|Tests run: 71|Tests run:
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.2 |
 | **Ước lượng** | S |
@@ -701,9 +701,50 @@ Một script chạy được toàn bộ đường đi và in ra bằng chứng t
   (đúng bẫy "test âm" đã học ở SL-0.5).
 - Chạy **local**; đưa vào CI ở Phase 2 khi số service tăng (mỗi lần thêm `docker compose up` vào CI tốn ~3–5 phút/run — D6).
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-05 — output thật)*
 
-**Learning note** *(điền khi Done)*
+```console
+$ bash -n tools/e2e-smoke.sh
+OK
+$ bash tools/e2e-smoke.sh                    # stack healthy (gateway + identity)
+== E2E smoke — client → gateway → identity → DB
+   email=smoke-1793899426-25773@shoplab.local  correlation=smoke-1793899426
+  PASS [1] 1a health gateway
+  PASS [2] 1b health identity
+  PASS [3] 2 register
+  PASS [4] 3 login
+  PASS [5] 4 protected /v1/users/me (có token)
+  PASS [6] 5 /v1/users/me KHÔNG token → 401
+  PASS [7] 6 traceId smoke-1793899426 có trong log identity (gateway forward header)
+== Kết quả: 7 PASS / 0 FAIL · 6 request · 279 ms
+E2E smoke: OK
+exit=0
+$ bash tools/e2e-smoke.sh >/dev/null && bash tools/e2e-smoke.sh >/dev/null   # chạy lại 2 lần → exit 0 (email random)
+
+# --- Test âm: tắt identity rồi chạy ---
+$ docker stop shoplab-identity-service
+$ bash tools/e2e-smoke.sh
+  PASS [1] 1a health gateway                  ← gateway liveness vẫn UP
+  FAIL 1b health identity — mong đợi 200 nhưng nhận status=000
+  FAIL 2 register — mong đợi 201 nhưng nhận status=503   body: {"code":"UNAVAILABLE", ...}
+  FAIL 3 login  — mong đợi 200 nhưng nhận status=503
+  FAIL 4/5/6 — bỏ qua (chưa có token)
+== Kết quả: 1 PASS / 6 FAIL · 4 request · 4063 ms
+E2E smoke: FAIL
+exit=1                                         ← fail đúng bước (1b), in rõ, exit ≠ 0
+$ docker start shoplab-identity-service
+```
+
+**Learning note**
+
+- **`date +%s%3N` không portable**: trên GNU date hệ này `%3N` ra **9 chữ số** (nanoseconds) chứ không phải 3 →
+  lần đầu số đo ms in `1242150430` ("14 ngày"). Dùng `%s%N` rồi `/1000000` → còn `279 ms`.
+- **`set -euo pipefail` + curl connection-refused = script chết câm**: curl exit 7 khi identity tắt → command
+  substitution trong assignment làm `set -e` kill script trước khi in FAIL. Fix: `curl … || true` để nhận status `000`
+  rồi xử lý, và guard `TOKEN` rỗng để `python3` KeyError không giết script. Smoke script phải **chịu được hạ tầng chết**
+  — vì chính việc đó là thứ nó kiểm.
+- **503 (service chết) ≠ 401 (thiếu token)** là tín hiệu quý: khi identity tắt, register/login qua gateway trả
+  `503 UNAVAILABLE` kèm `traceId` — đúng thiết kế gateway ở SL-1.2, script nhờ đó báo đúng nguyên nhân.
 
 ---
 
@@ -1791,6 +1832,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.14 | **GitHub API không đáng tin tuyệt đối**: trong ~15 phút gặp 3 lỗi tạm thời (`gh pr create` GraphQL *Something went wrong*, `gh pr close` 502, `gh pr merge` GraphQL) — chạy lại là được. **Debt**: `merge-pr.sh` chưa có retry, hiện phải chạy lại tay. |
 | 2026-11-05 | SL-1.12 | **Chốt chặn giả sống được 2 ticket**: `build-image` "xanh" suốt `SL-1.1`+`SL-1.2` mà chỉ kiểm 1/3 service — không ai đọc lại job CI khi thêm service. **Song song ≠ rẻ**: 3 image chạy song song giữ nguyên thời gian *chờ* nhưng nhân 3 phút *billable* — đo bằng số, không bằng cảm giác. |
 | 2026-11-05 | SL-1.13 | **Service optional ⇒ dùng compose profile chứ đừng xoá/để mặc định**: profile giữ được "chốt chặn sống" (template vẫn build/chạy được khi cần) mà `up -d` không tốn RAM/build cho nó. |
+| 2026-11-05 | SL-1.3 | **Smoke script phải chịu được hạ tầng chết**: `set -e` + curl connection-refused (exit 7) kill script trước khi báo lỗi → `curl \|\| true` để lấy status `000`, guard token rỗng để `python3` không KeyError. Bonus: **GNU date `%3N` ra 9 chữ số** (nanosec) trên hệ này → dùng `%s%N`/1e6. |
 
 | 2026-11-05 | process | **Đừng dùng backtick trong `--body` của `gh` khi gõ trực tiếp**: shell thực thi phần trong backtick (`tools/merge-pr.sh` → `Permission denied`, `null: command not found`) và **body PR bị hỏng**. Luôn dùng `--body-file` với heredoc (`<<'EOF'`). |
 
@@ -1827,6 +1869,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | `SL-1.14` → `Done`: `tools/merge-pr.sh` (a) cho phép merge PR **chỉ-docs** (0 run là hợp lệ khi **toàn bộ** diff là docs; 0 run mà có file không phải docs → **vẫn chặn**) và (b) tự post **comment evidence hậu merge** (merge sha · run CI trên `main` · token skip · ghi chú chống hiểu nhầm). Verify: **TEST A** PR docs-only #17 → cho phép (`exit=0`); **TEST B** 0 run + `tools/secret-scan.sh` → chặn (`exit=1`); **merge thật** PR #17 → `main` = `4afb3da` + comment evidence tự post ✓. Kèm dọn 2 nhánh temp + xoá file test. |
 | 2026-11-05 | `SL-1.12` → `Done`: job `build-image` chuyển sang **matrix** (`service-template` · `identity-service` · `api-gateway`, `fail-fast: false`) + `--build-arg SKIP_TESTS=true` (bỏ test trùng trong image — job `test` đã chạy cả reactor). **Test âm thật**: phá `api-gateway/Dockerfile` → run `42064872154` **chỉ** job gateway đỏ (`Child module … does not exist`), 2 job image kia xanh; revert → run `42065751051` **5/5 xanh**. Số đo: billable 194s → 343s (**+2,5 phút/run**, wall-clock gần như không đổi vì chạy song song). Cập nhật `README.md` + `architecture.md` §10.3 + comment `ci.yml`. PR [#20](https://github.com/anchu3003/shop-lab-microservices/pull/20). |
 | 2026-11-05 | `SL-1.13` → `Done`: `service-template` vào **compose profile** `template` ⇒ `up -d` mặc định chỉ dựng hệ thống thật (không tốn RAM/build cho service mẫu). Verify: `config --services` (không profile) **không** có template · `up -d` không tạo `shoplab-service-template` · `--profile template up -d service-template` → Started, `/ready` 200 · gateway/identity vẫn healthy. Cập nhật `README.md` (bảng port + lệnh) + comment `infra/docker-compose.yml`. |
+| 2026-11-05 | `SL-1.3` → `Done`: `tools/e2e-smoke.sh` — health gateway+identity → register (email random) → login → `/v1/users/me` có token → 200 · thiếu token → **401** · đối chiếu `traceId` trong log identity; `PASS/FAIL` từng bước + exit code. Verify: **7/7 PASS** · exit 0 · chạy lại 3 lần pass · **test âm** (stop identity) → fail đúng bước `1b` + `exit=1`. Thêm mục README "E2E smoke". Sửa 2 bug: `date +%s%3N` ra nanosec → `%s%N`/1e6; curl connection-refused + `set -e` → `\| true`. |
 
 | 2026-11-02 | Tạo PR [#4](https://github.com/anchu3003/shop-lab-microservices/pull/4) cho `SL-0.4` (nhánh `feat/sl-0.4-service-template`, 5 commit). Merge bằng **squash** theo `docs/git-flow.md`. |
 | 2026-11-03 | `SL-0.5` → `In Progress`: nhánh `feat/sl-0.5-ci-pipeline`. Chốt với user: **giữ remote HTTPS** (token VS Code có scope `workflow`, không cần đổi SSH). |
