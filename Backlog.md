@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.11` (fix phát sinh từ `SL-1.9`/`SL-1.10`) |
-| **Ticket tiếp theo** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
-| **Số ticket chi tiết hiện có** | 20 (Phase 0: 8 — archive · Phase 1: 12) |
+| **Ticket đang làm** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
+| **Ticket tiếp theo** | `SL-1.12` — CI: build image cho **mọi** service (matrix) + cắt thời gian build |
+| **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
 
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 3 / 12 |
+| 1 | Walking skeleton | 🔵 In Progress | 6 / 15 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -105,7 +105,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 > **Điều kiện hoàn thành phase**: register → login → lấy token → gọi API product qua gateway chạy end-to-end ·
 > CI xanh · có OpenAPI spec · tách archive + tag `phase-1` (ADR-0005).
 
-**Đã breakdown thành 9 ticket chi tiết** (`SL-1.0` … `SL-1.8`) — thứ tự thực hiện:
+**Đã breakdown thành 15 ticket chi tiết** (`SL-1.0` … `SL-1.14`) — thứ tự thực hiện:
 
 | # | Ticket | Epic item | Ước lượng | Trạng thái |
 |---|---|---|---|---|
@@ -121,6 +121,10 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
 | 11 | `SL-1.10` | *(phát sinh)* fix: `[skip ci]` lọt vào squash message → `main` không chạy CI | S | ✅ Done |
 | 12 | `SL-1.11` | *(phát sinh)* fix: message chẩn đoán của `merge-pr.sh` gây hiểu nhầm | S | ✅ Done |
+| 13 | `SL-1.12` | *(phát sinh)* CI: build image cho **mọi** service (matrix) + cắt thời gian build | M | Todo |
+| 14 | `SL-1.13` | *(phát sinh)* compose: `service-template` vào **profile** `template` | S | Todo |
+| 15 | `SL-1.14` | *(phát sinh)* `merge-pr.sh`: cho phép PR **docs-only** + comment evidence **hậu merge** | S | Todo |
+
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -1346,6 +1350,179 @@ $ git log -1 --format=%B 741591c | grep -cE '\[(skip ci|ci skip|no ci|skip actio
 ---
 
 
+### SL-1.12 — CI: build Docker image cho **mọi** service (matrix) + cắt thời gian build
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton *(phát sinh khi rà lại CI sau SL-1.2)* |
+| **Phụ thuộc** | SL-1.2 (Done) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Job `build-image` được viết ở `SL-0.5` khi `service-template` là service **duy nhất** → hard-code
+`services/service-template/Dockerfile`. Từ `SL-1.1`/`SL-1.2` có thêm 2 service thật nhưng job này **chưa** cập nhật
+⇒ **không có gì trong CI kiểm `Dockerfile` của `identity-service`/`api-gateway`**. Hai lỗi loại này **đã xảy ra thật**
+ở local (bind-mount secret mode 600 → uid mismatch; Dockerfile thiếu `COPY pom` của module mới) và **chỉ lộ khi chạy tay**
+⇒ CI xanh nhưng image build hỏng = **chốt chặn giả**.
+
+Bằng chứng hiện trạng (run `42054583987` trên `main`): job `test` build **5/5 module** + chạy `IdentityServiceApplicationIT`
+(failsafe + Testcontainers) → `BUILD SUCCESS`; job `build-image` chỉ có đúng **1** dòng
+`docker build --file services/service-template/Dockerfile`. Tức `lint`/`test` **đã phủ** mọi service — chỉ chốt chặn
+**image** bị hụt.
+
+**Mục tiêu**
+
+Mọi service có `Dockerfile` đều được CI build image **thật**, mà **không** tăng quá ~1–1,5 phút/run.
+
+**In scope**
+
+- `build-image` → `strategy.matrix` (`service: [service-template, identity-service, api-gateway]`), `fail-fast: false`,
+  tag `shoplab-<service>:ci`, tên job hiện rõ service (`build-image (<service>)`).
+- Truyền build arg để **bỏ test trong image build** — cả 3 Dockerfile đang chạy `mvn verify -DskipTests=false` **trong**
+  image (identity thêm `-DskipITs`) ⇒ test **lần 2**; đây chính là lý do `build-image` chiếm **46% phút CI**
+  (`SL-1.0` đo: 33/71 phút).
+- Cập nhật comment đầu `.github/workflows/ci.yml`, `README.md` (mục CI), `architecture.md` §10.3.
+
+**Out of scope**
+
+- Push image lên registry + CD (Phase 7) · detect-changed-service để build chọn lọc (chỉ cần khi ≥4 service)
+- `docker run` smoke test container trong CI (để `SL-1.7`) · gộp `lint`/`test` vào matrix
+
+**Acceptance Criteria**
+
+- [ ] Có job image cho **từng** service, tên job ghi rõ service; 1 service fail **không** chặn service khác
+- [ ] **Test âm thật**: cố tình phá `services/api-gateway/Dockerfile` (xoá 1 dòng `COPY`) → job image của gateway **đỏ**,
+      job khác vẫn xanh; revert → xanh (bài học `SL-0.5`: run xanh chỉ chứng minh pipeline *chạy*, không chứng minh nó *chặn*)
+- [ ] Đo thời gian job image trước/sau; **không** tăng quá ~1,5 phút cho cả 3 image — ghi số vào ticket
+- [ ] Lệnh build trong CI dán vào `README.md` chạy được ở local cho cả 3 service
+- [ ] Không hard-code secret; build arg chỉ gồm `GIT_COMMIT` + cờ skip test
+- [ ] CI xanh trên PR **và** `main`
+
+**Ghi chú kỹ thuật**
+
+- **Matrix** thay 3 job viết tay: thêm service = 1 dòng; trade-off: log matrix khó đọc hơn một chút.
+- Bỏ test trong image: `ARG SKIP_TESTS=false` + `RUN mvn … verify -DskipTests=${SKIP_TESTS}` — giữ mặc định `false` để
+  `docker build` **tay** vẫn test, CI truyền `true` (đã có job `test` lo).
+- Cache: giữ `docker build` trần (điều kiện revisit đã ghi ở `SL-0.5`: job > 3 phút → `docker/build-push-action` +
+  `cache-from: type=gha`).
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+---
+
+### SL-1.13 — Compose: đưa `service-template` vào **profile** `template`
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton *(phát sinh khi rà compose sau SL-1.2)* |
+| **Phụ thuộc** | — (SL-0.3/SL-0.4 đã Done) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+`service-template` là service **mẫu**, không thuộc hệ thống (không có business logic) nhưng đang là service **mặc định**
+trong `infra/docker-compose.yml` ⇒ mỗi `up -d` phải build image Java (~1–2 phút) + tốn ~150 MiB RAM, log lẫn với service
+thật, port `8090` làm nhiễu bảng port. Phase 1 đã có hệ thống thật (`identity-service` + `api-gateway`) nên mặc định
+dựng template không còn cần thiết.
+
+**Mục tiêu**
+
+`docker compose up -d` chỉ dựng **hệ thống thật**; template vẫn chạy được khi cần (giữ vai trò "chốt chặn sống" cho
+`service-commons` + convention Dockerfile).
+
+**In scope**
+
+- Thêm `profiles: [template]` cho service `service-template` + cập nhật comment đầu file compose (lệnh có/không profile).
+- `README.md`: bảng port ghi rõ `8090` chỉ dùng khi bật profile; thêm lệnh `--profile template up -d service-template`;
+  sửa câu "`up -d` build luôn image `service-template`".
+
+**Out of scope**
+
+- Xoá thư mục `services/service-template` · đổi cách CI build template (thuộc `SL-1.12`) · tách `docker-compose.tools.yml`
+
+**Acceptance Criteria**
+
+- [ ] `docker compose … up -d` → `docker ps` **không** có `shoplab-service-template`; vẫn đủ
+      postgres/redis/rabbitmq/adminer/identity-service/api-gateway
+- [ ] `docker compose … --profile template up -d service-template` → container healthy, `curl -s localhost:8090/ready` → **200**
+- [ ] `docker compose … config --services` (không bật profile) **không** liệt kê `service-template`
+- [ ] README + comment compose khớp thực tế (dán output)
+- [ ] Service thật không đổi hành vi (identity/gateway vẫn healthy sau khi thêm profile)
+
+**Ghi chú kỹ thuật**
+
+- Compose **profiles** là cách chuẩn cho "optional service": service không có profile luôn chạy; service có profile chỉ
+  chạy khi bật `--profile`. Trade-off: người mới phải biết cờ `--profile template` → ghi vào README; đổi lại `up -d`
+  nhanh + nhẹ hơn.
+- **Không** tách `docker-compose.tools.yml`: phải khai lại network/volume → dễ lệch.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+---
+
+### SL-1.14 — `merge-pr.sh`: cho phép PR **docs-only** + comment evidence **hậu merge**
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton *(phát sinh từ đổi process 2026-11-05)* |
+| **Phụ thuộc** | SL-1.11 (Done) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Hai lỗ hổng thật của `tools/merge-pr.sh`, lộ ra khi áp dụng rule **1 ticket = 1 commit**:
+
+1. **Chặn oan PR docs-only**: guard *"nhánh chưa có run CI nào"* (`tools/merge-pr.sh:62-65`) chặn mọi PR **không có run**.
+   Nhưng PR **chỉ-docs** bị `paths-ignore` bỏ hết run ⇒ **0 run** ⇒ script **không thể merge PR docs-only** (ticket process,
+   PR chỉ sửa `Backlog.md`/`README.md`) — phải merge tay, mất luôn comment tóm tắt + guard.
+2. **Evidence hậu merge không còn chỗ ghi**: merge sha + run CI trên `main` **không tồn tại** lúc commit ⇒ theo rule mới
+   (mark done gộp commit cuối, không ghi vào PR sau) cần một chỗ khác để lưu.
+
+**Mục tiêu**
+
+`merge-pr.sh` merge được **cả** PR docs-only, và tự ghi lại **evidence hậu merge** lên PR (0 commit, 0 phút CI).
+
+**In scope**
+
+- Nhánh **0 run** + **toàn bộ diff PR là docs-only** → cho merge (in rõ lý do); 0 run mà diff **có** file không phải docs
+  → vẫn chặn.
+- Sau merge: post **comment thứ hai** lên PR gồm merge commit sha · kết luận run CI trên `main` · số token skip.
+- Cập nhật comment đầu file (mô tả 2 luồng) + `.clinerules/10-git-workflow.md` nếu cách gọi đổi.
+
+**Out of scope**
+
+- Đổi cách squash merge · GitHub auto-merge · required checks / branch protection · CD (Phase 7)
+
+**Acceptance Criteria**
+
+- [ ] PR docs-only (0 run, diff toàn docs) → merge được, có comment tóm tắt **và** comment evidence hậu merge
+- [ ] PR **có code** mà 0 run (vd kill-switch `vars.CI_ENABLED=false` tắt CI) → **vẫn chặn** (không merge mù)
+- [ ] Comment hậu merge có: merge sha · run CI trên `main` (kết luận) · token skip = 0
+- [ ] `bash -n tools/merge-pr.sh` sạch; `--dry-run` không post comment, không merge
+- [ ] Không phá luồng cũ: PR có code + CI xanh + diff phát sinh docs-only → vẫn merge như trước
+
+**Ghi chú kỹ thuật**
+
+- Điều kiện "docs-only" phải xét **toàn bộ** diff của PR (`git diff --name-only origin/main...HEAD`) và dùng lại hàm
+  `docs_only()` sẵn có.
+- Poll run trên `main`: `gh run list --branch main` theo `headSha` của merge commit, **có timeout** (~90s) → quá hạn thì ghi
+  *"chưa xong, xem `gh run list`"* thay vì treo.
+- Đây là **evidence**, không phải chốt chặn ⇒ poll fail **không** làm script exit ≠ 0 (merge đã xong rồi).
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+---
+
 ## 5. Phase 2 → 8 — Epic outline
 
 > Các phase này **chỉ ở mức epic**. Chỉ breakdown thành ticket chi tiết khi tới lượt — breakdown sớm sẽ phải viết lại
@@ -1485,6 +1662,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | process | **Sửa bảng markdown: đừng dùng đoạn ĐẦU của dòng làm `old_text`** — công cụ thay thế khớp prefix, để lại phần đuôi dính vào dòng mới (dính 2 lần ở Changelog). Dùng **cả dòng** hoặc `insert_line`, rồi kiểm lại bằng `grep -c '^| <ngày> | \`<ticket>\`'`. |
 | 2026-11-05 | SL-1.11 | **Tín hiệu sai tệ hơn không có tín hiệu**: dòng chẩn đoán đếm substring `skip ci` in `1` khi body chỉ chứa **câu ví dụ** → tôi tưởng fix `SL-1.10` hỏng, tốn 1 vòng kiểm. Công cụ phải in đúng **định nghĩa** (token `[skip ci]`), và bằng chứng thật là `gh run list --branch main`. |
 | 2026-11-05 | process | **Chạy script/test từ đúng working tree**: 2 lần test guard bằng bản script ở nhánh khác (chưa có fix) → kết quả cũ, lại tưởng guard sai. Kiểm `git branch --show-current` trước khi kết luận. |
+| 2026-11-05 | process | **Chốt chặn CI phải rà lại mỗi khi thêm service**: job `build-image` viết ở Phase 0 (khi chỉ có `service-template`) → thêm 2 service thật mà không cập nhật ⇒ CI xanh nhưng **Dockerfile của 2 service thật không được kiểm** = **chốt chặn giả**. Thêm service ⇒ rà **mọi** job CI (cả `test` *và* `build-image`). |
+| 2026-11-05 | process | **Đóng ticket ngay trong PR của nó** (mark done gộp vào commit cuối) thay vì để dành sang PR sau: bớt 1 nhịp chờ, bớt 1 commit, không dính bẫy `[skip ci]` ở HEAD. Đánh đổi: `main` chỉ thấy 1 commit/ticket. |
+
 | 2026-11-05 | process | **Đừng dùng backtick trong `--body` của `gh` khi gõ trực tiếp**: shell thực thi phần trong backtick (`tools/merge-pr.sh` → `Permission denied`, `null: command not found`) và **body PR bị hỏng**. Luôn dùng `--body-file` với heredoc (`<<'EOF'`). |
 
 ---
@@ -1516,6 +1696,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-02 | `SL-0.4` → `Done`: Maven multi-module (`packages/service-commons` + `services/service-template`), shared lib auto-configuration (log JSON · error response thống nhất · correlation id · health check · env validator fail-fast), service mẫu `/health` `/ready` `/version` + graceful shutdown + Dockerfile multi-stage non-root, thêm vào compose, JaCoCo gate ≥80% cho config/health, README "tạo service mới từ template". ADR-[0003](docs/adr/0003-spring-boot-version-and-module-layout.md) + ADR-[0004](docs/adr/0004-service-commons-shared-library.md). Verify thật: 72 test pass, 5/5 container healthy, `/ready` 200→503 khi tắt Postgres, fail-fast khi thiếu `APP_ENV`, log JSON đủ 4 field, graceful shutdown hoàn tất request 8s. Phase 0 → **7 / 8**. |
 | 2026-11-02 | Sửa 3 bug tiềm ẩn lộ ra khi có code Java thật: **surefire 2.17** (Tests run: 0 mà vẫn xanh) → pin `3.6.1`; thiếu **`-parameters`** → lỗi runtime ở `@RequestParam`; **Spotless ↔ Checkstyle xung đột** ở block rỗng → bật `allowEmpty*` trong `checkstyle.xml`. |
 | 2026-11-02 | Verify AC "tạo service mới từ template" bằng cách **thực sự** copy ra `smoke-service` theo README → phát hiện test hard-code tên service (template không copy-safe) → sửa test đọc tên từ config; chạy lại `BUILD SUCCESS` rồi xoá `smoke-service`. |
+| 2026-11-05 | Tạo 3 ticket phát sinh sau khi rà CI/compose: `SL-1.12` (job `build-image` hiện **chỉ** build `service-template` — bằng chứng log run `42054583987`; 2 service thật không được CI kiểm Dockerfile), `SL-1.13` (`service-template` vào **compose profile** `template` để `up -d` chỉ dựng hệ thống thật), `SL-1.14` (`merge-pr.sh`: cho phép PR **docs-only** + post comment evidence **hậu merge**). **Đổi process**: mark done **gộp vào commit cuối của ticket** (1 ticket = 1 commit = 1 run CI trên PR), bỏ "fold commit minor sang PR sau"; evidence hậu merge ghi bằng PR comment. Chốt **giữ monorepo** (ghi vào ADR-0003 → Revisit). |
+
 | 2026-11-02 | Tạo PR [#4](https://github.com/anchu3003/shop-lab-microservices/pull/4) cho `SL-0.4` (nhánh `feat/sl-0.4-service-template`, 5 commit). Merge bằng **squash** theo `docs/git-flow.md`. |
 | 2026-11-03 | `SL-0.5` → `In Progress`: nhánh `feat/sl-0.5-ci-pipeline`. Chốt với user: **giữ remote HTTPS** (token VS Code có scope `workflow`, không cần đổi SSH). |
 | 2026-11-03 | `SL-0.5` → `Review`: `.github/workflows/ci.yml` (job `lint` ∥ `test` → `build-image`; cache Maven; `concurrency` theo tên nhánh; `timeout-minutes`; `permissions: contents: read`), badge CI + mục **CI (GitHub Actions)** trong `README.md`, `architecture.md` §10.3 + Changelog. **Baseline run đầu: 2m35s** (3/3 job xanh). Test âm thật: `lint` đỏ (`HealthController.java:54:5 ... [NeedBraces]`), `test` đỏ (`AppEnvTest.shouldReportLocalOnly:48`) — cả hai lần `build-image` **skipped**. PR [#5](https://github.com/anchu3003/shop-lab-microservices/pull/5). |

@@ -15,5 +15,8 @@ không làm tràn scope, không build một loạt.
 5. **Verify**: chạy lint + test + lệnh thật của ticket (xem skill `shoplab-verify`). **Dán output thật**.
 6. **Document**: điền "Kết quả verify" + "Learning note"; đổi trạng thái ticket; update
    `architecture.md` + ADR nếu design đổi; thêm dòng vào Learning log.
+   → **Ngay trong nhánh này**: gộp mark done vào **commit cuối của ticket** (`git reset --soft origin/main && git commit`,
+   hoặc `rebase -i` squash) rồi push **một lần** (`--force-with-lease`) ⇒ 1 run CI trên PR. Không tạo commit docs rời,
+   không để dành cho PR sau (`.clinerules/10-git-workflow.md`).
 7. **Report**: summary ngắn — đã làm gì, file nào, lệnh để user tự verify, phần chưa làm / technical debt.
 </detailed_sequence_of_steps>

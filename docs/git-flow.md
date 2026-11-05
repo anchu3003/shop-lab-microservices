@@ -97,26 +97,47 @@ git commit -m "docs(backlog): mark SL-1.2 done with CI evidence (SL-1.2) [skip c
 | Cách | Khi nào đủ | Ghi chú |
 |---|---|---|
 | `paths-ignore` trong `ci.yml` | diff của **push/PR** toàn là docs | Đã có; đủ cho **PR chỉ-docs** và push docs lên `main` |
-| **`[skip ci]`** trong commit message | Commit docs **nằm trong PR có code** | GitHub đọc ở **HEAD commit của PR** → xem cảnh báo dưới |
+| **`[skip ci]`** trong commit message | Commit docs **tách riêng** trong PR có code | GitHub đọc ở **HEAD commit của PR** → xem cảnh báo dưới |
+
+**Mặc định KHÔNG cần token**: theo flow *1 ticket = 1 commit*, mark done được gộp vào commit cuối **có code** ⇒ CI
+chạy bình thường, không phải nghĩ tới `[skip ci]`. Token chỉ còn dùng khi bạn cố ý push một commit docs riêng.
 
 ⚠️ **Bẫy**: nếu commit docs là **commit cuối** của PR, `[skip ci]` sẽ skip luôn run `pull_request` của cả PR →
 check trên PR treo **Pending**. Repo không bật required checks nên vẫn merge được, nhưng phải hiểu: **CI đã xanh ở
 commit code ngay trước đó**, và phần phát sinh chỉ là docs.
 `tools/merge-pr.sh` kiểm chính xác điều này trước khi merge (diff sau commit xanh phải là docs-only).
 
-## Commit minor — KHÔNG tạo nhánh/PR riêng
+⚠️ **Bẫy ngược lại — token nằm trong BODY**: GitHub đọc skip instruction ở **cả body** của HEAD commit, không chỉ subject.
+Gặp thật 2026-11-05: một commit `docs(process)` sửa `.github/workflows/ci.yml` **và** có câu giải thích *"nên KHÔNG dùng
+`[skip ci]`"* ⇒ run `pull_request` bị **skip**, PR **không có check nào** dù diff có file không phải docs.
+⇒ Khi muốn CI chạy, **đừng viết token skip dạng literal** ở bất kỳ đâu trong commit message (viết *token skip CI*).
 
-Commit nhỏ (đóng ticket, update `Backlog.md`/learning note, sửa doc lặt vặt, tách `Backlog-phase-<N>.md`)
-**không** cần nhánh + PR riêng: gộp vào **nhánh của ticket kế tiếp** (commit riêng, message riêng).
+## Mark done — gộp vào commit CUỐI của ticket (không để dành PR sau)
+
+Verify xong thì sửa `Backlog.md` (status + Kết quả verify + Learning note + bảng phase + Changelog) **ngay trong nhánh
+của ticket**, rồi gộp vào commit cuối:
+
+```bash
+git reset --soft origin/main && git commit -m "feat(x): ... (SL-1.3)"   # hoặc: git rebase -i origin/main → squash
+git push --force-with-lease                                              # CHỈ nhánh feature
+```
+
+⇒ **1 push = 1 run CI trên PR** (+ 1 run trên `main` sau merge). Không sinh commit đóng-ticket rời, không mở PR phụ,
+không để ticket "chưa đóng" chờ sang PR sau.
 
 | Trường hợp | Cách làm |
 |---|---|
-| **Còn ticket kế tiếp** | Gộp vào nhánh `feat/<ticket-id>-slug` của ticket kế tiếp → **cùng PR** |
-| **Không còn ticket kế tiếp** (hết phase / dừng dự án) | Tạo nhánh `docs/<mô-tả-ngắn>` + PR riêng |
+| **Mark done của ticket** | Gộp vào **commit cuối của chính ticket** (commit đó phải **có code**) → cùng PR |
+| **PR chỉ-docs** (ticket process, hoặc nhánh chỉ sửa doc) | Không có run nào (`paths-ignore`) — `tools/merge-pr.sh` **cho merge** khi toàn bộ diff là docs-only |
+| **Docs không thuộc ticket nào** (sửa doc lặt vặt, tách `Backlog-phase-<N>.md`) | Gộp vào **commit của ticket kế tiếp**; chỉ mở nhánh + PR riêng khi **không còn ticket kế tiếp** |
 | Thay đổi **có code** | ❌ Không gộp — phải là ticket riêng (`AGENTS.md` §3.1) |
 
-**Trade-off đã chấp nhận**: phần "đóng ticket" trễ một nhịp (nằm trong PR của ticket kế tiếp) — đổi lại không sinh
-PR chỉ chứa doc. Model "`main` luôn xanh + mọi thay đổi đi qua PR" **không** bị phá vì vẫn không commit thẳng `main`.
+**Evidence sau merge** (merge sha · run CI trên `main`): không thể nằm trong commit ⇒ `tools/merge-pr.sh` **post comment
+hậu merge** lên PR (0 commit, 0 phút CI).
+
+**Trade-off đã chấp nhận**: PR chỉ có 1 commit nên `git log` trên `main` không thấy tiến trình trung gian — đổi lại
+**tiết kiệm 1 nhịp chờ** (không phải mở PR thứ hai chỉ để đóng ticket) và không dính bẫy `[skip ci]` ở HEAD.
+Model "`main` luôn xanh + mọi thay đổi đi qua PR" **không** bị phá vì vẫn không commit thẳng `main`.
 
 ## Lệnh mẫu
 

@@ -52,7 +52,9 @@ on:
   #
   # LƯU Ý: `paths-ignore` chỉ bỏ run khi **toàn bộ** diff là docs. Commit docs nằm trong PR **có code**
   # vẫn tạo run `pull_request` mới (vì PR diff có code) → commit đó thêm `[skip ci]` trong message.
-  # GitHub đọc skip instruction ở **HEAD commit của PR** (xem .clinerules/10-git-workflow.md).
+  # Từ flow "1 ticket = 1 commit" (xem .clinerules/10-git-workflow.md), mark done được gộp vào commit CUỐI
+  # (có code) nên mặc định **không cần** token skip; token chỉ dùng khi cố ý push commit docs riêng.
+  # GitHub đọc skip instruction ở **HEAD commit của PR**.
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
