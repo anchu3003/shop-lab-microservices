@@ -235,6 +235,51 @@ services:
     networks:
       - shoplab-net
 
+  # ---------------------------------------------------------------------------
+  # api-gateway — cửa vào duy nhất (SL-1.2): route /v1/** + verify JWT qua JWKS của identity.
+  #
+  # Không có DB: gateway không sở hữu dữ liệu nào (architecture.md §5) → readiness check TCP
+  # tới identity, không check DB.
+  #
+  # `IDENTITY_SERVICE_*` trỏ tới SERVICE NAME trong network của compose (không phải localhost —
+  # localhost trong container là chính nó).
+  # ---------------------------------------------------------------------------
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: services/api-gateway/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-api-gateway:local
+    container_name: shoplab-api-gateway
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${API_GATEWAY_PORT:-8080}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SHOPLAB_DEBUG_ENDPOINTS: ${SHOPLAB_DEBUG_ENDPOINTS:-true}
+      IDENTITY_SERVICE_URL: ${IDENTITY_SERVICE_URL:-http://identity-service:8081}
+      IDENTITY_SERVICE_HOST: ${IDENTITY_SERVICE_HOST:-identity-service}
+      IDENTITY_SERVICE_PORT: ${IDENTITY_SERVICE_PORT:-8081}
+      IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
+      # PHẢI khớp issuer mà identity phát hành, nếu không mọi token đều bị 401.
+      IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      GATEWAY_CONNECT_TIMEOUT: ${GATEWAY_CONNECT_TIMEOUT:-2s}
+      GATEWAY_READ_TIMEOUT: ${GATEWAY_READ_TIMEOUT:-5s}
+    ports:
+      - "${API_GATEWAY_PORT:-8080}:${API_GATEWAY_PORT:-8080}"
+    depends_on:
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${SERVER_PORT}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 45s
+    networks:
+      - shoplab-net
+
 volumes:
   shoplab-pg-data:
     name: shoplab-pg-data

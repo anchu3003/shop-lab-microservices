@@ -16,8 +16,8 @@
 | Git workflow | [`docs/git-flow.md`](docs/git-flow.md) |
 
 **Trạng thái hiện tại**: Phase 0 — Foundation ✅ **Done (8/8)** — chi tiết ở [`Backlog-phase-0.md`](Backlog-phase-0.md).
-Phase 1 (Walking skeleton) 🔵 **In Progress**: `identity-service` chạy được (register/login + JWT + JWKS) — xem
-[Backlog.md](Backlog.md) → `SL-1.1`.
+Phase 1 (Walking skeleton) 🔵 **In Progress**: `api-gateway` (8080) + `identity-service` (8081) chạy được và nối với
+nhau — register/login qua gateway, verify JWT bằng JWKS. Xem [Backlog.md](Backlog.md).
 
 ---
 
@@ -88,7 +88,8 @@ Bỏ qua hook khi thật cần (hạn chế tối đa): `LEFTHOOK=0 git commit -
 .
 ├── services/                     # mỗi service 1 thư mục kebab-case — Phase 1+
 │   ├── service-template/         # service mẫu (SL-0.4) — copy ra để tạo service mới
-│   └── identity-service/         # định danh + JWT RS256 + JWKS (SL-1.1) — DB riêng, Flyway
+│   ├── identity-service/         # định danh + JWT RS256 + JWKS (SL-1.1) — DB riêng, Flyway
+│   └── api-gateway/              # cửa vào duy nhất: routing + verify JWT (SL-1.2) — KHÔNG có DB
 ├── packages/                     # shared library hạ tầng (không chứa business logic của service)
 │   └── service-commons/          # log JSON · error response · correlation id · health check · env validator
 ├── infra/                        # docker compose, init SQL, config hạ tầng local — SL-0.3
@@ -332,6 +333,44 @@ curl -s localhost:8081/.well-known/jwks.json          # public key để service
 
 Khoá JWT: `iss` phải dạng URI (`https://identity.shoplab.local`) vì Spring Security coi `iss` là URL khi verify.
 TTL mặc định 15 phút (`IDENTITY_JWT_ACCESS_TTL`).
+
+---
+
+### api-gateway — `SL-1.2`
+
+**Cửa vào duy nhất** của hệ thống (port **8080**): route `/v1/**` tới service tương ứng, verify JWT **một chỗ**,
+giữ `traceId` xuyên suốt. Gateway **không** có DB (không sở hữu dữ liệu nào).
+
+| Path | Ai xử lý | Cần token? |
+|---|---|---|
+| `/v1/auth/**`, `/.well-known/**`, `/health`, `/ready` | identity-service (riêng `/health`, `/ready` do gateway) | **không** |
+| `/v1/users/**` | identity-service | **có** |
+| còn lại | — | có (401 nếu thiếu token; 404 nếu không có route) |
+
+```bash
+# Chạy gateway (identity phải healthy trước)
+docker compose -f infra/docker-compose.yml --env-file .env up -d --build api-gateway
+
+EMAIL="gw-$(date +%s)@shoplab.local"
+curl -s -X POST localhost:8080/v1/auth/register -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"password\":\"matkhau123\",\"displayName\":\"Gw\"}"
+TOKEN=$(curl -s -X POST localhost:8080/v1/auth/login -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"password\":\"matkhau123\"}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["accessToken"])')
+
+curl -s localhost:8080/v1/users/me                        # 401 (thiếu token)
+curl -s localhost:8080/v1/users/me -H "Authorization: Bearer $TOKEN"   # 200 {userId, role}
+
+# traceId dùng chung 2 service — so log 2 bên
+curl -s -o /dev/null -D - localhost:8080/v1/users/me -H "Authorization: Bearer $TOKEN" \
+  -H 'x-correlation-id: e2e-trace-abc123'
+docker logs shoplab-api-gateway    2>&1 | grep e2e-trace-abc123
+docker logs shoplab-identity-service 2>&1 | grep e2e-trace-abc123
+```
+
+Cách gateway xử lý token: verify chữ ký **RS256** bằng public key lấy từ **JWKS** của identity (cache 5 phút, tự nạp lại
+khi gặp `kid` lạ — rotate khoá không cần restart, có chặn dội). Token hợp lệ → gateway gắn `x-user-id`/`x-user-role`
+(**ghi đè** giá trị client gửi, kể cả trên route public). Lỗi phân biệt rõ: token sai → **401**, service đích không tới
+được → **503** (retry được).
 
 ---
 

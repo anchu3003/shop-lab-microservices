@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (chờ bắt đầu `SL-1.2`) |
-| **Ticket tiếp theo** | `SL-1.2` — `api-gateway`: routing + verify JWT |
+| **Ticket đang làm** | — (chờ bắt đầu `SL-1.3`) |
+| **Ticket tiếp theo** | `SL-1.3` — Walking skeleton E2E: register → login qua gateway |
 | **Số ticket chi tiết hiện có** | 17 (Phase 0: 8 — archive · Phase 1: 9) |
 
 ---
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 2 / 9 |
+| 1 | Walking skeleton | 🔵 In Progress | 3 / 9 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -110,8 +110,8 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | # | Ticket | Epic item | Ước lượng | Trạng thái |
 |---|---|---|---|---|
 | 1 | `SL-1.0` | *(phát sinh)* tối ưu chi phí CI | S | ✅ Done |
-| 2 | `SL-1.1` | `identity-service`: register/login + JWT | M | Todo |
-| 3 | `SL-1.2` | `api-gateway` bản mỏng | M | Todo |
+| 2 | `SL-1.1` | `identity-service`: register/login + JWT | M | ✅ Done |
+| 3 | `SL-1.2` | `api-gateway` bản mỏng | M | ✅ Done |
 | 4 | `SL-1.3` | **E2E sớm**: register → login qua gateway | S | Todo |
 | 5 | `SL-1.4` | `identity-service`: refresh token + RBAC | M | Todo |
 | 6 | `SL-1.5` | `catalog-service`: CRUD category/product | M | Todo |
@@ -291,7 +291,7 @@ run            event        concl     att  phút  ghi chú
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Review |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.0 |
 | **Ước lượng** | M |
@@ -437,6 +437,18 @@ $ curl -s -w ' [http %{http_code}]' localhost:8081/ready
 $ curl -s -w ' [http %{http_code}]' localhost:8081/health
 {"status":"UP"} [http 200]
 $ docker start shoplab-postgres → /ready http=200
+
+# --- AC: CI xanh, và job `test` THẬT SỰ chạy IT (không skip) ---
+$ gh run view 42037058543 --json jobs --jq '.jobs[]|"\(.name) -> \(.status)/\(.conclusion)"'
+lint (checkstyle + spotless)   -> completed/success
+test (unit + jacoco gate)      -> completed/success
+build-image (service-template) -> completed/success
+$ gh run view --job <test> --log | grep -E 'postgres:16-alpine|Tests run: 16'
+INFO tc.postgres:16-alpine -- Pull complete. 11 layers, pulled in 4s (downloaded 110 MB)
+INFO tc.postgres:16-alpine -- Container is started (JDBC URL: jdbc:postgresql://localhost:32769/test)
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 28.48 s
+        -- in com.shoplab.identity.IdentityServiceApplicationIT
+[INFO] BUILD SUCCESS   Total time: 01:24 min
 ```
 
 **Learning note**
@@ -471,7 +483,7 @@ $ docker start shoplab-postgres → /ready http=200
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.1 |
 | **Ước lượng** | M |
@@ -506,16 +518,16 @@ theo `ApiError`; `x-correlation-id` được giữ và truyền tiếp để log
 
 **Acceptance Criteria**
 
-- [ ] `curl localhost:8080/health` → 200; container `healthy` trong compose
-- [ ] `POST /v1/auth/register` **qua gateway (8080)** → 201, response **giống hệt** khi gọi thẳng 8081
-- [ ] Gọi endpoint protected **không** token → **401** `ApiError` (`code`, `traceId` có giá trị)
-- [ ] Gọi với token hợp lệ → 200; service đích **nhận được** `x-user-id`/`x-user-role` (chứng minh bằng log)
-- [ ] `x-correlation-id` do client gửi được **giữ nguyên** xuyên gateway → identity (so log 2 bên)
-- [ ] Không gửi `x-correlation-id` → gateway tự sinh; log 2 bên **cùng** một traceId
-- [ ] Token hết hạn / sai chữ ký → 401, **không** lộ chi tiết nội bộ
-- [ ] `docker stop` identity → gọi qua gateway trả **503** `ApiError`, gateway **không** sập
-- [ ] `/ready` của gateway phản ánh dependency (503 khi identity chết) — giống cơ chế của template
-- [ ] `mvn verify` xanh + CI xanh
+- [x] `curl localhost:8080/health` → 200; container `healthy` trong compose
+- [x] `POST /v1/auth/register` **qua gateway (8080)** → 201, response **giống hệt** khi gọi thẳng 8081
+- [x] Gọi endpoint protected **không** token → **401** `ApiError` (`code`, `traceId` có giá trị)
+- [x] Gọi với token hợp lệ → 200; service đích **nhận được** `x-user-id`/`x-user-role` (chứng minh bằng log)
+- [x] `x-correlation-id` do client gửi được **giữ nguyên** xuyên gateway → identity (so log 2 bên)
+- [x] Không gửi `x-correlation-id` → gateway tự sinh; log 2 bên **cùng** một traceId
+- [x] Token hết hạn / sai chữ ký → 401, **không** lộ chi tiết nội bộ
+- [x] `docker stop` identity → gọi qua gateway trả **503** `ApiError`, gateway **không** sập
+- [x] `/ready` của gateway phản ánh dependency (503 khi identity chết) — giống cơ chế của template
+- [x] `mvn verify` xanh + CI xanh
 
 **Ghi chú kỹ thuật**
 
@@ -530,7 +542,107 @@ theo `ApiError`; `x-correlation-id` được giữ và truyền tiếp để log
 - **Không** bọc lại response của service đích (tránh double-encode); lỗi do gateway sinh ra dùng `ApiError` của commons.
 - Giữ nguyên `permissions: contents: read` + `concurrency` của CI (SL-1.0).
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-05 — output thật; WSL2 · JDK 21 · Docker 29.9.2)*
+
+File tạo: `services/api-gateway/**` (gateway + 71 test) · `services/identity-service/…/user/{UserController,CurrentUserResponse}.java` (endpoint protected để chứng minh AC).
+File sửa: `pom.xml` (thêm module) · `packages/service-commons/…/ErrorCode.java` (+`UNAVAILABLE` 503) · `infra/docker-compose.yml` · `.env.example` · **cả 3 `Dockerfile`** (thiếu pom module → Maven chết) · `README.md` · `Backlog.md`.
+
+```console
+# --- AC: mvn verify (spotless + checkstyle + unit test + IT + jacoco gate) ---
+$ mvn -B -pl services/api-gateway,services/identity-service -am verify
+[INFO] ShopLab :: Service Commons .... Tests run: 37, Failures: 0, Errors: 0   · 0 Checkstyle violations
+[INFO] ShopLab :: Identity Service ... Tests run: 39, Failures: 0, Errors: 0   (unit)
+[INFO]                                Tests run: 16, Failures: 0, Errors: 0   (IT — Testcontainers)
+[INFO] ShopLab :: API Gateway ........ Tests run: 71, Failures: 0, Errors: 0   (unit + component, KHÔNG cần Docker)
+[INFO] 0 Checkstyle violations · All coverage checks have been met.
+[INFO] BUILD SUCCESS
+
+# --- AC: container healthy + /health + /ready ---
+$ docker compose … ps
+shoplab-api-gateway  Up (healthy)   shoplab-identity-service  Up (healthy)   shoplab-postgres  Up (healthy)
+$ curl -s -w ' [http %{http_code}]\n' localhost:8080/health
+{"status":"UP"} [http 200]
+$ curl -s localhost:8080/ready
+{"status":"UP","dependencies":[{"name":"identity-service","status":"UP","detail":"ok","latency":"PT0.005937886S"}]}
+
+# --- AC: register/login QUA GATEWAY, so với gọi thẳng 8081 ---
+$ curl -s -X POST localhost:8080/v1/auth/register … -d '{"email":"gw2-…@shoplab.local",…}'
+{"id":"cb9c88a0-…","email":"gw2-…@shoplab.local","displayName":"Gw2","role":"BUYER","createdAt":"…"}  [http 201]
+$ curl -s -X POST localhost:8080/v1/auth/login …   → [http 200]
+$ curl -s -X POST localhost:8081/v1/auth/login …   → [http 200]
+cung keys: True | cung tokenType/expiresIn: True        ← gateway không bọc/diễn giải lại response
+
+# --- AC: protected 401 khi thiếu token · 200 + x-user-* khi có token ---
+$ curl -s -w '\n[http %{http_code}]\n' localhost:8080/v1/users/me
+{"code":"UNAUTHORIZED","message":"Thiếu token","traceId":"3705519a-…","path":"/v1/users/me"}  [http 401]
+$ curl -s localhost:8080/v1/users/me -H "Authorization: Bearer $TOKEN"
+{"userId":"801fb6ad-09e0-4728-91f0-e3928d9b59bd","role":"BUYER"}   [http 200]
+#   ↑ identity-service trả đúng danh tính ⇒ gateway ĐÃ gắn x-user-id/x-user-role khi forward
+```
+
+```console
+# --- AC: correlation id xuyên 2 service (so log 2 bên) ---
+$ curl -s -o /dev/null -D - localhost:8080/v1/users/me -H "Authorization: Bearer $TOKEN" -H 'x-correlation-id: e2e-trace-abc123'
+x-correlation-id: e2e-trace-abc123
+$ docker logs shoplab-api-gateway 2>&1 | grep e2e-trace-abc123
+{"msg":"http GET /v1/users/me -> 200 (13 ms)","traceId":"e2e-trace-abc123","service":"api-gateway"}
+$ docker logs shoplab-identity-service 2>&1 | grep e2e-trace-abc123
+{"msg":"http GET /v1/users/me -> 200 (1 ms)","traceId":"e2e-trace-abc123","service":"identity-service"}
+#   ↑ CÙNG một traceId ở 2 service ⇒ debug 1 request xuyên service làm được
+
+$ (không gửi x-correlation-id) → gateway sinh: 9c45e3c1-551d-42f0-8f92-6186c185fb08
+  api-gateway      → traceId=9c45e3c1-…
+  identity-service → traceId=9c45e3c1-…      ← vẫn cùng một giá trị
+
+# --- AC: token sai → 401 (không lộ chi tiết) ---
+$ (token hết hạn, ký THẬT bằng khoá dev, exp quá khứ)
+{"code":"UNAUTHORIZED","message":"token hết hạn","traceId":"fbe7b6a2-…"}        [http 401]
+$ (token sửa 6 ký tự cuối của chữ ký)
+{"code":"UNAUTHORIZED","message":"chữ ký không hợp lệ","traceId":"f2f8a979-…"}  [http 401]
+$ (Authorization: Bearer khong-phai-token) → [http 401]
+$ (curl :8080/version KHÔNG token) → [http 401]     ← policy: chỉ 4 pattern trong public-paths là public
+
+# --- AC: identity chết → 503, gateway KHÔNG sập ---
+$ docker stop shoplab-identity-service
+$ curl -s localhost:8080/v1/users/me -H "Authorization: Bearer $TOKEN"
+{"code":"UNAVAILABLE","message":"Service đích không tới được: http://identity-service:8081","traceId":"7b963977-…"} [http 503]
+$ curl -s localhost:8080/health   → {"status":"UP"}  [http 200]   ← liveness không check dependency
+$ curl -s localhost:8080/ready    → {"status":"DOWN","dependencies":[{"name":"identity-service","status":"DOWN",…}]} [http 503]
+$ docker ps | grep gateway        → Up (healthy)                  ← gateway vẫn sống
+$ docker start shoplab-identity-service → /v1/users/me 200 · /ready 200   (hồi phục, không cần restart gateway)
+
+# --- AC: CI xanh, và job `test` THẬT SỰ chạy test gateway + IT ---
+$ gh run view 42046262655 --json jobs --jq '.jobs[]|"\(.name) -> \(.status)/\(.conclusion)"'
+lint (checkstyle + spotless)   -> completed/success
+test (unit + jacoco gate)      -> completed/success
+build-image (service-template) -> completed/success
+$ gh run view --job <test> --log | grep -E 'API Gateway|Tests run: 71|Tests run: 16'
+[INFO] Tests run: 16, Failures: 0, Errors: 0, Skipped: 0 -- in com.shoplab.identity.IdentityServiceApplicationIT
+[INFO] Tests run: 71, Failures: 0, Errors: 0, Skipped: 0
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [ 19.298 s]
+[INFO] BUILD SUCCESS   Total time:  01:49 min
+```
+
+**Learning note**
+
+- **Gateway tự viết thì phải tự lo "ranh giới segment"**: prefix `/v1/auth` KHÔNG được khớp `/v1/authz` — dùng
+  `startsWith` thô là bug kinh điển. Test riêng cho case này (`RouteMatcherTest`) rẻ hơn nhiều so với debug sau.
+- **Header danh tính phải bị XOÁ, không chỉ ghi đè**: nếu chỉ `setHeader` ở chỗ forward, client vẫn có thể lọt
+  `x-user-id` trên route public (hoặc khi code forward quên). Bọc request bằng `UserHeaderRequest` để mọi đường đọc
+  header đều thấy giá trị do gateway quyết định.
+- **Cache JWKS phải có cả TTL lẫn "nạp lại khi gặp `kid` lạ"** — và nạp lại phải **chặn dội**: token có `kid` rác là
+  đầu vào miễn phí, không chặn thì mỗi request thành 1 lần gọi identity. Lần đầu viết tôi quên chặn dội; test
+  `shouldThrottleForcedRefresh` mới lộ ra.
+- **401 vs 503 là khác nhau về ngữ nghĩa**: token sai = lỗi client (đừng retry); không lấy được JWKS = lỗi hạ tầng
+  (retry được). Gộp thành 401 sẽ khiến client đi đăng nhập lại vô ích khi identity chỉ đang khởi động.
+- **Algorithm confusion là thật**: chặn `alg != RS256` TRƯỚC khi tra khoá (`JwtVerifierTest.shouldRejectHs256Token`
+  không cần gọi JWKS) — nếu chỉ dựa vào thư viện verify, token HS256 ký bằng chính public key có thể lọt.
+- **Bẫy Dockerfile lặp lại lần 2**: thêm module Maven ⇒ **mọi** Dockerfile phải thêm 1 dòng `COPY …/pom.xml` (lần này
+  cả `identity-service` và `service-template` đều vỡ). Cảnh báo đã có trong README nhưng vẫn dính → khi thêm module,
+  chạy `grep -c 'COPY services/' services/*/Dockerfile` để kiểm.
+- **Test của tôi cũng có thể sai**: lần verify đầu, login qua gateway trả 401 — hoá ra 2 tool call chạy **song song**
+  nên login tới trước khi register commit (identity đúng khi trả 401 cho user chưa tồn tại). Đọc log 2 bên mới phân
+  biệt được "lỗi sản phẩm" với "lỗi kịch bản test".
 
 **Learning note** *(điền khi Done)*
 
@@ -1012,6 +1124,13 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.1 | **`spring-boot:repackage` chạy TRƯỚC failsafe** ⇒ failsafe lấy classpath từ jar "fat" → `NoClassDefFoundError` cho class của chính module; fix bằng `<classesDirectory>${project.build.outputDirectory}</classesDirectory>`. Kèm: **Jackson 3** đổi package (`tools.jackson.databind`). |
 | 2026-11-05 | SL-1.1 | **Non-root container + bind-mount secret = uid mismatch**: private key mode 600 của host (uid 1000) không đọc được bởi uid hệ thống trong image → chạy container bằng `user: "${SHOPLAB_UID}:${SHOPLAB_GID}"`. Và **mọi Dockerfile phải copy pom của TẤT CẢ module** — thêm module thứ 3 làm build image của `service-template` chết với `Child module ... does not exist`. |
 | 2026-11-05 | SL-1.1 | **Spring Security 7 coi `iss` là URL** (`Jwt.getIssuer()` ném lỗi nếu không parse được) → đặt `iss` dạng URI. **Test với `Clock` cố định**: decoder phải dùng cùng clock, nếu không test "đỏ vì đồng hồ" chứ không phải vì logic sai. |
+| 2026-11-05 | SL-1.2 | **Gateway tự viết: khớp route phải theo RANH GIỚI segment**, không dùng `startsWith` thô — prefix `/v1/auth` mà khớp `/v1/authz` là bug kinh điển. Test riêng case này rẻ hơn debug sau. |
+| 2026-11-05 | SL-1.2 | **Header danh tính (`x-user-*`) phải bị XOÁ chứ không chỉ ghi đè**: chỉ `setHeader` ở chỗ forward thì client vẫn lọt được trên route public. Bọc request (`UserHeaderRequest`) để **mọi** đường đọc header thấy đúng giá trị do gateway quyết định. |
+| 2026-11-05 | SL-1.2 | **Cache JWKS cần cả TTL lẫn "nạp lại khi gặp `kid` lạ" — và phải CHẶN DỘI**: token với `kid` rác là input miễn phí, không chặn thì mỗi request thành 1 lần gọi identity (tự DoS). Lần viết đầu tôi quên chặn dội; test `shouldThrottleForcedRefresh` mới lộ. |
+| 2026-11-05 | SL-1.2 | **401 và 503 khác nhau về ngữ nghĩa**: token sai = lỗi client (đừng retry); không lấy được JWKS / service đích chết = lỗi hạ tầng (retry được). Gộp thành 401 khiến client đăng nhập lại vô ích khi identity chỉ đang khởi động. |
+| 2026-11-05 | SL-1.2 | **Algorithm confusion**: chặn `alg != RS256` **trước** khi tra khoá — token HS256 ký bằng chính public key có thể lọt qua thư viện verify lỏng. |
+| 2026-11-05 | SL-1.2 | **Bẫy Dockerfile lặp lần 2**: thêm module Maven ⇒ **mọi** Dockerfile phải thêm 1 dòng `COPY …/pom.xml` (lần này `identity-service` + `service-template` cùng vỡ). Kiểm nhanh: `grep -c 'COPY services/' services/*/Dockerfile`. |
+| 2026-11-05 | process | **Push race với lúc merge ⇒ mất commit**: commit cuối của `SL-1.1` (`feda53a` — status Done + block CI evidence + changelog) push lên đúng lúc user merge; squash merge dùng state **trước** commit đó, rồi nhánh bị xoá ⇒ thay đổi biến mất khỏi `main`. **Bài học**: sau khi merge phải `git show <merge-sha> --stat`/`grep` kiểm nội dung trên `main`, đừng tin "đã push là xong"; commit bị mất vẫn cứu được qua reflog nếu chưa GC. Đã khôi phục trong nhánh `SL-1.2`. |
 
 ---
 
@@ -1054,7 +1173,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-03 | Tạo **tag + GitHub Release `phase-0`** trên merge commit `259a7e9` (ADR-0005). Verify: push tag **không** trigger CI (workflow chỉ khai `on.push.branches`) → 0 phút Actions; `git show phase-0:<file>` đọc được snapshot. |
 | 2026-11-03 | `SL-1.0` → `Done`: tối ưu chi phí CI — `paths-ignore` (bỏ run chỉ-docs), `push` chỉ trên `main` (hết run trùng), kill-switch `vars.CI_ENABLED`, bỏ qua draft PR (`ready_for_review`). Verify thật: push nhánh feature **0 run**, draft → run `skipped` (0 phút), `CI_ENABLED=false` + re-run → `skipped`, `true` → 3/3 xanh, merge → run `main` xanh, **PR chỉ-docs → 0 run**. Cùng kịch bản: **8 phút vs ~19,5 phút (−59%)**. Merge PR [#7](https://github.com/anchu3003/shop-lab-microservices/pull/7) (squash). **Phase 1 → 1 / 1**. |
 | 2026-11-03 | **Breakdown Phase 1** → 9 ticket chi tiết: `SL-1.0` Done · `SL-1.1`…`SL-1.8` Todo (identity register/login + JWT RS256 + JWKS · gateway routing/verify JWT · **E2E sớm** · refresh token + RBAC · catalog CRUD · SKU/paging/seed · E2E đầy đủ + runbook · OpenAPI spec). Chốt 7 quyết định khi breakdown (gateway **MVC tự viết** · JWT **RS256 + JWKS** · **JPA + Flyway** · **có Testcontainers** · OpenAPI **sinh từ code** · smoke chạy **local** · register luôn là `buyer`). |
-| 2026-11-05 | `SL-1.1` → `Review`: nhánh `feat/sl-1.1-identity-service`. `identity-service` (port 8081) — **Flyway** + register/login + **JWT RS256** + **JWKS**; `service-commons` thêm `UNAUTHORIZED`/`FORBIDDEN`; `tools/gen-dev-keys.sh` (khoá dev, không commit); compose + `.env.example`. Verify thật: container `healthy` · Flyway v1 áp dụng · BCrypt trong DB (60 ký tự) · **chữ ký verify bằng public key từ JWKS** · 401 không lộ email · fail-fast khi thiếu khoá · `/ready` 503 khi DB chết. `mvn verify`: 37 + 39 unit + **16 IT** (Testcontainers). |
+| 2026-11-05 | `SL-1.1` → `Done`: nhánh `feat/sl-1.1-identity-service`. `identity-service` (port 8081) — **Flyway** + register/login + **JWT RS256** + **JWKS**; `service-commons` thêm `UNAUTHORIZED`/`FORBIDDEN`; `tools/gen-dev-keys.sh` (khoá dev, không commit); `tools/secret-scan.sh` fix false positive; compose + `.env.example`. Verify thật: container `healthy` · Flyway v1 áp dụng · BCrypt trong DB (60 ký tự) · **chữ ký verify bằng public key từ JWKS** · 401 không lộ email · fail-fast khi thiếu khoá · `/ready` 503 khi DB chết. `mvn verify`: 37 + 39 unit + **16 IT** (Testcontainers); **CI xanh 3/3**, job `test` chạy IT thật (1:24). PR [#9](https://github.com/anchu3003/shop-lab-microservices/pull/9). |
+| 2026-11-05 | `SL-1.2` → `Done`: nhánh `feat/sl-1.2-api-gateway`. `api-gateway` (port 8080) — routing theo config (prefix dài nhất thắng) · verify **JWT RS256 qua JWKS** (cache 5m + nạp lại khi `kid` lạ, có chặn dội) · gắn/ghi đè `x-user-id`/`x-user-role` · propagate `x-correlation-id` · **401** token sai / **503** service đích chết. `service-commons` thêm `UNAVAILABLE` (503). `identity-service` thêm `GET /v1/users/me` (protected). Verify thật: container healthy · register/login qua gateway giống hệt gọi thẳng · 401/200/503 đúng · traceId **trùng** ở log 2 service. `mvn verify`: 37 + 39 + **16 IT** + **71 test gateway**; **CI xanh 3/3** (job `test` 1:49). PR [#10](https://github.com/anchu3003/shop-lab-microservices/pull/10). Đồng thời khôi phục 3 thay đổi doc của `SL-1.1` bị mất do push race lúc merge (xem Learning log). |
 
 
 
