@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.shoplab.catalog.category.CategoryRepository;
+import com.shoplab.catalog.sku.SkuRepository;
 import com.shoplab.commons.error.NotFoundException;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -26,9 +27,10 @@ class ProductServiceTest {
 
   private final ProductRepository products = mock(ProductRepository.class);
   private final CategoryRepository categories = mock(CategoryRepository.class);
+  private final SkuRepository skus = mock(SkuRepository.class);
 
   private final ProductService service =
-      new ProductService(products, categories, Clock.fixed(NOW, ZoneOffset.UTC));
+      new ProductService(products, categories, skus, Clock.fixed(NOW, ZoneOffset.UTC));
 
   @Test
   @DisplayName("tạo product: trim tên, description rỗng → null, giá giữ nguyên BigDecimal")

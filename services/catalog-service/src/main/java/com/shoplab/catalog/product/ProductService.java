@@ -1,24 +1,33 @@
 package com.shoplab.catalog.product;
 
 import com.shoplab.catalog.category.CategoryRepository;
+import com.shoplab.catalog.sku.SkuRepository;
+import com.shoplab.catalog.web.PageResponse;
 import com.shoplab.commons.error.NotFoundException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Nghiệp vụ product: tạo / đọc / sửa / xoá (CRUD ở mức Phase 1). */
+/** Nghiệp vụ product: tạo / đọc / sửa / xoá / list có filter (CRUD + truy vấn Phase 1). */
 @Service
 public class ProductService {
 
   private final ProductRepository products;
   private final CategoryRepository categories;
+  private final SkuRepository skus;
   private final Clock clock;
 
-  public ProductService(ProductRepository products, CategoryRepository categories, Clock clock) {
+  public ProductService(
+      ProductRepository products, CategoryRepository categories, SkuRepository skus, Clock clock) {
     this.products = products;
     this.categories = categories;
+    this.skus = skus;
     this.clock = clock;
   }
 
@@ -50,6 +59,40 @@ public class ProductService {
   @Transactional(readOnly = true)
   public ProductResponse findById(UUID id) {
     return ProductResponse.from(require(id));
+  }
+
+  /**
+   * Chi tiết product kèm SKU — dùng cho {@code GET /v1/products/{id}}.
+   *
+   * @throws NotFoundException khi id không tồn tại
+   */
+  @Transactional(readOnly = true)
+  public ProductDetailResponse findDetail(UUID id) {
+    Product product = require(id);
+    return ProductDetailResponse.from(product, skus.findByProductIdOrderByCodeAsc(id));
+  }
+
+  /**
+   * List có filter + phân trang + sort (public cho guest).
+   *
+   * <p>Sort lấy từ {@link ProductQuery} — đã validate whitelist, nên {@code Sort.by} ở đây không
+   * thể nhận field lạ từ client.
+   */
+  @Transactional(readOnly = true)
+  public PageResponse<ProductResponse> search(ProductQuery query) {
+    Pageable pageable =
+        PageRequest.of(
+            query.page(), query.size(), Sort.by(query.sortDirection(), query.sortField()));
+    // `q` đã được lower-case ở ProductQuery ⇒ so với `lower(p.name)` trong câu query.
+    String like = query.q() == null ? null : "%" + query.q() + "%";
+
+    Page<Product> found = products.search(query.categoryId(), like, pageable);
+    return new PageResponse<>(
+        found.getContent().stream().map(ProductResponse::from).toList(),
+        found.getNumber(),
+        found.getSize(),
+        found.getTotalElements(),
+        found.getTotalPages());
   }
 
   /**

@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.6` — `catalog-service`: SKU + phân trang/filter + seed data |
-| **Ticket tiếp theo** | `SL-1.7` — E2E smoke đầy đủ + runbook Phase 1 |
+| **Ticket đang làm** | `SL-1.7` — E2E smoke đầy đủ + runbook Phase 1 |
+| **Ticket tiếp theo** | `SL-1.8` — OpenAPI spec cho các endpoint Phase 1 |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -115,7 +115,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 4 | `SL-1.3` | **E2E sớm**: register → login qua gateway | S | ✅ Done |
 | 5 | `SL-1.4` | `identity-service`: refresh token + RBAC | M | ✅ Done |
 | 6 | `SL-1.5` | `catalog-service`: CRUD category/product | M | ✅ Done |
-| 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | Todo |
+| 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | ✅ Done |
 | 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | Todo |
 | 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
 | 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
@@ -978,7 +978,7 @@ script verify Python (login thật → token thật → JWKS thật): **36 PASS 
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.5 |
 | **Ước lượng** | M |
@@ -1034,9 +1034,78 @@ Catalog có dữ liệu mẫu dùng được ngay sau `up -d`, API duyệt sản
   **không** dùng cho dữ liệu prod (ghi rõ trong comment file).
 - Giới hạn `size` tối đa (ví dụ 100) để tránh client xin 1 triệu row — đây là dạng "rate limit ở tầng dữ liệu" đầu tiên.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify**
 
-**Learning note** *(điền khi Done)*
+**Hành vi đã chọn cho tham số sai** (AC yêu cầu ghi rõ): `size` ngoài **1..100**, `page < 0`,
+`sort` không thuộc whitelist, `categoryId` không phải UUID, `q` > 100 ký tự → **400
+`VALIDATION_ERROR`** kèm message nêu đúng field. **Không clamp** — clamp làm client tưởng đã lấy đủ
+dữ liệu (bug im lặng). Mặc định: `page=0`, `size=20`, `sort=createdAt,desc`.
+
+**Unit + IT** — `mvn -B -ntp -pl services/catalog-service -am verify`:
+
+```console
+[INFO] Tests run: 60, Failures: 0, Errors: 0, Skipped: 0   ← catalog unit (36 → 60: +ProductQuery 20, +Sku 4)
+[INFO] Tests run: 18, Failures: 0, Errors: 0, Skipped: 0   ← catalog IT (12 → 18)
+[INFO] BUILD SUCCESS
+```
+
+**AC trên stack thật** — script Python qua gateway: **35 PASS / 0 FAIL** (chạy cả trên DB cũ *và*
+sau `down -v && up -d`).
+
+| AC | Kết quả đo được |
+|---|---|
+| `GET /v1/products?page=0&size=5` → 5 phần tử, `totalElements` = 20 (seed), `totalPages` = 4 | PASS |
+| `page=1` khác trang 0, **không trùng id** (assert `isdisjoint`) | PASS |
+| `size=0` · `size=1000` · `page=-1` · `sort=drop table` · `sort=name,asc` → **400** + `VALIDATION_ERROR` | PASS |
+| `size=100` (biên) → **200** | PASS |
+| `categoryId=<Dien thoai>` → chỉ 4 product của category đó | PASS |
+| `q=IPHONE` (hoa) và `q=iphone` (thường) → **cùng** kết quả, tìm thấy `iPhone 15` | PASS |
+| `sort=price,desc` → giá giảm dần; `sort=price,asc` → tăng dần; `sort=createdAt,asc` → thời gian tăng dần | PASS |
+| `GET /v1/products` **không** token → **200** (public cho guest) | PASS |
+| `GET /v1/products/{id}` trả kèm `skus` (product seed có đúng 2 SKU) | PASS |
+| `POST /v1/products/{id}/skus` trùng `code` → **409** | PASS |
+| Sau `docker compose down -v && up -d`: **5 category / 20 product / 24 sku** có sẵn trong DB | PASS |
+| Restart service (`docker restart`): số row **không đổi** (5/20/24 → 5/20/24) — seed idempotent | PASS |
+| `EXPLAIN` sort mặc định: **`Index Scan Backward using ix_product_created_at`** | PASS |
+| `EXPLAIN` filter category (buộc `enable_seqscan=off`): **`Index Scan using ix_product_category_id`** | PASS |
+
+**Plan thật của Postgres** (query list mặc định `order by created_at desc limit 5`):
+
+```console
+                              QUERY PLAN
+------------------------------------------------------------------
+ Limit
+   ->  Index Scan Backward using ix_product_created_at on product
+(2 rows)
+```
+
+**Regression**: `bash tools/e2e-smoke.sh` → **7 PASS / 0 FAIL**.
+
+**Learning note**
+
+- **Planner không dùng index khi bảng nhỏ — và điều đó KHÔNG có nghĩa index sai.** Với 20 row,
+  `seq scan` rẻ hơn `index scan` (đọc cả bảng vẫn ít I/O hơn nhảy index + random read). Muốn chứng
+  minh index *dùng được* thì `SET enable_seqscan=off` rồi EXPLAIN, và **ghi rõ đã ép**. Còn query
+  sort mặc định thì `Index Scan Backward` được chọn **tự nhiên** ngay cả với 20 row, vì `limit 5`
+  làm index scan rẻ hơn hẳn. Bài học: **EXPLAIN phải kèm bối cảnh dữ liệu + query cụ thể**, không
+  phải câu "đã dùng index" chung chung.
+- **`q` với `%...%` thì functional index `lower(name)` KHÔNG cứu được**: leading wildcard (`LIKE
+  '%abc%'`) không dùng được btree. Index đó chỉ có ích khi search prefix (`LIKE 'abc%'`). Muốn search
+  giữa chuỗi ở scale lớn thì phải `tsvector`/trigram hoặc search engine (Phase 3/8). Đã thêm index để
+  sẵn nhưng **ghi rõ giới hạn** thay vì tuyên bố "đã tối ưu".
+- **Repeatable migration (`R__`) phải viết idempotent**, vì Flyway chạy lại nó mỗi khi checksum đổi
+  (và ở lần boot đầu tiên trên DB mới). `ON CONFLICT (id) DO NOTHING` + UUID cố định ⇒ `up -d`
+  nhiều lần không nhân đôi dữ liệu. Verify bằng **restart thật** rồi so số row (5/20/24 → 5/20/24),
+  không tin vào việc "đọc code thấy đúng".
+- **Whitelist sort là chốt chặn SQL injection ở dạng khó thấy**: `sort` đi vào `Sort.by(...)` của
+  Spring Data, tức là vào ORDER BY của SQL. Value client gửi **chỉ được tra trong map** rồi mới dùng,
+  không bao giờ ghép chuỗi. Test `sort=drop table` phải assert **400**, không phải "không crash".
+- **Validate tham số ở tầng parse (`ProductQuery`) thay vì để Spring bind**: Spring bind sai kiểu trả
+  400 nhưng body không phải `ApiError` (client phải xử lý 2 format lỗi). Tách record `ProductQuery`
+  còn cho phép **20 unit test** chạy trong 0,2s — rẻ hơn nhiều so với test qua HTTP.
+- **Trang chi tiết và trang list phải khác DTO**: list trả `ProductResponse` (không SKU) để tránh N+1
+  (20 product × 1 query SKU); chi tiết trả `ProductDetailResponse` có `skus`. Cùng một entity nhưng
+  hai nhu cầu đọc khác nhau — dùng chung DTO là tự tạo N+1 mà không ai thấy cho tới khi tải cao.
 
 ### SL-1.7 — E2E smoke test đầy đủ + runbook Phase 1
 
@@ -1915,6 +1984,13 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.2 | **401 và 503 khác nhau về ngữ nghĩa**: token sai = lỗi client (đừng retry); không lấy được JWKS / service đích chết = lỗi hạ tầng (retry được). Gộp thành 401 khiến client đăng nhập lại vô ích khi identity chỉ đang khởi động. |
 | 2026-11-05 | SL-1.2 | **Algorithm confusion**: chặn `alg != RS256` **trước** khi tra khoá — token HS256 ký bằng chính public key có thể lọt qua thư viện verify lỏng. |
 | 2026-11-05 | SL-1.2 | **Bẫy Dockerfile lặp lần 2**: thêm module Maven ⇒ **mọi** Dockerfile phải thêm 1 dòng `COPY …/pom.xml` (lần này `identity-service` + `service-template` cùng vỡ). Kiểm nhanh: `grep -c 'COPY services/' services/*/Dockerfile`. |
+| 2026-11-06 | SL-1.6 | **Planner bỏ index trên bảng nhỏ KHÔNG có nghĩa index sai**: 20 row ⇒ seq scan rẻ hơn index scan. Muốn chứng minh index dùng được thì `SET enable_seqscan=off` + EXPLAIN và **ghi rõ đã ép**; còn `order by created_at desc limit 5` thì planner **tự** chọn `Index Scan Backward`. EXPLAIN luôn phải kèm bối cảnh dữ liệu + query cụ thể. |
+| 2026-11-06 | SL-1.6 | **`LIKE '%q%'` không dùng được btree** — functional index `lower(name)` chỉ cứu **prefix** search. Search giữa chuỗi ở scale lớn cần `tsvector`/trigram hoặc search engine (Phase 3/8); thêm index nhưng ghi rõ giới hạn thay vì tuyên bố "đã tối ưu". |
+| 2026-11-06 | SL-1.6 | **Repeatable migration (`R__`) phải idempotent**: Flyway chạy lại khi checksum đổi ⇒ `ON CONFLICT DO NOTHING` + UUID cố định. Verify bằng **restart thật** rồi so số row (5/20/24 → 5/20/24), không tin "đọc code thấy đúng" — và phải test cả `down -v && up -d`. |
+| 2026-11-06 | SL-1.6 | **Whitelist sort = chặn SQL injection ở dạng khó thấy** (`sort` đi thẳng vào `ORDER BY`). Value client gửi chỉ được **tra map**, không ghép chuỗi; test `sort=drop table` phải assert **400**, không phải "không crash". |
+| 2026-11-06 | SL-1.6 | **List và detail phải khác DTO**: list trả product **không** kèm SKU (tránh N+1: 20 product × 1 query), detail trả kèm `skus`. Dùng chung DTO là tự tạo N+1 mà không ai thấy cho tới khi tải cao. |
+| 2026-11-06 | SL-1.6 | **Validate query param ở tầng parse (`ProductQuery`) thay vì để Spring bind**: bind sai kiểu của Spring trả 400 nhưng body **không phải `ApiError`** ⇒ client phải xử lý 2 format lỗi. Tách record còn cho 20 unit test chạy 0,2s thay vì test qua HTTP. |
+
 | 2026-11-05 | process | **Push race với lúc merge ⇒ mất commit**: commit cuối của `SL-1.1` (`feda53a` — status Done + block CI evidence + changelog) push lên đúng lúc user merge; squash merge dùng state **trước** commit đó, rồi nhánh bị xoá ⇒ thay đổi biến mất khỏi `main`. **Bài học**: sau khi merge phải `git show <merge-sha> --stat`/`grep` kiểm nội dung trên `main`, đừng tin "đã push là xong"; commit bị mất vẫn cứu được qua reflog nếu chưa GC. Đã khôi phục trong nhánh `SL-1.2`. |
 | 2026-11-05 | SL-1.9 | **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` đánh giá theo **toàn bộ diff của PR** → commit docs trong PR **có code** vẫn tốn 1 run. `[skip ci]` xử lý đúng case đó. Nhưng GitHub đọc skip instruction ở **HEAD commit của PR** ⇒ docs commit ở cuối PR skip luôn run của cả PR (check treo `Pending`) → đừng tin nó, hãy kiểm bằng **diff thật**. |
 | 2026-11-05 | SL-1.9 | **Guard cũng phải test theo đúng thứ tự**: lần đầu test guard "PR draft" **sau khi** đã chạy `gh pr ready` ⇒ tưởng guard hỏng, thực ra kịch bản test sai. Test guard cần kịch bản cẩn thận y như test code. |
@@ -1976,6 +2052,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | `SL-1.13` → `Done`: `service-template` vào **compose profile** `template` ⇒ `up -d` mặc định chỉ dựng hệ thống thật (không tốn RAM/build cho service mẫu). Verify: `config --services` (không profile) **không** có template · `up -d` không tạo `shoplab-service-template` · `--profile template up -d service-template` → Started, `/ready` 200 · gateway/identity vẫn healthy. Cập nhật `README.md` (bảng port + lệnh) + comment `infra/docker-compose.yml`. |
 | 2026-11-05 | `SL-1.3` → `Done`: `tools/e2e-smoke.sh` — health gateway+identity → register (email random) → login → `/v1/users/me` có token → 200 · thiếu token → **401** · đối chiếu `traceId` trong log identity; `PASS/FAIL` từng bước + exit code. Verify: **7/7 PASS** · exit 0 · chạy lại 3 lần pass · **test âm** (stop identity) → fail đúng bước `1b` + `exit=1`. Thêm mục README "E2E smoke". Sửa 2 bug: `date +%s%3N` ra nanosec → `%s%N`/1e6; curl connection-refused + `set -e` → `\| true`. |
 | 2026-11-06 | `SL-1.5` → `Done`: `catalog-service` (port **8082**, DB `catalog`, Flyway `V1__create_catalog.sql` với `price NUMERIC(12,2)` + `@Version` + FK/index) — `POST/GET /v1/categories`, `POST/GET/PUT/DELETE /v1/products`; guest **đọc** được, chỉ `seller`/`admin` **ghi**. Service **tự verify JWT qua JWKS của identity** (defense in depth: gọi thẳng :8082 không token vẫn 401, `x-user-role` client gửi bị bỏ qua). Error **400/401/403/404/409** đều là `ApiError` có `traceId`. Hạ tầng: module mới ở parent pom, 4 Dockerfile `COPY` pom mới, CI matrix **4 service**, compose + `.env.example` + gateway route `/v1/products` `/v1/categories`. Verify: **36 unit + 12 IT** (+37 commons) xanh; **36/36 mục AC** trên stack thật (seller 201 · buyer 403 · guest 200 · 404 · 400 details · 401 gọi thẳng · không leo quyền · `version` +1); `e2e-smoke` vẫn 7/7. Sửa 3 bug thật: `@PreAuthorize` → **500** thay vì 403, `@Version` trả số cũ trong response `PUT`, image build đỏ vì JaCoCo gate bị `-DskipITs`. |
+| 2026-11-06 | `SL-1.6` → `Done`: `catalog-service` có **SKU** (`V2__create_sku.sql`: `code` unique, `price_override` NULL = dùng giá product, `stock_hint` chỉ là gợi ý — tồn kho thật là việc của inventory Phase 2) + **list phân trang/filter/sort** (`GET /v1/products?page=&size=&categoryId=&q=&sort=` → `{content,page,size,totalElements,totalPages}`, public cho guest) + **seed dev** (`R__seed_dev_data.sql`: 5 category / 20 product / 24 SKU, idempotent bằng `ON CONFLICT`). Tham số sai (`size` ngoài 1..100 · `page<0` · `sort` lạ · `categoryId` không UUID) → **400 `VALIDATION_ERROR`**, **không clamp**; sort whitelist `price,asc|desc` · `createdAt,asc|desc`. Verify: **60 unit + 18 IT** xanh; **35/35 mục AC** trên stack thật (paging không trùng id · filter · `q` không phân biệt hoa/thường · sort đúng thứ tự · 400 cho mọi input xấu · SKU trong chi tiết · **`down -v && up -d` → 5/20/24 seed** · restart **không** nhân đôi · `EXPLAIN` dùng `ix_product_created_at`); `e2e-smoke` 7/7. |
+
 | 2026-11-05 | `SL-1.4` → `Done`: refresh token (**opaque 256-bit, lưu SHA-256**) + **rotate + reuse detection** (dùng lại token đã rotate ⇒ 401 **và revoke cả chuỗi**), logout, `GET /v1/admin/users` (ADMIN 200 / buyer **403**), security filter chain (identity **tự verify JWT** — defense in depth) + 401/403 trả **ApiError** có `traceId`. Seed `admin@`/`seller@` bằng `LocalDevUserSeeder` (chỉ `APP_ENV=local`). Verify: **46 unit + 22 IT** xanh; E2E **9 mục** trên stack thật (rotate/reuse/logout/RBAC/hash-trong-DB/**qua gateway**); `tools/e2e-smoke.sh` vẫn 7/7. Sửa 3 lỗi thật: `noRollbackFor` (revoke bị rollback), thiếu route `/v1/admin` ở gateway, path lạ 404→**401**. |
 
 
