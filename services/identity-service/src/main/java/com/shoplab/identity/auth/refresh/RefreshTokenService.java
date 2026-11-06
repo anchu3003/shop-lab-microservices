@@ -46,12 +46,17 @@ public class RefreshTokenService {
   private final RefreshTokenRepository tokens;
   private final Clock clock;
   private final Duration ttl;
+  private final Duration grace;
+
+  /** Chặn hop khi đi tìm token cuối chuỗi — dữ liệu hỏng/vòng lặp không được treo request. */
+  private static final int MAX_CHAIN_HOPS = 10;
 
   public RefreshTokenService(
       RefreshTokenRepository tokens, JwtProperties jwtProperties, Clock clock) {
     this.tokens = tokens;
     this.clock = clock;
     this.ttl = jwtProperties.refreshTokenTtl();
+    this.grace = jwtProperties.refreshReuseGrace();
   }
 
   /** Token vừa phát hành: {@code rawToken} trả cho client, {@code entity} là bản ghi trong DB. */
@@ -88,6 +93,18 @@ public class RefreshTokenService {
         tokens.findByTokenHash(hash(rawToken)).orElseThrow(InvalidRefreshTokenException::new);
 
     if (current.isRevokedOrRotated()) {
+      if (isReusedWithinGrace(current, now)) {
+        // Lặp request/đua giữa các tab hoặc mất mạng ngay sau khi server rotate ⇒ KHÔNG phạt người
+        // dùng: cấp token mới nối tiếp chuỗi (SL-1.18). Đây là đánh đổi có chủ ý: trong 30s, kẻ
+        // đánh cắp token cũ cũng lấy được token mới — nhưng cửa sổ hẹp và vẫn bị phát hiện nếu dùng
+        // lại sau đó.
+        LOG.info(
+            "refresh token dùng lại trong grace {} (tokenId={}, userId={}) — cấp token mới thay vì revoke",
+            grace,
+            current.id(),
+            current.userId());
+        return refreshWithinGrace(current, now);
+      }
       // REUSE: token đã rotate/revoke mà vẫn được dùng ⇒ coi như bị đánh cắp.
       LOG.warn(
           "phát hiện refresh token dùng lại (tokenId={}, userId={}) — thu hồi cả chuỗi",
@@ -128,6 +145,55 @@ public class RefreshTokenService {
    *
    * <p>Phòng thủ vòng lặp vô hạn: dữ liệu hỏng (A→B→A) sẽ bị chặn bằng tập {@code seen}.
    */
+  /**
+   * Token đã <b>rotate</b> (có {@code replacedBy}) trong vòng {@code grace} vừa qua?
+   *
+   * <p>Cố ý <b>không</b> áp dụng cho token bị revoke do logout ({@code replacedBy == null}) — nếu
+   * không thì "logout rồi dùng lại token cũ" sẽ hồi sinh phiên, đúng thứ người dùng vừa chủ động
+   * tắt.
+   */
+  private boolean isReusedWithinGrace(RefreshToken token, Instant now) {
+    return grace.compareTo(Duration.ZERO) > 0
+        && token.replacedBy() != null
+        && token.revokedAt() != null
+        && !now.isAfter(token.revokedAt().plus(grace));
+  }
+
+  /**
+   * Cấp token mới nối tiếp <b>token cuối</b> của chuỗi (không tạo nhánh, để {@code revokeChain} vẫn
+   * đi hết được chuỗi khi phát hiện đánh cắp thật).
+   *
+   * <p>Nếu token cuối đã bị revoke do logout ⇒ từ chối (không hồi sinh phiên).
+   */
+  private RotatedRefresh refreshWithinGrace(RefreshToken reused, Instant now) {
+    RefreshToken latest = latestInChain(reused);
+    if (latest.revokedAt() != null && latest.replacedBy() == null) {
+      LOG.warn("chuỗi refresh đã bị thu hồi (logout) — từ chối dùng lại token cũ");
+      throw new InvalidRefreshTokenException();
+    }
+    IssuedRefresh next = issue(reused.userId());
+    latest.rotateTo(next.entity().id(), now);
+    tokens.save(latest);
+    return new RotatedRefresh(reused.userId(), next.rawToken());
+  }
+
+  /** Đi tới token cuối chuỗi (giới hạn {@link #MAX_CHAIN_HOPS} hop). */
+  private RefreshToken latestInChain(RefreshToken start) {
+    RefreshToken cursor = start;
+    for (int hop = 0; hop < MAX_CHAIN_HOPS; hop++) {
+      UUID nextId = cursor.replacedBy();
+      if (nextId == null) {
+        return cursor;
+      }
+      Optional<RefreshToken> next = tokens.findById(nextId);
+      if (next.isEmpty()) {
+        return cursor;
+      }
+      cursor = next.get();
+    }
+    return cursor;
+  }
+
   private void revokeChain(RefreshToken start, Instant now) {
     Set<UUID> seen = new HashSet<>();
     RefreshToken cursor = start;

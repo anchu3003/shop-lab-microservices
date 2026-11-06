@@ -22,6 +22,7 @@ public record JwtProperties(
     @DefaultValue("https://identity.shoplab.local") String issuer,
     @DefaultValue("15m") Duration accessTokenTtl,
     @DefaultValue("14d") Duration refreshTokenTtl,
+    @DefaultValue("30s") Duration refreshReuseGrace,
     @NotBlank String privateKeyPath,
     @NotBlank String publicKeyPath) {
 
@@ -31,6 +32,9 @@ public record JwtProperties(
     }
     if (refreshTokenTtl == null) {
       refreshTokenTtl = Duration.ofDays(14);
+    }
+    if (refreshReuseGrace == null) {
+      refreshReuseGrace = Duration.ofSeconds(30);
     }
   }
 }
