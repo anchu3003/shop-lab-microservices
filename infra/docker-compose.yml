@@ -241,6 +241,54 @@ services:
       - shoplab-net
 
   # ---------------------------------------------------------------------------
+  # catalog-service — nguồn sự thật về category/product (SL-1.5).
+  #
+  # KHÔNG mount khoá JWT: catalog là resource server, chỉ tải public key qua JWKS của identity
+  # ⇒ xoay khoá ở identity không phải build lại catalog.
+  #
+  # Verify JWT tại chỗ (defense in depth): gọi thẳng `localhost:8082` không token vẫn 401, và
+  # header `x-user-role` do client tự gửi KHÔNG có tác dụng (catalog chỉ tin token).
+  # ---------------------------------------------------------------------------
+  catalog-service:
+    build:
+      context: ..
+      dockerfile: services/catalog-service/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-catalog-service:local
+    container_name: shoplab-catalog-service
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${CATALOG_SERVICE_PORT:-8082}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SHOPLAB_DEBUG_ENDPOINTS: ${SHOPLAB_DEBUG_ENDPOINTS:-true}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB_CATALOG: ${POSTGRES_DB_CATALOG:-catalog}
+      POSTGRES_USER: ${POSTGRES_USER:-shoplab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      # JWKS lấy qua network nội bộ (không qua gateway — tránh phụ thuộc vòng).
+      IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
+      IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+    ports:
+      - "${CATALOG_SERVICE_PORT:-8082}:${CATALOG_SERVICE_PORT:-8082}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Cần identity sống để lấy JWKS — chết từ đầu thì catalog không verify được token nào.
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${SERVER_PORT}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    networks:
+      - shoplab-net
+
+  # ---------------------------------------------------------------------------
   # api-gateway — cửa vào duy nhất (SL-1.2): route /v1/** + verify JWT qua JWKS của identity.
   #
   # Không có DB: gateway không sở hữu dữ liệu nào (architecture.md §5) → readiness check TCP
@@ -269,6 +317,9 @@ services:
       IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
       # PHẢI khớp issuer mà identity phát hành, nếu không mọi token đều bị 401.
       IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      # SL-1.5: route /v1/products + /v1/categories đi tới catalog. Trong container KHÔNG dùng
+      # localhost (localhost là chính gateway).
+      CATALOG_SERVICE_URL: ${CATALOG_SERVICE_URL:-http://catalog-service:8082}
       GATEWAY_CONNECT_TIMEOUT: ${GATEWAY_CONNECT_TIMEOUT:-2s}
       GATEWAY_READ_TIMEOUT: ${GATEWAY_READ_TIMEOUT:-5s}
     ports:

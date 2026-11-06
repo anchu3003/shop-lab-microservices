@@ -32,6 +32,7 @@ COPY pom.xml ./
 COPY packages/service-commons/pom.xml packages/service-commons/
 COPY services/service-template/pom.xml services/service-template/
 COPY services/identity-service/pom.xml services/identity-service/
+COPY services/catalog-service/pom.xml services/catalog-service/
 COPY services/api-gateway/pom.xml services/api-gateway/
 RUN mvn -B -q -pl services/identity-service -am dependency:go-offline
 
@@ -45,7 +46,10 @@ COPY config/ config/
 # `SKIP_TESTS` (SL-1.12): CI truyền `true` vì job `test` đã chạy test cho **cả reactor** — chạy lại
 # test trong image chỉ tốn thời gian. Mặc định `false` để `docker build` tay vẫn test như trước.
 ARG SKIP_TESTS=false
-RUN mvn -B -pl services/identity-service -am verify -DskipTests=${SKIP_TESTS} -DskipITs
+# ⚠️ `-Djacoco.skip=true` (SL-1.5): trong `docker build` không có Docker socket ⇒ `-DskipITs` bỏ
+#    integration test ⇒ coverage thiếu phần chỉ IT chạm tới (`SecurityConfig`) ⇒ gate 80% ở
+#    `config/*` fail và image build đỏ dù code đúng. Gate coverage thuộc job `test` của CI.
+RUN mvn -B -pl services/identity-service -am verify -DskipTests=${SKIP_TESTS} -DskipITs -Djacoco.skip=true
 
 # ------------------------------ stage 2: runtime ------------------------------
 FROM eclipse-temurin:21-jre-alpine AS runtime

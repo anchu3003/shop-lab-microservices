@@ -397,6 +397,53 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/v1/auth/logout \
 ---
 
 
+### catalog-service — `SL-1.5`
+
+Service **read-heavy đầu tiên**: guest xem được sản phẩm, chỉ `seller`/`admin` ghi. DB riêng `catalog`
+(Flyway `V1__create_catalog.sql`).
+
+**API**
+
+| Method + path | Quyền | Ghi chú |
+|---|---|---|
+| `GET /v1/categories` | **public** | danh sách category, sort theo tên |
+| `POST /v1/categories` | `seller`/`admin` | 201 + `Location`; trùng slug → **409** |
+| `GET /v1/products/{id}` | **public** | 200 · không tồn tại → **404** |
+| `POST /v1/products` | `seller`/`admin` | 201; `categoryId` không tồn tại → **404** |
+| `PUT /v1/products/{id}` | `seller`/`admin` | thay toàn bộ field sửa được; `version` +1 |
+| `DELETE /v1/products/{id}` | `seller`/`admin` | **204** |
+
+**Hai điểm thiết kế quan trọng**
+
+1. **Service TỰ verify JWT** (defense in depth) — tải public key qua **JWKS của identity**
+   (`IDENTITY_JWKS_URI`), không giữ private key. Gọi thẳng `:8082` không token vẫn **401**, nên một
+   gateway cấu hình sai không thể biến thành lỗ hổng ghi dữ liệu.
+2. **Chỉ tin token, không tin header** `x-user-id`/`x-user-role`. Client tự gửi `x-user-role: admin`
+   → không leo được quyền (gateway xoá header; service bỏ qua hoàn toàn).
+
+**Thử nhanh (stack đang chạy)**
+
+```bash
+# Token seller có sẵn ở local (LocalDevUserSeeder) — mật khẩu dev: matkhau123
+SELLER=$(curl -s -X POST localhost:8080/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"seller@shoplab.local","password":"matkhau123"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessToken"])')
+
+# Tạo category + product (ghi cần quyền)
+CAT=$(curl -s -X POST localhost:8080/v1/categories -H "Authorization: Bearer $SELLER" \
+  -H 'Content-Type: application/json' -d '{"name":"Điện thoại"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+curl -s -X POST localhost:8080/v1/products -H "Authorization: Bearer $SELLER" \
+  -H 'Content-Type: application/json' \
+  -d "{\"categoryId\":\"$CAT\",\"name\":\"iPhone 15\",\"price\":25990000.00}"
+
+# Guest đọc không cần token
+curl -s "localhost:8080/v1/categories"
+```
+
+`price` là **`BigDecimal` + `NUMERIC(12,2)`** (không dùng `double` cho tiền), `product` có `@Version`
+(optimistic locking) nên response của `PUT` trả `version` đã tăng.
+
+Xem `docs/` sau `SL-1.7` để có runbook debug từng tầng.
+
 ### api-gateway — `SL-1.2`
 
 **Cửa vào duy nhất** của hệ thống (port **8080**): route `/v1/**` tới service tương ứng, verify JWT **một chỗ**,

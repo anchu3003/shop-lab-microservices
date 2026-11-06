@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.5` — `catalog-service`: skeleton + Flyway + category/product CRUD |
-| **Ticket tiếp theo** | `SL-1.6` — `catalog-service`: SKU + phân trang/filter + seed data |
+| **Ticket đang làm** | `SL-1.6` — `catalog-service`: SKU + phân trang/filter + seed data |
+| **Ticket tiếp theo** | `SL-1.7` — E2E smoke đầy đủ + runbook Phase 1 |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -114,7 +114,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 3 | `SL-1.2` | `api-gateway` bản mỏng | M | ✅ Done |
 | 4 | `SL-1.3` | **E2E sớm**: register → login qua gateway | S | ✅ Done |
 | 5 | `SL-1.4` | `identity-service`: refresh token + RBAC | M | ✅ Done |
-| 6 | `SL-1.5` | `catalog-service`: CRUD category/product | M | Todo |
+| 6 | `SL-1.5` | `catalog-service`: CRUD category/product | M | ✅ Done |
 | 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | Todo |
 | 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | Todo |
 | 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
@@ -849,7 +849,7 @@ $ git status → V1__create_users.sql KHÔNG đổi (chỉ thêm V2__create_refr
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.3 |
 | **Ước lượng** | M |
@@ -905,9 +905,74 @@ chỉ `seller`/`admin` **ghi** được.
   defense in depth tiêu chuẩn.
 - Quy ước lỗi: **401** = chưa xác thực · **403** = đã xác thực nhưng thiếu quyền. Sai quy ước này là nguồn bug khó tìm ở client.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify**
 
-**Learning note** *(điền khi Done)*
+**Unit + IT** — `mvn -B -ntp -pl services/catalog-service -am verify`:
+
+```console
+[INFO] Tests run: 37, Failures: 0, Errors: 0, Skipped: 0   ← service-commons (không hồi quy)
+[INFO] Tests run: 36, Failures: 0, Errors: 0, Skipped: 0   ← catalog unit (config/health/service)
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0   ← catalog IT (Testcontainers postgres:16-alpine)
+[INFO] BUILD SUCCESS
+```
+Checkstyle + Spotless + JaCoCo gate (≥80% LINE cho `config/*`, `health/*`) đều pass.
+
+**AC trên stack thật** — `docker compose up -d --build` (gateway 8080 · identity 8081 · catalog 8082),
+script verify Python (login thật → token thật → JWKS thật): **36 PASS / 0 FAIL**.
+
+| AC | Kết quả đo được |
+|---|---|
+| container healthy · `/health` 200 · `/ready` 200 · `/version` = `catalog-service` | PASS |
+| DB `catalog` có `category` + `product`; `flyway_schema_history` = 1 row (V1) | PASS |
+| `POST /v1/categories` seller → **201** (+`Location`) · buyer → **403** `FORBIDDEN` có `traceId` | PASS |
+| `GET /v1/categories` guest → **200**, thấy category vừa tạo | PASS |
+| `POST /v1/products` seller → **201**; `price` = `25990000.0` (BigDecimal, không sai số); `version` 0 | PASS |
+| `GET /v1/products/{id}` **không** token → **200** (cả qua gateway và gọi thẳng :8082) | PASS |
+| `PUT`/`DELETE` id không tồn tại → **404** `NOT_FOUND`; `PUT` thật → 200 và `version` **tăng lên 1** | PASS |
+| `DELETE` thật → **204**; `GET` sau đó → **404** | PASS |
+| body sai (`name` rỗng, `price` = -1) → **400** `VALIDATION_ERROR`, `details` nêu field `name` + `price` | PASS |
+| gọi **thẳng** `:8082` không token → **401** `UNAUTHORIZED` (không phụ thuộc gateway) | PASS |
+| client tự gửi `x-user-role: admin` → qua gateway **401** (không token) / **403** (buyer token) / thẳng service **403** | PASS |
+| token rác → **401** | PASS |
+
+**Regression**: `bash tools/e2e-smoke.sh` → **7 PASS / 0 FAIL** (identity + gateway không hồi quy).
+
+**3 bug thật phát hiện khi verify (đã sửa + có test giữ)**
+
+1. **`@PreAuthorize` từ chối ⇒ 500 chứ không phải 403**: `AuthorizationDeniedException` ném *trong* lời gọi
+   controller nên `ExceptionTranslationFilter` không thấy, `GlobalExceptionHandler` bắt `Exception` → 500. Thêm
+   `AccessDeniedApiExceptionHandler` (→ 403 `ApiError`). IT bắt được, curl tay dễ bỏ qua.
+2. **`@Version` trả số cũ trong response PUT**: version chỉ tăng lúc flush ⇒ response `version: 0` dù DB đã 1 ⇒
+   client update lần sau bằng version sai. Sửa bằng `saveAndFlush` + IT assert `"version":1`.
+3. **`docker build` đỏ vì JaCoCo gate**: trong image build không có Docker socket ⇒ `-DskipITs` ⇒ thiếu đúng phần
+   coverage chỉ IT chạm (`SecurityConfig`) ⇒ gate 80% fail. Thêm `-Djacoco.skip=true` vào cả 4 Dockerfile (gate
+   coverage thuộc job `test` của CI, chạy đủ IT).
+
+**Learning note**
+
+- **Method security ném exception *sau* DispatcherServlet ⇒ 500 nếu không map tay.** `@PreAuthorize` là chốt
+  phân quyền *trong* code, KHÔNG phải filter — nên `ExceptionTranslationFilter` (thứ trả 401/403 cho filter chain)
+  không thấy nó. Bài học chung: **mỗi lớp chặn quyền phải có đường trả lỗi riêng**; thêm một lớp bảo vệ là thêm
+  một chỗ phải kiểm hành vi lỗi, không chỉ hành vi đúng.
+- **Optimistic locking: đọc `version` sau khi flush, không phải sau khi gán field.** JPA tăng `@Version` ở thời
+  điểm flush/commit. Trả DTO trước flush = trả dữ liệu cũ ⇒ client cầm version sai ⇒ 409 "ma" ở lần update sau,
+  hoặc tệ hơn là ghi đè. Bài học: **giá trị do DB sinh ra (version, default, trigger) phải đọc sau flush**.
+- **`docker build` không có Docker socket ⇒ mọi thứ phụ thuộc IT sẽ lệch.** `-DskipITs` không chỉ "bỏ test":
+  nó **đổi kết quả gate coverage**. Fix đúng là tách vai: **gate chất lượng ở job `test` (có IT)**, image build chỉ
+  cần compile + unit. Đây là lần thứ hai bẫy "image build đỏ vì môi trường thiếu" (lần đầu: thiếu `COPY` pom module).
+- **Gateway public-path là theo PATH, không theo METHOD** ⇒ service có "đọc public + ghi cần token" trên cùng
+  prefix thì gateway phải thả cả prefix, và **service tự chặn phần ghi**. Đánh đổi: gateway thôi làm chốt 401 cho
+  các path đó. Chấp nhận được *nhờ* defense in depth (service tự verify JWT) — nếu chỉ tin header gateway thì
+  đánh đổi này là lỗ hổng, không phải trade-off.
+- **`x-user-role` client gửi lên không bao giờ được dùng để phân quyền**: gateway xoá/ghi đè, catalog thì bỏ qua
+  hoàn toàn (chỉ tin token). Verify bằng 3 đường (không token / buyer token / gọi thẳng service) — kiểm 1 đường
+  là chưa đủ.
+- **Verify script viết bằng bash heredoc dễ tự bắn vào chân**: escaping 3 lớp (`-d '{\"...\"}'` trong `$( )` trong
+  heredoc) làm token bị cắt → **17 FAIL giả** trong khi sản phẩm đúng. Chuyển sang Python `urllib` (36 PASS) rẻ
+  hơn nhiều so với việc đi debug "lỗi" không tồn tại. Bài học: **script verify là code, phải chọn môi trường ít
+  escaping** — và khi thấy FAIL hàng loạt cùng một kiểu (401/None) thì nghi script trước, nghi sản phẩm sau.
+- **Bug `@Version` chỉ lộ khi chạy HTTP thật**: unit test mock repository không mô phỏng flush ⇒ 36 unit test xanh
+  vẫn không thấy. IT + gọi thật mới thấy. Củng cố quy ước: **hành vi liên quan transaction/flush phải test bằng IT**.
 
 ### SL-1.6 — `catalog-service`: SKU + phân trang/filter + seed data
 
@@ -1869,6 +1934,11 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.3 | **Smoke script phải chịu được hạ tầng chết**: `set -e` + curl connection-refused (exit 7) kill script trước khi báo lỗi → `curl \|\| true` để lấy status `000`, guard token rỗng để `python3` không KeyError. Bonus: **GNU date `%3N` ra 9 chữ số** (nanosec) trên hệ này → dùng `%s%N`/1e6. |
 | 2026-11-05 | SL-1.4 | **`@Transactional` + throw = rollback xoá luôn việc vừa ghi**: reuse detection revoke cả chuỗi rồi throw 401 ⇒ mất revoke. Phải `noRollbackFor` ở **mọi tầng** `@Transactional` mà exception đi qua (tầng ngoài mới quyết định commit). **IT bắt được, unit test mock thì không.** |
 | 2026-11-05 | SL-1.4 | **Endpoint mới phải verify qua CỬA VÀO DUY NHẤT**: `/v1/admin/users` 200 khi gọi thẳng identity nhưng **404 qua gateway** (thiếu route) — chỉ lộ khi test qua 8080. Và security filter đổi hành vi path lạ 404 → **401** (có chủ ý: không lộ route). |
+| 2026-11-06 | SL-1.5 | **Method security ném exception SAU DispatcherServlet** ⇒ `@PreAuthorize` từ chối thành **500** (không phải 403) vì `GlobalExceptionHandler` bắt `Exception`. Mỗi lớp chặn quyền phải có handler riêng. IT bắt được, curl tay dễ bỏ qua. |
+| 2026-11-06 | SL-1.5 | **`@Version` chỉ tăng lúc flush** ⇒ trả DTO trước flush là trả version CŨ (0) ⇒ client update lần sau bằng version sai. Giá trị do DB sinh (version/default/trigger) phải đọc **sau flush** — `saveAndFlush`, và phải test bằng IT vì mock không mô phỏng flush. |
+| 2026-11-06 | SL-1.5 | **`docker build` không có Docker socket ⇒ `-DskipITs` cũng đổi kết quả gate coverage** (image build đỏ dù code đúng). Tách vai: gate chất lượng ở job `test` (chạy đủ IT), image build `-Djacoco.skip=true`. |
+| 2026-11-06 | SL-1.5 | **Gateway `public-paths` theo PATH, không theo METHOD**: service có "GET public + POST cần token" trên cùng prefix thì gateway thả cả prefix và **service tự chặn** phần ghi. Chỉ chấp nhận được vì service tự verify JWT; nếu tin header gateway thì đó là lỗ hổng. |
+| 2026-11-06 | SL-1.5 | **Verify script là code**: bash heredoc + 3 lớp escaping làm token bị cắt → **17 FAIL giả**. FAIL hàng loạt cùng kiểu (401/None) ⇒ nghi script trước, sản phẩm sau. Python `urllib` cho 36 PASS. |
 | 2026-11-05 | process | **Đừng dùng backtick trong `--body` của `gh` khi gõ trực tiếp**: shell thực thi phần trong backtick (`tools/merge-pr.sh` → `Permission denied`, `null: command not found`) và **body PR bị hỏng**. Luôn dùng `--body-file` với heredoc (`<<'EOF'`). |
 
 ---
@@ -1905,6 +1975,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | `SL-1.12` → `Done`: job `build-image` chuyển sang **matrix** (`service-template` · `identity-service` · `api-gateway`, `fail-fast: false`) + `--build-arg SKIP_TESTS=true` (bỏ test trùng trong image — job `test` đã chạy cả reactor). **Test âm thật**: phá `api-gateway/Dockerfile` → run `42064872154` **chỉ** job gateway đỏ (`Child module … does not exist`), 2 job image kia xanh; revert → run `42065751051` **5/5 xanh**. Số đo: billable 194s → 343s (**+2,5 phút/run**, wall-clock gần như không đổi vì chạy song song). Cập nhật `README.md` + `architecture.md` §10.3 + comment `ci.yml`. PR [#20](https://github.com/anchu3003/shop-lab-microservices/pull/20). |
 | 2026-11-05 | `SL-1.13` → `Done`: `service-template` vào **compose profile** `template` ⇒ `up -d` mặc định chỉ dựng hệ thống thật (không tốn RAM/build cho service mẫu). Verify: `config --services` (không profile) **không** có template · `up -d` không tạo `shoplab-service-template` · `--profile template up -d service-template` → Started, `/ready` 200 · gateway/identity vẫn healthy. Cập nhật `README.md` (bảng port + lệnh) + comment `infra/docker-compose.yml`. |
 | 2026-11-05 | `SL-1.3` → `Done`: `tools/e2e-smoke.sh` — health gateway+identity → register (email random) → login → `/v1/users/me` có token → 200 · thiếu token → **401** · đối chiếu `traceId` trong log identity; `PASS/FAIL` từng bước + exit code. Verify: **7/7 PASS** · exit 0 · chạy lại 3 lần pass · **test âm** (stop identity) → fail đúng bước `1b` + `exit=1`. Thêm mục README "E2E smoke". Sửa 2 bug: `date +%s%3N` ra nanosec → `%s%N`/1e6; curl connection-refused + `set -e` → `\| true`. |
+| 2026-11-06 | `SL-1.5` → `Done`: `catalog-service` (port **8082**, DB `catalog`, Flyway `V1__create_catalog.sql` với `price NUMERIC(12,2)` + `@Version` + FK/index) — `POST/GET /v1/categories`, `POST/GET/PUT/DELETE /v1/products`; guest **đọc** được, chỉ `seller`/`admin` **ghi**. Service **tự verify JWT qua JWKS của identity** (defense in depth: gọi thẳng :8082 không token vẫn 401, `x-user-role` client gửi bị bỏ qua). Error **400/401/403/404/409** đều là `ApiError` có `traceId`. Hạ tầng: module mới ở parent pom, 4 Dockerfile `COPY` pom mới, CI matrix **4 service**, compose + `.env.example` + gateway route `/v1/products` `/v1/categories`. Verify: **36 unit + 12 IT** (+37 commons) xanh; **36/36 mục AC** trên stack thật (seller 201 · buyer 403 · guest 200 · 404 · 400 details · 401 gọi thẳng · không leo quyền · `version` +1); `e2e-smoke` vẫn 7/7. Sửa 3 bug thật: `@PreAuthorize` → **500** thay vì 403, `@Version` trả số cũ trong response `PUT`, image build đỏ vì JaCoCo gate bị `-DskipITs`. |
 | 2026-11-05 | `SL-1.4` → `Done`: refresh token (**opaque 256-bit, lưu SHA-256**) + **rotate + reuse detection** (dùng lại token đã rotate ⇒ 401 **và revoke cả chuỗi**), logout, `GET /v1/admin/users` (ADMIN 200 / buyer **403**), security filter chain (identity **tự verify JWT** — defense in depth) + 401/403 trả **ApiError** có `traceId`. Seed `admin@`/`seller@` bằng `LocalDevUserSeeder` (chỉ `APP_ENV=local`). Verify: **46 unit + 22 IT** xanh; E2E **9 mục** trên stack thật (rotate/reuse/logout/RBAC/hash-trong-DB/**qua gateway**); `tools/e2e-smoke.sh` vẫn 7/7. Sửa 3 lỗi thật: `noRollbackFor` (revoke bị rollback), thiếu route `/v1/admin` ở gateway, path lạ 404→**401**. |
 
 
