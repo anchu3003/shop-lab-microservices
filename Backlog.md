@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — Phase 1 **đã đóng** (19/19); đang làm **DoD phase** (tag `phase-1` + release) |
-| **Ticket tiếp theo** | **Phase 2** — Core commerce flow (breakdown `SL-2.x` ở §5) |
+| **Ticket đang làm** | `SL-2.0` — **ADR-0006**: chốt mô hình checkout (reservation · idempotency · snapshot vs FK) |
+| **Ticket tiếp theo** | `SL-2.1` — `cart-service` (Redis) · `SL-2.2` — `inventory-service` (reserve/commit/release) |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | ⚪ Todo (epic) | — |
+| 2 | Core commerce flow | 🟡 Breakdown xong — chờ `SL-2.0` | 0 / 11 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -194,16 +194,37 @@ $ md5sum docs/api/openapi.yaml
 > Các phase này **chỉ ở mức epic**. Chỉ breakdown thành ticket chi tiết khi tới lượt — breakdown sớm sẽ phải viết lại
 > vì hiểu biết thay đổi sau mỗi phase (`AGENTS.md` §3.1).
 
-### Phase 2 — Core commerce flow
-Mục tiêu: luồng mua hàng hoàn chỉnh, đúng dữ liệu kể cả khi fail.
+### Phase 2 — Core commerce flow (breakdown `SL-2.x`)
 
-- `SL-2.x` `cart-service` trên Redis (TTL, merge cart khi login)
-- `SL-2.x` `inventory-service`: reserve / commit / release + chống oversell (atomic + lock)
-- `SL-2.x` `promotion-service`: voucher + rule giảm giá + lock/commit voucher
-- `SL-2.x` `order-service`: tạo order, state machine, **Saga orchestration** cho checkout
-- `SL-2.x` `payment-service`: payment intent + **mock provider** + webhook idempotent
-- `SL-2.x` Test đồng thời: 100 request mua cùng 1 SKU → không oversell
-- `SL-2.x` Compensating action cho mọi nhánh fail của checkout
+> **Mục tiêu**: luồng mua hàng hoàn chỉnh, **đúng dữ liệu kể cả khi fail** — trọng tâm là *Saga + compensating
+> action + idempotency + chống oversell*, không phải UI.
+> **Điều kiện hoàn thành**: checkout end-to-end qua gateway (cart → order → inventory reserve → promotion lock →
+> payment → confirm) · có nhánh fail + compensating chạy đúng (có test) · **100 request đồng thời cùng 1 SKU
+> không oversell** (có số liệu) · OpenAPI + runbook cập nhật · tag `phase-2`.
+
+| # | Ticket | Nội dung | Ước lượng |
+|---|---|---|---|
+| 1 | `SL-2.0` | **ADR-0006** chốt mô hình checkout (reservation TTL · idempotency key · snapshot vs FK · sync Phase 2 / async Phase 3 · quyết định `TD-12` soft delete) | S |
+| 2 | `SL-2.1` | `cart-service` (8083, Redis): add/update/remove/get, TTL, **merge cart khi login** | M |
+| 3 | `SL-2.2` | `inventory-service` (8084, DB `inventory`): schema `stock`/`reservation`/`stock_ledger` + API `reserve`/`commit`/`release`; **atomic** chống oversell | M |
+| 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M |
+| 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M |
+| 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M |
+| 7 | `SL-2.6` | **Checkout Saga** (orchestration): cart → reserve → lock voucher → payment → confirm; **compensating** cho mọi nhánh fail; lưu saga state | L → tách 2 |
+| 8 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M |
+| 9 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M |
+| 10 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M |
+| 11 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S |
+
+**Phụ thuộc & thứ tự**: `SL-2.0` chốt trước (mọi ticket sau bám theo) → `SL-2.2` + `SL-2.3` (inventory là chỗ dễ
+oversell nhất, làm sớm) song song được với `SL-2.1`/`SL-2.4` → `SL-2.7` (payment) → `SL-2.5`/`SL-2.6` (order +
+saga, phụ thuộc tất cả) → `SL-2.8`/`SL-2.9` → `SL-2.10`.
+
+**Debt sẽ trả trong phase này**: `TD-12` (soft delete / snapshot khi order tham chiếu SKU — **chốt ở `SL-2.0`**),
+`TD-4` (đưa smoke vào CI khi đã có compose nhiều service — cân nhắc ở `SL-2.8`).
+
+> Mỗi ticket vẫn phải viết **đặc tả BA đầy đủ** (In/Out · AC verify được · ghi chú kỹ thuật) **ngay trước khi bắt
+> đầu** — bảng trên là phạm vi + thứ tự, không thay thế đặc tả (`AGENTS.md` §4, §5).
 
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
