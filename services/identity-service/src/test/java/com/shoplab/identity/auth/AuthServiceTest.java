@@ -57,6 +57,7 @@ class AuthServiceTest {
                 "https://identity.shoplab.local",
                 Duration.ofMinutes(15),
                 Duration.ofDays(14),
+                Duration.ofSeconds(30),
                 keys.privateKeyPath().toString(),
                 keys.publicKeyPath().toString()));
     RefreshTokenService refreshTokens = mock(RefreshTokenService.class);

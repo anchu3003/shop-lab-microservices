@@ -393,6 +393,11 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/v1/auth/logout \
 > ⚠️ **Reuse detection là tính năng, không phải lỗi**: nếu client lưu refresh token sai chỗ (2 tab cùng refresh, retry
 > sau timeout...) và dùng lại token **đã rotate** thì cả phiên bị thu hồi — buộc đăng nhập lại. Đây là hành vi đúng
 > (dấu hiệu token bị đánh cắp); client phải lưu **token mới nhất**.
+>
+> 🕐 **Grace window 30s (`SL-1.18`)**: token đã rotate trong **≤ 30s** mà bị dùng lại được coi là *lặp/đua request*
+> (2 tab, mất mạng, retry) ⇒ server cấp token mới **thay vì** revoke chuỗi, để client hợp lệ không bị logout oan.
+> Quá 30s ⇒ revoke cả chuỗi như cũ. Tắt bằng `IDENTITY_REFRESH_REUSE_GRACE=0s`. Logout thì **không** có grace:
+> dùng lại token cũ sau logout luôn 401.
 
 ---
 

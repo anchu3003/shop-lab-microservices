@@ -61,6 +61,10 @@ shoplab:
     # Refresh token sống dài (14 ngày) vì nó giữ phiên đăng nhập; mỗi lần dùng đều rotate nên cửa
     # sổ bị đánh cắp hẹp. Đổi bằng env, không cần migration (SL-1.4).
     refresh-token-ttl: ${IDENTITY_JWT_REFRESH_TOKEN_TTL:14d}
+    # Grace window cho reuse detection (SL-1.18): token đã rotate trong ≤ 30s mà bị dùng lại thì coi là
+    # client race/mất mạng/retry ⇒ cấp token mới thay vì revoke cả chuỗi (tránh logout oan).
+    # Quá 30s ⇒ vẫn revoke cả chuỗi. `0s` = tắt (hành vi nghiêm ngặt cũ).
+    refresh-reuse-grace: ${IDENTITY_REFRESH_REUSE_GRACE:30s}
     # Private key CHỈ identity-service có; public key công bố qua JWKS.
     # Khoá dev sinh bằng: bash tools/gen-dev-keys.sh (không commit — AGENTS.md §9).
     private-key-path: ${IDENTITY_JWT_PRIVATE_KEY_PATH:infra/keys/dev-private.pem}

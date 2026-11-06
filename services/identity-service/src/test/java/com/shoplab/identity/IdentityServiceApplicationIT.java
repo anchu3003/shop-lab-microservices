@@ -54,7 +54,16 @@ import tools.jackson.databind.ObjectMapper;
  */
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = {"shoplab.env=local", "shoplab.debug-endpoints=true"})
+    properties = {
+      "shoplab.env=local",
+      "shoplab.debug-endpoints=true",
+      // SL-1.18: tắt grace window trong IT để giữ nguyên ngữ nghĩa "dùng lại token đã rotate ⇒ 401
+      // +
+      // revoke cả chuỗi". Nhánh grace được test riêng bằng unit test (clock điều khiển được) và
+      // verify
+      // trên stack thật với mặc định 30s.
+      "shoplab.jwt.refresh-reuse-grace=0s"
+    })
 @Testcontainers
 class IdentityServiceApplicationIT {
 

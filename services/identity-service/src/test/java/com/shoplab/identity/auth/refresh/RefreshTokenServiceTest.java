@@ -42,6 +42,11 @@ class RefreshTokenServiceTest {
 
   /** Service với clock cố định — repository mock luôn đọc/ghi cùng một {@link #store}. */
   private RefreshTokenService serviceAt(Instant instant) {
+    return service(instant, Duration.ZERO);
+  }
+
+  /** Service với grace window (SL-1.18) — {@link Duration#ZERO} = tắt grace (hành vi strict). */
+  private RefreshTokenService service(Instant instant, Duration grace) {
     RefreshTokenRepository repository = mock(RefreshTokenRepository.class);
     when(repository.save(any(RefreshToken.class)))
         .thenAnswer(
@@ -64,9 +69,19 @@ class RefreshTokenServiceTest {
             "https://identity.shoplab.local",
             Duration.ofMinutes(15),
             Duration.ofDays(14),
+            grace,
             "/tmp/khong-doc.pem",
             "/tmp/khong-doc.pub");
     return new RefreshTokenService(repository, properties, Clock.fixed(instant, ZoneOffset.UTC));
+  }
+
+  /** Tìm entity trong store theo token thô (RotatedRefresh chỉ trả token thô + userId). */
+  private RefreshToken entityOf(String rawToken) {
+    String hash = RefreshTokenService.hash(rawToken);
+    return store.values().stream()
+        .filter(token -> token.tokenHash().equals(hash))
+        .findFirst()
+        .orElseThrow();
   }
 
   @Test
@@ -115,6 +130,69 @@ class RefreshTokenServiceTest {
     // Cả chuỗi bị thu hồi: token mới nhất cũng không dùng được nữa.
     assertThat(store.values()).allMatch(RefreshToken::isRevokedOrRotated);
     assertThatThrownBy(() -> service.rotate(third.rawToken()))
+        .isInstanceOf(InvalidRefreshTokenException.class);
+  }
+
+  // ---------------------------------------------------------------------------
+  // SL-1.18: grace window cho reuse detection
+  // ---------------------------------------------------------------------------
+
+  @Test
+  @DisplayName("grace: dùng lại token vừa rotate trong 30s → cấp token mới, KHÔNG revoke chuỗi")
+  void reuseWithinGraceShouldIssueNewTokenWithoutRevoking() {
+    RefreshTokenService withGrace = service(NOW, Duration.ofSeconds(30));
+    RefreshTokenService.IssuedRefresh first = withGrace.issue(USER);
+    RefreshTokenService.RotatedRefresh second = withGrace.rotate(first.rawToken());
+
+    // Tab B gửi lại token CŨ (đã rotate 0 giây trước) — đúng tình huống đua 2 tab.
+    RefreshTokenService.RotatedRefresh recovered = withGrace.rotate(first.rawToken());
+
+    assertThat(recovered.rawToken()).isNotBlank().isNotEqualTo(second.rawToken());
+    // Không revoke: token cuối chuỗi được nối tiếp, không bị đánh dấu chết.
+    RefreshToken latest = entityOf(second.rawToken());
+    assertThat(latest.replacedBy()).isNotNull();
+    assertThat(latest.revokedAt()).isEqualTo(NOW);
+
+    // Token vừa cấp dùng được, và token cũ vẫn còn trong grace (không bị revoke hàng loạt).
+    assertThat(withGrace.rotate(recovered.rawToken()).rawToken()).isNotBlank();
+  }
+
+  @Test
+  @DisplayName("grace: dùng lại token đã rotate QUÁ 30s → 401 + revoke cả chuỗi (như cũ)")
+  void reuseAfterGraceShouldStillRevokeChain() {
+    RefreshTokenService withGrace = service(NOW, Duration.ofSeconds(30));
+    RefreshTokenService.IssuedRefresh first = withGrace.issue(USER);
+    RefreshTokenService.RotatedRefresh second = withGrace.rotate(first.rawToken());
+
+    // 31 giây sau mới dùng lại token đầu ⇒ ngoài grace ⇒ coi là bị đánh cắp.
+    RefreshTokenService later = service(NOW.plusSeconds(31), Duration.ofSeconds(30));
+    assertThatThrownBy(() -> later.rotate(first.rawToken()))
+        .isInstanceOf(InvalidRefreshTokenException.class);
+
+    assertThat(entityOf(second.rawToken()).revokedAt()).isNotNull();
+    assertThat(entityOf(second.rawToken()).replacedBy()).isNull();
+  }
+
+  @Test
+  @DisplayName("grace KHÔNG hồi sinh phiên đã logout: revoke rồi dùng lại token cũ → 401")
+  void graceShouldNotResurrectLoggedOutSession() {
+    RefreshTokenService withGrace = service(NOW, Duration.ofSeconds(30));
+    RefreshTokenService.IssuedRefresh first = withGrace.issue(USER);
+    RefreshTokenService.RotatedRefresh second = withGrace.rotate(first.rawToken());
+    withGrace.revoke(second.rawToken()); // logout
+
+    assertThatThrownBy(() -> withGrace.rotate(first.rawToken()))
+        .isInstanceOf(InvalidRefreshTokenException.class);
+  }
+
+  @Test
+  @DisplayName("grace = 0s → tắt grace, hành vi strict (dùng lại là revoke ngay)")
+  void zeroGraceKeepsStrictBehaviour() {
+    RefreshTokenService strict = service(NOW, Duration.ZERO);
+    RefreshTokenService.IssuedRefresh first = strict.issue(USER);
+    strict.rotate(first.rawToken());
+
+    assertThatThrownBy(() -> strict.rotate(first.rawToken()))
         .isInstanceOf(InvalidRefreshTokenException.class);
   }
 

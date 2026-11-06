@@ -48,6 +48,7 @@ class JwtServiceTest {
         ISSUER,
         Duration.ofMinutes(15),
         Duration.ofDays(14),
+        Duration.ofSeconds(30),
         privateKey.toString(),
         publicKey.toString());
   }

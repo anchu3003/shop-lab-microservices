@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — *(`SL-1.15`/`1.16`/`1.17` xong; Phase 1 đóng)* |
-| **Ticket tiếp theo** | **DoD Phase 1**: `docs/phases/phase-1.md` + tag `phase-1` + GitHub Release (ADR-0005) |
+| **Ticket đang làm** | — *(Phase 1: 19/19 ticket Done)* |
+| **Ticket tiếp theo** | **DoD Phase 1** (tag `phase-1` + release) → sau đó **Phase 2** (breakdown xong) |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -129,6 +129,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 16 | `SL-1.15` | *(phát sinh)* fix: seed dev chỉ nạp ở local + slug tiếng Việt | S | ✅ Done |
 | 17 | `SL-1.16` | *(phát sinh)* process: tech debt register + rule | S | ✅ Done |
 | 18 | `SL-1.17` | *(phát sinh)* docs(api): ẩn endpoint debug khỏi spec | S | ✅ Done |
+| 19 | `SL-1.18` | *(phát sinh)* fix: grace window 30s cho refresh reuse | S | ✅ Done |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -2172,6 +2173,86 @@ $ grep -c '/debug' docs/api/openapi.yaml
 - **Đổi spec phải export lại rồi so số**, không chỉ sửa annotation: verify bằng **đếm path/operation
   trước-sau** (17→14, 21→18) để chắc không ẩn nhầm endpoint khác.
 
+### SL-1.18 — *(phát sinh)* fix: grace window 30s cho refresh reuse detection
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 1 — Walking skeleton *(phát sinh)* |
+| **Phụ thuộc** | SL-1.4 |
+| **Ước lượng** | S |
+
+**Bối cảnh** (nguồn: `TD-13`)
+
+Rotation + reuse detection hiện revoke **cả chuỗi** ngay khi gặp token đã rotate. Đúng chuẩn bảo mật
+nhưng phạt cả **client hợp lệ** trong 3 tình huống rất thường: 2 tab cùng refresh gần như đồng thời ·
+mất mạng sau khi server đã rotate · retry tự động gửi lại token cũ ⇒ người dùng bị **logout oan**.
+
+**Mục tiêu**
+
+Token đã rotate trong **≤ 30s** mà bị dùng lại ⇒ coi là *lặp/đua request*, cấp token mới thay vì
+revoke. Quá 30s ⇒ vẫn revoke cả chuỗi (giữ nguyên khả năng phát hiện đánh cắp).
+
+**In scope**
+
+- `JwtProperties.refreshReuseGrace` (mặc định `30s`, env `IDENTITY_REFRESH_REUSE_GRACE`; `0s` = tắt)
+- `RefreshTokenService.rotate`: nhánh grace — cấp token mới **nối tiếp chuỗi** (rotate token *cuối*
+  của chuỗi), không revoke; log INFO thay vì WARN
+- Chốt an toàn: chuỗi đã bị **revoke do logout** (`revokedAt != null`, `replacedBy == null`) thì
+  **không** áp grace ⇒ vẫn 401
+- Test: unit (grace còn/hết hạn, logout-then-reuse, hop bound) + IT dùng `refresh-reuse-grace=0s`
+  cho test revoke cũ; verify thật trên stack với grace 30s
+
+**Out of scope**
+
+- Không đổi cơ chế client (single-flight refresh) — việc của Phase 2 khi có client thật
+- Không thêm `parent_id` (giữ chain tuyến tính bằng `replaced_by`)
+
+**Acceptance Criteria**
+
+- [x] Dùng lại token vừa rotate trong < 30s → **200**, trả token mới, **không** revoke chuỗi
+- [x] Dùng lại token đã rotate > 30s → **401** + **revoke cả chuỗi** (như cũ)
+- [x] `logout` rồi dùng lại token cũ (trong grace) → **401** (grace không hồi sinh phiên đã logout)
+- [x] `refresh-reuse-grace=0s` → hành vi cũ (tắt grace)
+- [x] `mvn verify` + CI xanh
+
+**Kết quả verify**
+
+**Unit + IT** — `mvn -B -ntp -pl services/identity-service -am verify`:
+
+```console
+[INFO] Tests run: 42, Failures: 0, Errors: 0, Skipped: 0   ← service-commons
+[INFO] Tests run: 50, Failures: 0, Errors: 0, Skipped: 0   ← identity unit (46 → 50: +4 test grace)
+[INFO] Tests run: 22, Failures: 0, Errors: 0, Skipped: 0   ← identity IT (grace=0s ⇒ giữ ngữ nghĩa strict)
+[INFO] BUILD SUCCESS
+```
+
+**AC trên stack thật** (grace mặc định **30s**):
+
+| AC | Kết quả đo được |
+|---|---|
+| Dùng lại token vừa rotate trong < 30s → 200, **không** revoke chuỗi | PASS — `refresh(RT1)` → 200 (RT2); `refresh(RT1)` lần nữa ngay sau đó → **200** + token mới, không có 401 |
+| Dùng lại token đã rotate > 30s → 401 + revoke cả chuỗi | PASS — chờ 31s rồi `refresh(RT1)` → **401**; token mới nhất trong chuỗi cũng **401** |
+| `logout` rồi dùng lại token cũ (trong grace) → 401 | PASS — `logout(RT_b)` → `refresh(RT_a)` (trong grace) → **401** (không hồi sinh phiên) |
+| `refresh-reuse-grace=0s` → hành vi cũ | PASS — IT chạy với `0s`: reuse ⇒ 401 + revoke chuỗi (test cũ vẫn xanh) |
+
+**Learning note**
+
+- **Bảo mật và UX không đối lập, nhưng phải chọn "cửa sổ"**: reuse detection nghiêm ngặt (revoke ngay)
+  bảo vệ tốt nhất nhưng phạt cả người dùng thật trong 3 tình huống phổ biến (2 tab đua, mất mạng sau
+  rotate, retry). Grace 30s là **đánh đổi có biên**: trong 30s kẻ đánh cắp token cũ cũng lấy được token
+  mới, nhưng ngoài 30s thì vẫn bị phát hiện + revoke. Cửa sổ phải **cấu hình được** (`0s` = tắt) để
+  môi trường nhạy cảm chọn strict.
+- **Grace phải "nối chuỗi", không tạo nhánh**: nếu cấp token mới mà không nối vào `replaced_by` thì
+  `revokeChain` sau này sẽ không đi hết chuỗi ⇒ mất khả năng thu hồi. Vì vậy grace rotate **token cuối
+  chuỗi** (đi theo `replaced_by`, có chặn `MAX_CHAIN_HOPS`) chứ không rotate token vừa bị dùng lại.
+- **Không được để grace "hồi sinh" phiên đã logout**: logout đặt `revokedAt` nhưng `replacedBy == null`
+  — nếu chỉ kiểm `isRevokedOrRotated()` thì token sau logout vẫn được cấp mới. Điều kiện grace phải là
+  **"đã rotate"** (`replacedBy != null`), không phải "đã revoke".
+- **Test thời gian phải tách hai tầng**: unit test dùng `Clock.fixed` + `grace` tham số để kiểm cả hai
+  phía biên (0s và 31s) **không cần sleep**; IT thì cố định `grace=0s` để kiểm luồng revoke. Chỉ verify
+  trên stack thật mới cần chờ thật 31s — và chỉ chờ **một lần**.
+
 ---
 
 ## 5. Phase 2 → 8 — Epic outline
@@ -2330,6 +2411,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | SL-1.15 | **Transliterate tiếng Việt: NFD không đủ** — `đ/Đ` là chữ riêng, không tách được bằng `\p{M}` nên phải map tay; test phải có `Điện`/`Đồ`/`Đỏ`. |
 | 2026-11-06 | SL-1.17 | **Contract ≠ danh sách endpoint kỹ thuật**: `/debug/*` có thật nhưng không phải API cho client ⇒ `@Hidden`. Phân biệt "hạ tầng để verify" (ẩn) với "hạ tầng để vận hành" (`/health`, `/ready`, `/version` — GIỮ, runbook dùng). |
 | 2026-11-06 | SL-1.16 | **Nợ kỹ thuật phải có điều kiện revisit verify được** ("khi đo được p99 ở dữ liệu lớn", không phải "khi rảnh") và phải nằm ở **một bảng**. Learning note = đã hiểu gì; debt = còn phải làm gì — để chung thì không ai lọc được. |
+| 2026-11-06 | SL-1.18 | **Grace window phải nối chuỗi, không tạo nhánh**: cấp token mới mà không set `replaced_by` thì `revokeChain` sau này không đi hết chuỗi ⇒ mất khả năng thu hồi. Grace rotate **token cuối chuỗi** (có chặn hop). |
+| 2026-11-06 | SL-1.18 | **Grace không được hồi sinh phiên đã logout**: điều kiện phải là "đã rotate" (`replacedBy != null`), không phải "đã revoke" — logout cũng set `revokedAt`. Test thời gian: unit dùng `Clock.fixed` + grace tham số (0s/31s, không sleep), IT cố định `grace=0s`, chỉ stack thật mới chờ 31s. |
 | 2026-11-05 | process | **Push race với lúc merge ⇒ mất commit**: commit cuối của `SL-1.1` (`feda53a` — status Done + block CI evidence + changelog) push lên đúng lúc user merge; squash merge dùng state **trước** commit đó, rồi nhánh bị xoá ⇒ thay đổi biến mất khỏi `main`. **Bài học**: sau khi merge phải `git show <merge-sha> --stat`/`grep` kiểm nội dung trên `main`, đừng tin "đã push là xong"; commit bị mất vẫn cứu được qua reflog nếu chưa GC. Đã khôi phục trong nhánh `SL-1.2`. |
 | 2026-11-05 | SL-1.9 | **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` đánh giá theo **toàn bộ diff của PR** → commit docs trong PR **có code** vẫn tốn 1 run. `[skip ci]` xử lý đúng case đó. Nhưng GitHub đọc skip instruction ở **HEAD commit của PR** ⇒ docs commit ở cuối PR skip luôn run của cả PR (check treo `Pending`) → đừng tin nó, hãy kiểm bằng **diff thật**. |
 | 2026-11-05 | SL-1.9 | **Guard cũng phải test theo đúng thứ tự**: lần đầu test guard "PR draft" **sau khi** đã chạy `gh pr ready` ⇒ tưởng guard hỏng, thực ra kịch bản test sai. Test guard cần kịch bản cẩn thận y như test code. |
@@ -2378,7 +2461,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-10` | `ProductService.findById` không còn dùng ở main (chỉ test gọi) | SL-1.6 | Lần sửa `ProductService` tiếp theo | thấp |
 | `TD-11` | `page`/`size`/`sort` sai → 400 nhưng không trả `details` theo field | SL-1.6 | Khi client cần hiển thị lỗi theo field | thấp |
 | `TD-12` | Chưa có **soft delete** cho product; `DELETE` là hard delete + cascade SKU | SL-1.6 | Khi bắt đầu `SL-2.x` (order tham chiếu SKU) | cao |
-| `TD-13` | **Reuse detection revoke cả chuỗi** ⇒ client hợp lệ vẫn có thể bị logout toàn phiên: 2 tab cùng refresh gần như đồng thời, mất mạng sau khi server đã rotate, hoặc retry tự động gửi lại token cũ | SL-1.4 (rà soát 2026-11-06) | Khi có phản ánh "tự nhiên bị logout" **hoặc** khi làm client thật (Phase 2) → cân nhắc **grace window ~30s** (trả token mới nhất trong chuỗi thay vì revoke) + client single-flight refresh | trung bình |
+| `TD-13` | **Reuse detection revoke cả chuỗi** ⇒ client hợp lệ vẫn có thể bị logout toàn phiên: 2 tab cùng refresh gần như đồng thời, mất mạng sau khi server đã rotate, hoặc retry tự động gửi lại token cũ | SL-1.4 (rà soát 2026-11-06) | Khi có phản ánh "tự nhiên bị logout" **hoặc** khi làm client thật (Phase 2) → cân nhắc **grace window ~30s** (trả token mới nhất trong chuỗi thay vì revoke) + client single-flight refresh | ✅ đã trả (SL-1.18) |
 
 ## 8. Changelog
 
@@ -2419,6 +2502,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | `SL-1.8` → `Done`: OpenAPI spec Phase 1 — thêm `springdoc-openapi-starter-webmvc-api` **3.2.0** (Boot 4.1.x ⇒ springdoc 3.x) cho 3 service, expose `/v3/api-docs`; khung spec (info + security scheme `bearerAuth`) + **bộ response lỗi 400/401/403/404/409 tự gắn cho MỌI operation** (`$ref → ApiError`) đặt ở `service-commons` (`OpenApiAutoConfiguration`), nên endpoint Phase 2 tự có tài liệu lỗi. `OpenApiEnvironmentPostProcessor` ép tắt spec khi `APP_ENV != local` (**fail-closed**, override bằng `SHOPLAB_OPENAPI_ENABLED`). `tools/export-openapi.sh` merge spec identity + catalog → **`docs/api/openapi.yaml`** (`servers` = gateway, sort key để diff ổn định) + **tự validate** bằng `python3`+`pyyaml`. Verify: 3/3 service `/v3/api-docs` **200**; export **VALIDATE PASS · 17 path · 21 operation · 7 operation cần token · 18 schema**; `APP_ENV=prod` → `/v3/api-docs` **404** (service vẫn 200); e2e-smoke 17/17; cả reactor `mvn verify` xanh (254 unit + 40 IT). |
 | 2026-11-06 | `SL-1.15` → `Done`: **seed dev không còn chạy ở prod** — chuyển `R__seed_dev_data.sql` sang `db/seed/`, `spring.flyway.locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}` (**fail-closed**); compose local + IT tự thêm `,classpath:db/seed`. **Slug tiếng Việt** bỏ dấu (NFD + map `đ/Đ`): `"Điện thoại X"` → `dien-thoai-x`, `"Ốp lưng đẹp"` → `op-lung-dep`. Verify: local `down -v && up -d` → **5/20/24** seed · kiểu prod `APP_ENV=prod` + DB mới → **category=0 product=0 sku=0** (history chỉ V1+V2) · **42 + 61 unit + 18 IT** xanh · e2e-smoke 17/17. Sửa kèm 2 IT bị đỏ do slug mới trùng seed (dùng hậu tố UUID). |
 | 2026-11-06 | `SL-1.17` → `Done`: ẩn endpoint debug khỏi OpenAPI spec bằng `@Hidden` (identity + catalog + gateway) — spec **17 → 14 path**, **21 → 18 operation**, `grep -c '/debug' = 0`, validate vẫn PASS; probe `/health` `/ready` `/version` **giữ** vì là hợp đồng vận hành thật. Docs: `docs/api/README.md` thêm mục "cái gì không nằm trong spec". Verify: export lại + đếm path trước/sau · `mvn verify -DskipITs` xanh toàn reactor · CI xanh. |
+| 2026-11-06 | `SL-1.18` → `Done`: **grace window 30s** cho refresh reuse detection (`TD-13`) — token đã rotate trong ≤30s mà bị dùng lại ⇒ cấp token mới nối tiếp chuỗi (không revoke) để client hợp lệ không bị logout oan; quá 30s ⇒ revoke cả chuỗi như cũ; **logout không có grace** (dùng lại token cũ sau logout luôn 401). Cấu hình `IDENTITY_REFRESH_REUSE_GRACE` (`0s` = tắt). Verify: **50 unit (+4) + 22 IT** xanh; stack thật: reuse trong grace **200** · sau logout **401** · sau 31s **401 + cả chuỗi chết**. |
 | 2026-11-06 | `SL-1.16` → `Done`: rule [`.clinerules/20-tech-debt.md`](.clinerules/20-tech-debt.md) + **`Backlog.md` §7 Technical debt register** với **12 mục** `TD-1`…`TD-12` (job dọn `refresh_tokens` · admin list không phân trang · handler 403 nên ở commons · smoke chưa vào CI · `merge-pr.sh` chưa retry · offset pagination · `LIKE '%q%'` full scan · sort whitelist hẹp · verify OpenAPI fail-closed bằng tay · dead code · 400 không `details` · **soft delete chưa có — chặn `SL-2.x`**). Changelog đổi thành §8. |
 
 
