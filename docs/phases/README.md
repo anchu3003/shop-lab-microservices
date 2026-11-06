@@ -7,9 +7,9 @@
 ## Cách dùng (3 lệnh)
 
 ```bash
-gh release view phase-0            # 1) đọc release notes: stack · số liệu · cách chạy
-git checkout phase-0               # 2) xem code + docs tại snapshot đó
-git diff phase-0 phase-1 --stat    # 3) thấy ĐÚNG những gì phase sau thêm
+gh release view phase-1            # 1) đọc release notes: stack · số liệu · cách chạy
+git checkout phase-1               # 2) xem code + docs tại snapshot đó
+git diff phase-1 phase-2 --stat    # 3) thấy ĐÚNG những gì phase sau thêm
 ```
 
 Muốn **sửa** snapshot (không đụng `main`) → mở nhánh từ tag (chỉ khi thực sự cần — xem ADR-0005 → Revisit):
@@ -24,7 +24,7 @@ git switch -c maint/phase-0 phase-0
 | Phase | Tag / Release | Doc snapshot | Ticket archive | Stack chính | Trạng thái |
 |---|---|---|---|---|---|
 | **0** — Foundation | `phase-0` | [`phase-0.md`](phase-0.md) | [`Backlog-phase-0.md`](../../Backlog-phase-0.md) | Java 21 · Spring Boot 4.1.2 · Docker Compose · GitHub Actions | ✅ Done 2026-11-03 |
-| **1** — Walking skeleton | `phase-1` | `phase-1.md` | `Backlog-phase-1.md` | + `api-gateway` · `identity-service` · `catalog-service` · JWT | ⚪ Todo |
+| **1** — Walking skeleton | `phase-1` | [`phase-1.md`](phase-1.md) | [`Backlog-phase-1.md`](../../Backlog-phase-1.md) | + `api-gateway` · `identity-service` · `catalog-service` · JWT RS256 + refresh rotate (grace 30s) · OpenAPI | ✅ Done 2026-11-06 |
 | **2** — Core commerce flow | `phase-2` | `phase-2.md` | `Backlog-phase-2.md` | + cart · inventory · promotion · order (Saga) · payment | ⚪ Todo |
 | **3** — Async & event-driven | `phase-3` | `phase-3.md` | `Backlog-phase-3.md` | + RabbitMQ/Kafka · outbox · DLQ · search index | ⚪ Todo |
 | **4** — Scale & performance | `phase-4` | `phase-4.md` | `Backlog-phase-4.md` | + cache-aside · rate limit · read replica · partition · k6 | ⚪ Todo |
