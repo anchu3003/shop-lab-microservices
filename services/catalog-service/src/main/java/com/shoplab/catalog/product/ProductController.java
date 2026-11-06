@@ -1,6 +1,8 @@
 package com.shoplab.catalog.product;
 
 import com.shoplab.catalog.web.PageResponse;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.UUID;
@@ -22,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>{@code GET} công khai (guest xem sản phẩm — lý do catalog là service read-heavy đầu tiên);
  * {@code POST}/{@code PUT}/{@code DELETE} chỉ {@code seller}/{@code admin}.
  */
+@Tag(name = "Product")
 @RestController
 @RequestMapping("/v1/products")
 public class ProductController {
@@ -50,6 +53,7 @@ public class ProductController {
 
   /** Tạo product (seller/admin) → 201 + {@code Location}. */
   @PostMapping
+  @SecurityRequirement(name = "bearerAuth")
   @PreAuthorize("hasAnyRole('SELLER','ADMIN')")
   public ResponseEntity<ProductResponse> create(@Valid @RequestBody CreateProductRequest request) {
     ProductResponse created = service.create(request);
@@ -64,6 +68,7 @@ public class ProductController {
 
   /** Sửa product (seller/admin) — thay toàn bộ field sửa được. */
   @PutMapping("/{id}")
+  @SecurityRequirement(name = "bearerAuth")
   @PreAuthorize("hasAnyRole('SELLER','ADMIN')")
   public ProductResponse update(
       @PathVariable UUID id, @Valid @RequestBody UpdateProductRequest request) {
@@ -72,6 +77,7 @@ public class ProductController {
 
   /** Xoá product (seller/admin) → 204. */
   @DeleteMapping("/{id}")
+  @SecurityRequirement(name = "bearerAuth")
   @PreAuthorize("hasAnyRole('SELLER','ADMIN')")
   public ResponseEntity<Void> delete(@PathVariable UUID id) {
     service.delete(id);

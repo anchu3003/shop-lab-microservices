@@ -1,1 +1,2 @@
 com.shoplab.commons.ShoplabCommonsAutoConfiguration
+com.shoplab.commons.openapi.OpenApiAutoConfiguration

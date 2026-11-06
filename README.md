@@ -548,6 +548,28 @@ E2E smoke: OK
 
 
 
+## API spec (OpenAPI) — `SL-1.8`
+
+[`docs/api/openapi.yaml`](docs/api/openapi.yaml) là **contract** của API Phase 1 — sinh từ code nên không
+lệch thực tế, và nằm trong git nên **diff được theo phase**.
+
+```bash
+bash tools/export-openapi.sh    # gom /v3/api-docs của identity + catalog → docs/api/openapi.yaml + tự validate
+```
+
+- `servers[0].url = http://localhost:8080` — **gateway**, cửa vào duy nhất (client không gọi port service).
+- Mọi lỗi dùng schema **`ApiError`** cho 400/401/403/404/409 — gắn **tự động cho mọi operation** ở
+  `service-commons` (nên endpoint Phase 2 cũng tự có).
+- `/v3/api-docs` **chỉ bật ở local**: `APP_ENV != local` ⇒ tự tắt (override có chủ ý bằng
+  `SHOPLAB_OPENAPI_ENABLED=true`).
+- Hiện tại: **17 path / 21 operation**, 7 operation cần token. Chi tiết cách đọc + cập nhật:
+  [`docs/api/README.md`](docs/api/README.md).
+
+## Debug khi có sự cố
+
+Xem [`docs/runbook-phase-1.md`](docs/runbook-phase-1.md) — sơ đồ luồng, kiểm tra từng tầng, 5 lỗi thường
+gặp (401 · 403 · 404 · 503 · timeout) và output debug thật.
+
 ## Tạo service mới từ template
 
 Ví dụ tạo `order-service`:

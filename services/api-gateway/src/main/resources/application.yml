@@ -45,6 +45,8 @@ shoplab:
       - /v1/products/**
       - /v1/categories/**
       - /.well-known/**
+      # SL-1.8: spec OpenAPI của chính gateway (chỉ bật ở local — xem springdoc.api-docs.enabled).
+      - /v3/api-docs
       - /health
       - /ready
 
@@ -88,3 +90,12 @@ logging:
     root: INFO
     com.shoplab: ${LOG_LEVEL:INFO}
 
+
+# --- OpenAPI (SL-1.8) ---
+# Chỉ để XUẤT spec (docs/api/openapi.yaml), không phục vụ client thật.
+# `OpenApiEnvironmentPostProcessor` (commons) ép `false` khi APP_ENV != local ⇒ mặc định fail-closed:
+# spec là bản đồ hệ thống, không được lộ ở môi trường thật.
+springdoc:
+  api-docs:
+    enabled: ${SHOPLAB_OPENAPI_ENABLED:true}
+    path: /v3/api-docs

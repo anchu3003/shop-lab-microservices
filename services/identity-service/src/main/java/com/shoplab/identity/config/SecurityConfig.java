@@ -49,7 +49,7 @@ public class SecurityConfig {
    * Endpoint công khai: probe, JWKS, và toàn bộ luồng auth (login/refresh/logout phải gọi được).
    */
   private static final String[] PUBLIC_PATHS = {
-    "/health", "/ready", "/version", "/debug/**", "/v1/auth/**", "/.well-known/**"
+    "/health", "/ready", "/version", "/debug/**", "/v1/auth/**", "/.well-known/**", "/v3/api-docs"
   };
 
   /**

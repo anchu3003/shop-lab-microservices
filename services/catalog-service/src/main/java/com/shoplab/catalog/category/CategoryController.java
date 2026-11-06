@@ -1,5 +1,7 @@
 package com.shoplab.catalog.category;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
@@ -17,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Đọc công khai (guest duyệt được), ghi chỉ {@code seller}/{@code admin} — phân quyền khai bằng
  * {@code @PreAuthorize} vì cùng path khác HTTP method.
  */
+@Tag(name = "Category")
 @RestController
 @RequestMapping("/v1/categories")
 public class CategoryController {
@@ -29,6 +32,7 @@ public class CategoryController {
 
   /** Tạo category (seller/admin) → 201 + {@code Location}. */
   @PostMapping
+  @SecurityRequirement(name = "bearerAuth")
   @PreAuthorize("hasAnyRole('SELLER','ADMIN')")
   public ResponseEntity<CategoryResponse> create(
       @Valid @RequestBody CreateCategoryRequest request) {

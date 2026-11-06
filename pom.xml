@@ -59,6 +59,12 @@
     <jacoco-maven-plugin.version>0.8.16</jacoco-maven-plugin.version>
     <logstash-logback-encoder.version>9.0</logstash-logback-encoder.version>
     <!--
+      springdoc-openapi cho Spring Boot 4: dòng **3.x**. Bảng tương thích chính thức:
+      Boot 4.1.x → springdoc 3.1.x–3.2.x (Boot 4.0.x → 3.0.x). Dòng 2.x là cho Boot 3 ⇒ dùng
+      2.x với Boot 4 sẽ chết lúc khởi động (NoSuchMethod/NoClassDef).
+    -->
+    <springdoc.version>3.2.0</springdoc.version>
+    <!--
       Checkstyle version PHẢI khai báo tường minh (dependency của plugin), vì plugin
       3.6.0 mặc định kéo checkstyle 9.3 (2022) — khá cũ. Override bằng -Dcheckstyle.version
       trên CLI KHÔNG có tác dụng (Maven resolve dependency của plugin từ POM của plugin).
@@ -81,6 +87,12 @@
         <groupId>com.shoplab</groupId>
         <artifactId>shoplab-service-commons</artifactId>
         <version>${project.version}</version>
+      </dependency>
+      <!-- OpenAPI: quản version tập trung (Boot BOM không quản springdoc). -->
+      <dependency>
+        <groupId>org.springdoc</groupId>
+        <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+        <version>${springdoc.version}</version>
       </dependency>
       <dependency>
         <groupId>net.logstash.logback</groupId>

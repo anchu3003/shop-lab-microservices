@@ -1,5 +1,7 @@
 package com.shoplab.catalog.sku;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.UUID;
@@ -17,6 +19,8 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Chỉ {@code seller}/{@code admin} được tạo (giống tạo product). Đọc SKU nằm trong {@code GET
  * /v1/products/{id}} (danh sách {@code skus}) để guest chỉ cần 1 request.
  */
+@Tag(name = "SKU")
+@SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequestMapping("/v1/products/{productId}/skus")
 public class SkuController {

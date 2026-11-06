@@ -42,8 +42,10 @@ import tools.jackson.databind.ObjectMapper;
 @EnableMethodSecurity
 public class SecurityConfig {
 
-  /** Endpoint công khai: probe + debug (debug tự tắt ở môi trường khác). */
-  private static final String[] PUBLIC_PATHS = {"/health", "/ready", "/version", "/debug/**"};
+  /** Endpoint công khai: probe + debug (debug tự tắt ở môi trường khác) + spec OpenAPI (SL-1.8). */
+  private static final String[] PUBLIC_PATHS = {
+    "/health", "/ready", "/version", "/debug/**", "/v3/api-docs"
+  };
 
   /**
    * Đọc: guest xem được (đây là lý do catalog là service read-heavy đầu tiên). Ghi: chỉ
