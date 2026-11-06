@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.7` — E2E smoke đầy đủ + runbook Phase 1 |
-| **Ticket tiếp theo** | `SL-1.8` — OpenAPI spec cho các endpoint Phase 1 |
+| **Ticket đang làm** | `SL-1.8` — OpenAPI spec cho các endpoint Phase 1 |
+| **Ticket tiếp theo** | *(hết Phase 1)* — DoD phase: `docs/phases/phase-1.md` + tag `phase-1` + GitHub Release |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -116,7 +116,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 5 | `SL-1.4` | `identity-service`: refresh token + RBAC | M | ✅ Done |
 | 6 | `SL-1.5` | `catalog-service`: CRUD category/product | M | ✅ Done |
 | 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | ✅ Done |
-| 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | Todo |
+| 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | ✅ Done |
 | 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
 | 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
 | 11 | `SL-1.10` | *(phát sinh)* fix: `[skip ci]` lọt vào squash message → `main` không chạy CI | S | ✅ Done |
@@ -1111,7 +1111,7 @@ sau `down -v && up -d`).
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.6 (và SL-1.4) |
 | **Ước lượng** | S |
@@ -1156,9 +1156,61 @@ Một lệnh chứng minh toàn bộ luồng Phase 1 chạy đúng (kể cả ph
 - Đây là "runbook" đầu tiên của repo — Phase 5 sẽ mở rộng thành runbook sự cố đầy đủ (`SL-5.x`), nên đặt file theo tên
   `docs/runbook-phase-1.md` để sau này gom lại.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify**
 
-**Learning note** *(điền khi Done)*
+**Script mở rộng** — `bash tools/e2e-smoke.sh` (17 mục, 13 request):
+
+```console
+$ bash tools/e2e-smoke.sh
+  PASS [1] 1a health gateway · [2] 1b health identity · [3] 1c health catalog
+  PASS [4] 2 register · [5] 3 login · [6] 4 /v1/users/me có token · [7] 5 /v1/users/me KHÔNG token → 401
+  PASS [8] 6 traceId ... có trong log identity (gateway forward header)
+  PASS [9] 7 login seller (seller@shoplab.local)
+  PASS [10] 8 seller tạo category → 201
+  PASS [11] 9 seller tạo product → 201        product id = f36347f0-d1b3-4e58-9ecd-682d1aa47505
+  PASS [12] 10 guest list product (KHÔNG token) → 200
+  PASS [13] 10b product f36347f0-… xuất hiện trong list của guest
+  PASS [14] 11 guest xem chi tiết product → 200 · [15] 11b có field skus
+  PASS [16] 12 buyer tạo product → 403 (đúng như mong đợi)
+  PASS [17] 12b body 403 là ApiError FORBIDDEN
+== Kết quả: 17 PASS / 0 FAIL · 13 request · 927 ms
+E2E smoke: OK
+```
+
+| AC | Kết quả đo được |
+|---|---|
+| Chạy → PASS toàn bộ, exit 0, in **id product** vừa tạo | PASS (`f36347f0-…`, `E2E smoke: OK`) |
+| Guest list được product vừa tạo (qua gateway) | PASS (bước 10 + 10b) |
+| "buyer tạo product" trả **403** và script **không** coi là fail | PASS (bước 12/12b, assert đúng 403 + body `FORBIDDEN`) |
+| Chạy lại nhiều lần vẫn pass (dữ liệu random) | PASS — **6/6 lần**, ~430 ms/lần |
+| Tắt 1 service → fail **đúng bước** + in gợi ý | PASS — `docker stop shoplab-catalog-service` → fail **1c** (`status=000`) và **8** (`503` + gợi ý), các bước khác vẫn PASS |
+| Runbook đủ 5 lỗi + lệnh từng tầng; **làm theo** để debug 1 lỗi giả lập | PASS — xem `docs/runbook-phase-1.md` §5 (dán nguyên văn) |
+| README trỏ tới runbook + script | PASS |
+
+**2 bug thật phát hiện khi verify (đã sửa)**
+
+1. **Smoke test flaky**: category tạo theo `Smoke $TS` (giây) ⇒ 2 lần chạy trong **cùng giây** đụng
+   unique index `slug` ⇒ **409** ⇒ 4 bước fail (đo được: `9 PASS / 4 FAIL`). Sửa: thêm `$RANDOM`.
+   Đúng là lý do AC "chạy lại nhiều lần vẫn pass" tồn tại — nếu chỉ chạy 1 lần thì đã không thấy.
+2. **Script báo sai chỗ khi connection refused**: `curl -o <file>` không mở file khi không kết nối
+   được ⇒ file còn nội dung lần trước ⇒ bước fail in **body cũ** (`{"status":"UP"}` trong khi catalog
+   đã chết). Sửa: `: > "$TMP_BODY"` trước mỗi request. Bug "báo sai chỗ" nguy hiểm hơn bug báo đúng.
+
+**Learning note**
+
+- **Smoke test phải random "đủ mạnh"**: timestamp giây KHÔNG đủ khi test chạy <1s. Bất kỳ unique
+  constraint nào (email, slug, code SKU) cũng phải có entropy thật (`$RANDOM`/UUID), nếu không test
+  sẽ xanh trên máy chậm và đỏ trên máy nhanh — kiểu flaky tệ nhất vì `git bisect` không tìm ra.
+- **Script debug cũng là sản phẩm**: in `status` + `body` + **gợi ý lệnh** ngay tại bước fail biến
+  "chạy lại rồi đoán" thành "đọc là biết tầng nào". Nhưng body phải được **xoá trước** mỗi request,
+  nếu không nó nói dối đúng vào lúc cần nhất.
+- **`000` vs `503` chỉ ra 2 tầng khác nhau**: `000` = client không kết nối được (service chết/cổng
+  sai) · `503` = gateway sống nhưng service đích không tới được. Runbook phải dạy đọc cặp này, vì
+  cùng "không có 200" mà nguyên nhân khác hẳn.
+- **Test âm phải là case có chủ đích**: bước "buyer tạo product → 403" là **PASS khi trả 403** — nằm
+  cùng script với các bước happy path. Nếu tách ra script riêng thì không ai chạy.
+- **Runbook chỉ đáng tin khi đã dùng nó để debug thật**: §5 của `docs/runbook-phase-1.md` là output
+  nguyên văn của lần giả lập lỗi, không phải ví dụ viết tay.
 
 ### SL-1.8 — OpenAPI spec cho các endpoint Phase 1
 
@@ -1990,6 +2042,12 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | SL-1.6 | **Whitelist sort = chặn SQL injection ở dạng khó thấy** (`sort` đi thẳng vào `ORDER BY`). Value client gửi chỉ được **tra map**, không ghép chuỗi; test `sort=drop table` phải assert **400**, không phải "không crash". |
 | 2026-11-06 | SL-1.6 | **List và detail phải khác DTO**: list trả product **không** kèm SKU (tránh N+1: 20 product × 1 query), detail trả kèm `skus`. Dùng chung DTO là tự tạo N+1 mà không ai thấy cho tới khi tải cao. |
 | 2026-11-06 | SL-1.6 | **Validate query param ở tầng parse (`ProductQuery`) thay vì để Spring bind**: bind sai kiểu của Spring trả 400 nhưng body **không phải `ApiError`** ⇒ client phải xử lý 2 format lỗi. Tách record còn cho 20 unit test chạy 0,2s thay vì test qua HTTP. |
+| 2026-11-06 | SL-1.7 | **Smoke test phải random "đủ mạnh"**: timestamp **giây** không đủ khi test chạy <1s ⇒ 2 lần chạy cùng giây đụng unique index (`slug`) ⇒ **flaky** (đo được 9 PASS/4 FAIL). Mọi unique constraint trong test (email/slug/code) phải có entropy thật (`$RANDOM`/UUID). |
+| 2026-11-06 | SL-1.7 | **`curl -o <file>` KHÔNG mở file khi connection bị từ chối** ⇒ file giữ nội dung lần trước ⇒ bước fail in **body cũ** (`{"status":"UP"}` trong khi service đã chết). Luôn `: > "$TMP_BODY"` trước mỗi request — bug "báo sai chỗ" nguy hiểm hơn bug báo đúng. |
+| 2026-11-06 | SL-1.7 | **`status=000` và `503` chỉ ra 2 tầng khác nhau**: `000` = client không kết nối được (service chết/cổng sai) · `503` = gateway sống nhưng không tới được service đích. Runbook phải dạy đọc **cặp mã** này thay vì chỉ nói "không có 200". |
+| 2026-11-06 | SL-1.7 | **Test âm phải nằm chung script với happy path**: bước "buyer tạo product → **403**" là PASS khi trả 403. Tách ra script riêng thì không ai chạy ⇒ phân quyền hỏng mà không ai biết. |
+| 2026-11-06 | SL-1.7 | **Runbook chỉ đáng tin khi đã dùng nó để debug thật**: `docs/runbook-phase-1.md` §5 dán **nguyên văn** output của lần giả lập lỗi (stop catalog → fail 1c/8 → `docker ps` → `up -d`), không phải ví dụ viết tay. |
+
 
 | 2026-11-05 | process | **Push race với lúc merge ⇒ mất commit**: commit cuối của `SL-1.1` (`feda53a` — status Done + block CI evidence + changelog) push lên đúng lúc user merge; squash merge dùng state **trước** commit đó, rồi nhánh bị xoá ⇒ thay đổi biến mất khỏi `main`. **Bài học**: sau khi merge phải `git show <merge-sha> --stat`/`grep` kiểm nội dung trên `main`, đừng tin "đã push là xong"; commit bị mất vẫn cứu được qua reflog nếu chưa GC. Đã khôi phục trong nhánh `SL-1.2`. |
 | 2026-11-05 | SL-1.9 | **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` đánh giá theo **toàn bộ diff của PR** → commit docs trong PR **có code** vẫn tốn 1 run. `[skip ci]` xử lý đúng case đó. Nhưng GitHub đọc skip instruction ở **HEAD commit của PR** ⇒ docs commit ở cuối PR skip luôn run của cả PR (check treo `Pending`) → đừng tin nó, hãy kiểm bằng **diff thật**. |
@@ -2053,6 +2111,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | `SL-1.3` → `Done`: `tools/e2e-smoke.sh` — health gateway+identity → register (email random) → login → `/v1/users/me` có token → 200 · thiếu token → **401** · đối chiếu `traceId` trong log identity; `PASS/FAIL` từng bước + exit code. Verify: **7/7 PASS** · exit 0 · chạy lại 3 lần pass · **test âm** (stop identity) → fail đúng bước `1b` + `exit=1`. Thêm mục README "E2E smoke". Sửa 2 bug: `date +%s%3N` ra nanosec → `%s%N`/1e6; curl connection-refused + `set -e` → `\| true`. |
 | 2026-11-06 | `SL-1.5` → `Done`: `catalog-service` (port **8082**, DB `catalog`, Flyway `V1__create_catalog.sql` với `price NUMERIC(12,2)` + `@Version` + FK/index) — `POST/GET /v1/categories`, `POST/GET/PUT/DELETE /v1/products`; guest **đọc** được, chỉ `seller`/`admin` **ghi**. Service **tự verify JWT qua JWKS của identity** (defense in depth: gọi thẳng :8082 không token vẫn 401, `x-user-role` client gửi bị bỏ qua). Error **400/401/403/404/409** đều là `ApiError` có `traceId`. Hạ tầng: module mới ở parent pom, 4 Dockerfile `COPY` pom mới, CI matrix **4 service**, compose + `.env.example` + gateway route `/v1/products` `/v1/categories`. Verify: **36 unit + 12 IT** (+37 commons) xanh; **36/36 mục AC** trên stack thật (seller 201 · buyer 403 · guest 200 · 404 · 400 details · 401 gọi thẳng · không leo quyền · `version` +1); `e2e-smoke` vẫn 7/7. Sửa 3 bug thật: `@PreAuthorize` → **500** thay vì 403, `@Version` trả số cũ trong response `PUT`, image build đỏ vì JaCoCo gate bị `-DskipITs`. |
 | 2026-11-06 | `SL-1.6` → `Done`: `catalog-service` có **SKU** (`V2__create_sku.sql`: `code` unique, `price_override` NULL = dùng giá product, `stock_hint` chỉ là gợi ý — tồn kho thật là việc của inventory Phase 2) + **list phân trang/filter/sort** (`GET /v1/products?page=&size=&categoryId=&q=&sort=` → `{content,page,size,totalElements,totalPages}`, public cho guest) + **seed dev** (`R__seed_dev_data.sql`: 5 category / 20 product / 24 SKU, idempotent bằng `ON CONFLICT`). Tham số sai (`size` ngoài 1..100 · `page<0` · `sort` lạ · `categoryId` không UUID) → **400 `VALIDATION_ERROR`**, **không clamp**; sort whitelist `price,asc|desc` · `createdAt,asc|desc`. Verify: **60 unit + 18 IT** xanh; **35/35 mục AC** trên stack thật (paging không trùng id · filter · `q` không phân biệt hoa/thường · sort đúng thứ tự · 400 cho mọi input xấu · SKU trong chi tiết · **`down -v && up -d` → 5/20/24 seed** · restart **không** nhân đôi · `EXPLAIN` dùng `ix_product_created_at`); `e2e-smoke` 7/7. |
+| 2026-11-06 | `SL-1.7` → `Done`: `tools/e2e-smoke.sh` mở rộng thành E2E **cả Phase 1** — **17 mục**: health 3 service · register · login · `/v1/users/me` (200/401) · `traceId` xuyên service · **seller** tạo category+product (201, in id) · **guest** list + xem chi tiết (**200, không token**, có `skus`) · **buyer** tạo product (**403**, case mong đợi lỗi) · body lỗi là `ApiError`. Fail ở đâu in **gợi ý lệnh kiểm tra** ở đó. Thêm `docs/runbook-phase-1.md` (sơ đồ luồng · bảng port · kiểm tra **từng tầng** · **5 lỗi**: 401/403/404/503/timeout · §5 là output debug thật). Verify: **17/17 PASS** · chạy **6/6 lần** pass (~430 ms) · `docker stop` catalog → fail đúng **1c (000)** + **8 (503)**, các bước khác vẫn PASS. Sửa 2 bug thật: category trùng slug khi 2 lần chạy cùng giây (**flaky**), và script in **body cũ** khi connection refused. |
+
 
 | 2026-11-05 | `SL-1.4` → `Done`: refresh token (**opaque 256-bit, lưu SHA-256**) + **rotate + reuse detection** (dùng lại token đã rotate ⇒ 401 **và revoke cả chuỗi**), logout, `GET /v1/admin/users` (ADMIN 200 / buyer **403**), security filter chain (identity **tự verify JWT** — defense in depth) + 401/403 trả **ApiError** có `traceId`. Seed `admin@`/`seller@` bằng `LocalDevUserSeeder` (chỉ `APP_ENV=local`). Verify: **46 unit + 22 IT** xanh; E2E **9 mục** trên stack thật (rotate/reuse/logout/RBAC/hash-trong-DB/**qua gateway**); `tools/e2e-smoke.sh` vẫn 7/7. Sửa 3 lỗi thật: `noRollbackFor` (revoke bị rollback), thiếu route `/v1/admin` ở gateway, path lạ 404→**401**. |
 
