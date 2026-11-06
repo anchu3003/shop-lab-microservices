@@ -408,8 +408,10 @@ Service **read-heavy đầu tiên**: guest xem được sản phẩm, chỉ `sel
 |---|---|---|
 | `GET /v1/categories` | **public** | danh sách category, sort theo tên |
 | `POST /v1/categories` | `seller`/`admin` | 201 + `Location`; trùng slug → **409** |
-| `GET /v1/products/{id}` | **public** | 200 · không tồn tại → **404** |
+| `GET /v1/products` | **public** | list phân trang: `page` · `size` (1..100) · `categoryId` · `q` (không phân biệt hoa/thường) · `sort` (`price,asc\|desc` · `createdAt,asc\|desc`) |
+| `GET /v1/products/{id}` | **public** | 200 · không tồn tại → **404**; trả kèm danh sách `skus` |
 | `POST /v1/products` | `seller`/`admin` | 201; `categoryId` không tồn tại → **404** |
+| `POST /v1/products/{id}/skus` | `seller`/`admin` | 201; `code` trùng → **409** |
 | `PUT /v1/products/{id}` | `seller`/`admin` | thay toàn bộ field sửa được; `version` +1 |
 | `DELETE /v1/products/{id}` | `seller`/`admin` | **204** |
 
@@ -441,6 +443,21 @@ curl -s "localhost:8080/v1/categories"
 
 `price` là **`BigDecimal` + `NUMERIC(12,2)`** (không dùng `double` cho tiền), `product` có `@Version`
 (optimistic locking) nên response của `PUT` trả `version` đã tăng.
+
+**Seed data + list cho guest**
+
+`R__seed_dev_data.sql` (repeatable migration) tạo sẵn **5 category / 20 product / 24 SKU** để mở lên là
+có dữ liệu demo; seed viết **idempotent** (`ON CONFLICT`) nên `up -d` nhiều lần **không** nhân đôi.
+
+```bash
+curl -s "localhost:8080/v1/products?page=0&size=5"                       # trang đầu (public)
+curl -s "localhost:8080/v1/products?categoryId=<uuid>&sort=price,desc"   # filter + sort
+curl -s "localhost:8080/v1/products?q=iphone"                            # tìm theo tên (không phân biệt hoa/thường)
+```
+
+Tham số sai (`size` ngoài 1..100 · `page` âm · `sort` lạ) → **400** `VALIDATION_ERROR` — cố ý **không
+clamp**, vì clamp làm client tưởng đã lấy đủ dữ liệu. `sort` là **whitelist** (`price`, `createdAt`)
+để không lộ schema và không sort trên cột thiếu index.
 
 Xem `docs/` sau `SL-1.7` để có runbook debug từng tầng.
 

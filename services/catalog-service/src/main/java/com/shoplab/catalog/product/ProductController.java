@@ -1,5 +1,6 @@
 package com.shoplab.catalog.product;
 
+import com.shoplab.catalog.web.PageResponse;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.UUID;
@@ -12,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -30,6 +32,22 @@ public class ProductController {
     this.service = service;
   }
 
+  /**
+   * List sản phẩm có filter + phân trang + sort (public).
+   *
+   * <p>Tham số để dạng {@code String} rồi parse ở {@link ProductQuery}: Spring tự trả 400 với thông
+   * báo HTML-ish khi bind sai kiểu, còn ở đây ta trả {@code ApiError} thống nhất.
+   */
+  @GetMapping
+  public PageResponse<ProductResponse> list(
+      @RequestParam(required = false) String page,
+      @RequestParam(required = false) String size,
+      @RequestParam(required = false) String categoryId,
+      @RequestParam(required = false) String q,
+      @RequestParam(required = false) String sort) {
+    return service.search(ProductQuery.parse(page, size, categoryId, q, sort));
+  }
+
   /** Tạo product (seller/admin) → 201 + {@code Location}. */
   @PostMapping
   @PreAuthorize("hasAnyRole('SELLER','ADMIN')")
@@ -38,10 +56,10 @@ public class ProductController {
     return ResponseEntity.created(URI.create("/v1/products/" + created.id())).body(created);
   }
 
-  /** Chi tiết product (public). */
+  /** Chi tiết product kèm SKU (public). */
   @GetMapping("/{id}")
-  public ProductResponse get(@PathVariable UUID id) {
-    return service.findById(id);
+  public ProductDetailResponse get(@PathVariable UUID id) {
+    return service.findDetail(id);
   }
 
   /** Sửa product (seller/admin) — thay toàn bộ field sửa được. */
