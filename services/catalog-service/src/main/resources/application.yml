@@ -37,7 +37,10 @@ spring:
 
   flyway:
     enabled: true
-    locations: classpath:db/migration
+    # ⚠️ FAIL-CLOSED (SL-1.15): mặc định CHỈ `db/migration` — seed dev KHÔNG nạp.
+    # Seed (`db/seed/R__seed_dev_data.sql`) chỉ được thêm vào bằng env, và chỉ compose local + IT
+    # làm việc đó. Nếu để seed chung `db/migration` thì staging/prod cũng có 20 product "Du lieu dev".
+    locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}
     baseline-on-migrate: false
 
 server:

@@ -48,7 +48,12 @@ import tools.jackson.databind.ObjectMapper;
  */
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = {"shoplab.env=local", "shoplab.debug-endpoints=true"})
+    properties = {
+      "shoplab.env=local",
+      "shoplab.debug-endpoints=true",
+      // SL-1.15: seed dev nằm ở `db/seed` (không nạp mặc định) — IT cần seed để test phân trang.
+      "spring.flyway.locations=classpath:db/migration,classpath:db/seed"
+    })
 @Testcontainers
 class CatalogServiceApplicationIT {
 
@@ -140,7 +145,9 @@ class CatalogServiceApplicationIT {
   @Test
   @DisplayName("seller tạo category → 201, guest list thấy ngay")
   void sellerCreatesCategory() {
-    HttpResult created = post("/v1/categories", sellerToken(), Map.of("name", "Áo thun"));
+    // Tên unique: slug bỏ dấu từ SL-1.15 nên "Áo thun" sẽ trùng category seed (slug "ao-thun").
+    String name = "Áo thun " + UUID.randomUUID().toString().substring(0, 8);
+    HttpResult created = post("/v1/categories", sellerToken(), Map.of("name", name));
 
     assertThat(created.status()).isEqualTo(201);
     assertThat(created.headers().get("location")).startsWith("/v1/categories/");
@@ -391,7 +398,11 @@ class CatalogServiceApplicationIT {
   }
 
   private UUID createCategory(String token, String name) {
-    HttpResult created = post("/v1/categories", token, Map.of("name", name));
+    // SL-1.15: slug giờ bỏ dấu ("Điện thoại" → "dien-thoai") nên dễ trùng category seed
+    // ("Dien thoai"). Thêm hậu tố ngẫu nhiên để slug luôn unique — đây cũng là cách test phải
+    // viết: KHÔNG phụ thuộc việc slug của mình có trùng dữ liệu sẵn có hay không.
+    String uniqueName = name + " " + UUID.randomUUID().toString().substring(0, 8);
+    HttpResult created = post("/v1/categories", token, Map.of("name", uniqueName));
     assertThat(created.status()).as("tạo category '%s' phải thành công", name).isEqualTo(201);
     return UUID.fromString(field(created.body(), "id"));
   }

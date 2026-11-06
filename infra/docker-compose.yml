@@ -268,6 +268,9 @@ services:
       POSTGRES_DB_CATALOG: ${POSTGRES_DB_CATALOG:-catalog}
       POSTGRES_USER: ${POSTGRES_USER:-shoplab}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      # SL-1.15: seed dev CHỈ nạp khi chạy qua compose local. Image tự nó mặc định KHÔNG seed
+      # (`SHOPLAB_FLYWAY_LOCATIONS=classpath:db/migration`) ⇒ staging/prod không bao giờ có dữ liệu dev.
+      SHOPLAB_FLYWAY_LOCATIONS: ${SHOPLAB_FLYWAY_LOCATIONS:-classpath:db/migration,classpath:db/seed}
       # JWKS lấy qua network nội bộ (không qua gateway — tránh phụ thuộc vòng).
       IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
       IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
