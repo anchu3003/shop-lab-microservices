@@ -25,6 +25,7 @@ Không tạo `memory-bank/` riêng. Hai file `architecture.md` + `Backlog.md` đ
 | Loại | Vị trí | Gọi bằng |
 |---|---|---|
 | Rule | `.clinerules/10-git-workflow.md` | luôn active (commit sau mỗi ticket, nhánh, PR) |
+| Rule | `.clinerules/20-tech-debt.md` | luôn active (ghi tech debt vào `Backlog.md` §7) |
 | Skill | `.cline/skills/shoplab-adr` | auto khi viết ADR, hoặc `/shoplab-adr` |
 | Skill | `.cline/skills/shoplab-ticket` | auto khi tạo/sửa ticket, hoặc `/shoplab-ticket` |
 | Skill | `.cline/skills/shoplab-verify` | auto khi verify, hoặc `/shoplab-verify` |

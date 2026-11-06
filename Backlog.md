@@ -6,7 +6,7 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.16` — process: tech debt register + rule ghi nhận |
+| **Ticket đang làm** | — *(`SL-1.15`/`1.16`/`1.17` xong; Phase 1 đóng)* |
 | **Ticket tiếp theo** | **DoD Phase 1**: `docs/phases/phase-1.md` + tag `phase-1` + GitHub Release (ADR-0005) |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
@@ -127,7 +127,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 
 
 | 16 | `SL-1.15` | *(phát sinh)* fix: seed dev chỉ nạp ở local + slug tiếng Việt | S | ✅ Done |
-| 17 | `SL-1.16` | *(phát sinh)* process: tech debt register + rule | S | Todo |
+| 17 | `SL-1.16` | *(phát sinh)* process: tech debt register + rule | S | ✅ Done |
 | 18 | `SL-1.17` | *(phát sinh)* docs(api): ẩn endpoint debug khỏi spec | S | ✅ Done |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
@@ -2050,7 +2050,7 @@ giờ ra `dien-thoai` — **trùng category seed**. Bài học: test tạo dữ 
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done |
 | **Phase** | 1 — Walking skeleton *(phát sinh)* |
 | **Phụ thuộc** | — |
 | **Ước lượng** | S |
@@ -2080,13 +2080,33 @@ Một chỗ duy nhất liệt kê tech debt, có **điều kiện revisit**, và
 
 **Acceptance Criteria**
 
-- [ ] Rule tồn tại + được liệt kê trong `AGENTS.md` §10 và `.clinerules/00-context.md`
-- [ ] Bảng debt có ≥ 8 mục, mỗi mục có nguồn + điều kiện revisit
-- [ ] Không mục nào trùng lặp với ticket đang mở
+- [x] Rule tồn tại + được liệt kê trong `AGENTS.md` §10 và `.clinerules/00-context.md`
+- [x] Bảng debt có ≥ 8 mục, mỗi mục có nguồn + điều kiện revisit
+- [x] Không mục nào trùng lặp với ticket đang mở
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify**
 
-**Learning note** *(điền khi Done)*
+| AC | Kết quả đo được |
+|---|---|
+| Rule tồn tại + được liệt kê trong `AGENTS.md` §10 và `.clinerules/00-context.md` | PASS — `.clinerules/20-tech-debt.md` (khi nào ghi · format · khi nào trả) + 1 dòng trong mỗi bảng AI assets |
+| Bảng debt ≥ 8 mục, mỗi mục có nguồn + điều kiện revisit | PASS — **12 mục** (`TD-1` … `TD-12`) trong `Backlog.md` §7, đủ 5 cột `ID · Mô tả · Nguồn · Điều kiện revisit · Mức độ` |
+| Không trùng lặp với ticket đang mở | PASS — đối chiếu `SL-1.15/1.16/1.17`: không mục nào là việc đã có ticket (`TD-12` soft delete là **điều kiện** cho `SL-2.x`) |
+| (thêm) Có quy ước đóng nợ | PASS — `Mức độ = ✅ đã trả (<ticket>)`, giữ dòng để còn dấu vết quyết định |
+
+`TD-1` job dọn `refresh_tokens` · `TD-2` admin list không phân trang · `TD-3` handler 403 nên ở commons ·
+`TD-4` smoke chưa vào CI · `TD-5` `merge-pr.sh` chưa retry · `TD-6` offset pagination · `TD-7` `LIKE '%q%'`
+full scan · `TD-8` sort whitelist hẹp · `TD-9` verify fail-closed OpenAPI bằng tay · `TD-10` dead code ·
+`TD-11` query param 400 không có `details` · `TD-12` soft delete cho product (**cao** — chặn `SL-2.x`).
+
+**Learning note**
+
+- **Nợ kỹ thuật phải có "điều kiện revisit" kiểm chứng được**, không phải "khi rảnh": `TD-6` ghi "khi đo
+  được p99 ở dữ liệu lớn" — cuối Phase 4 biết chính xác lúc nào phải trả.
+- **Đừng để nợ sống trong learning note**: trước ticket này 4 món nợ nằm rải trong `SL-1.4/1.7/1.8/1.14`.
+  Learning note = "đã hiểu gì", nợ = "còn phải làm gì" — để chung thì không ai lọc được.
+- **Rule không đủ nếu không có chỗ ghi**: rule nói "phải ghi" mà không có bảng thì sẽ ghi vào... đâu đó.
+  Rule + bảng + quy ước đóng nợ là một bộ.
+- **Rà nợ theo phase, không theo cảm hứng**: gắn việc rà vào DoD phase để nó xảy ra đều đặn.
 
 ### SL-1.17 — *(phát sinh)* docs(api): ẩn endpoint debug khỏi OpenAPI spec
 
@@ -2153,8 +2173,6 @@ $ grep -c '/debug' docs/api/openapi.yaml
   trước-sau** (17→14, 21→18) để chắc không ẩn nhầm endpoint khác.
 
 ---
-
-## 5. Phase 2 → 8 — Epic outline
 
 ## 5. Phase 2 → 8 — Epic outline
 
@@ -2311,6 +2329,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | SL-1.15 | **Đổi định dạng dữ liệu sinh ra (slug) làm đỏ test phụ thuộc dữ liệu sẵn có**: `"Điện thoại"` → `dien-thoai` trùng category seed ⇒ 2 IT fail. Test tạo entity có unique constraint phải **tự sinh hậu tố ngẫu nhiên**. |
 | 2026-11-06 | SL-1.15 | **Transliterate tiếng Việt: NFD không đủ** — `đ/Đ` là chữ riêng, không tách được bằng `\p{M}` nên phải map tay; test phải có `Điện`/`Đồ`/`Đỏ`. |
 | 2026-11-06 | SL-1.17 | **Contract ≠ danh sách endpoint kỹ thuật**: `/debug/*` có thật nhưng không phải API cho client ⇒ `@Hidden`. Phân biệt "hạ tầng để verify" (ẩn) với "hạ tầng để vận hành" (`/health`, `/ready`, `/version` — GIỮ, runbook dùng). |
+| 2026-11-06 | SL-1.16 | **Nợ kỹ thuật phải có điều kiện revisit verify được** ("khi đo được p99 ở dữ liệu lớn", không phải "khi rảnh") và phải nằm ở **một bảng**. Learning note = đã hiểu gì; debt = còn phải làm gì — để chung thì không ai lọc được. |
 | 2026-11-05 | process | **Push race với lúc merge ⇒ mất commit**: commit cuối của `SL-1.1` (`feda53a` — status Done + block CI evidence + changelog) push lên đúng lúc user merge; squash merge dùng state **trước** commit đó, rồi nhánh bị xoá ⇒ thay đổi biến mất khỏi `main`. **Bài học**: sau khi merge phải `git show <merge-sha> --stat`/`grep` kiểm nội dung trên `main`, đừng tin "đã push là xong"; commit bị mất vẫn cứu được qua reflog nếu chưa GC. Đã khôi phục trong nhánh `SL-1.2`. |
 | 2026-11-05 | SL-1.9 | **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` đánh giá theo **toàn bộ diff của PR** → commit docs trong PR **có code** vẫn tốn 1 run. `[skip ci]` xử lý đúng case đó. Nhưng GitHub đọc skip instruction ở **HEAD commit của PR** ⇒ docs commit ở cuối PR skip luôn run của cả PR (check treo `Pending`) → đừng tin nó, hãy kiểm bằng **diff thật**. |
 | 2026-11-05 | SL-1.9 | **Guard cũng phải test theo đúng thứ tự**: lần đầu test guard "PR draft" **sau khi** đã chạy `gh pr ready` ⇒ tưởng guard hỏng, thực ra kịch bản test sai. Test guard cần kịch bản cẩn thận y như test code. |
@@ -2339,7 +2358,29 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 ---
 
-## 7. Changelog
+## 7. Technical debt register
+
+> Quy tắc ghi nhận: [`.clinerules/20-tech-debt.md`](.clinerules/20-tech-debt.md). Mỗi món nợ **phải có
+> điều kiện revisit verify được** — không phải "khi rảnh". Rà bảng này khi làm DoD mỗi phase.
+> Trả xong thì giữ dòng, đổi `Mức độ` thành `✅ đã trả (<ticket>)`.
+
+| ID | Mô tả | Nguồn | Điều kiện revisit | Mức độ |
+|---|---|---|---|---|
+| `TD-1` | Bảng `refresh_tokens` không có job dọn row hết hạn → phình dần | SL-1.4 | Khi bảng > 10⁶ row **hoặc** khi thêm scheduler | trung bình |
+| `TD-2` | `GET /v1/admin/users` trả **toàn bộ** user, không phân trang | SL-1.4 | Khi số user > 1.000 hoặc có màn quản trị thật | thấp |
+| `TD-3` | Handler map `AccessDeniedException` → 403 nằm trong **catalog**; service khác dùng `@PreAuthorize` phải copy | SL-1.5 | Khi có service **thứ hai** dùng `@PreAuthorize` (→ commons) | trung bình |
+| `TD-4` | `tools/e2e-smoke.sh` phụ thuộc tài khoản seed + `docker logs` ⇒ chỉ chạy local, chưa vào CI | SL-1.7 | Phase 2 (D6: smoke trong CI) | trung bình |
+| `TD-5` | `tools/merge-pr.sh` chưa retry khi GitHub API lỗi tạm thời | SL-1.14 | Lần tới script fail vì API (retry + backoff ~15 dòng) | thấp |
+| `TD-6` | Phân trang **offset** (`OFFSET 100000` quét bỏ rất nhiều row) | SL-1.6 | Phase 4 khi đo được p99 của list (→ keyset) | trung bình |
+| `TD-7` | `q` dùng `LIKE '%…%'` (leading wildcard) ⇒ không dùng được btree, full scan | SL-1.6 | Phase 3/8 khi cần search thật (→ `tsvector`/trigram) | trung bình |
+| `TD-8` | Sort whitelist chỉ `price`, `createdAt` | SL-1.6 | Khi client cần và có index tương ứng | thấp |
+| `TD-9` | Verify fail-closed của `/v3/api-docs` đang làm **bằng tay**, chưa có test trong CI | SL-1.8 | Khi CI có bước compose (D6) | thấp |
+| `TD-10` | `ProductService.findById` không còn dùng ở main (chỉ test gọi) | SL-1.6 | Lần sửa `ProductService` tiếp theo | thấp |
+| `TD-11` | `page`/`size`/`sort` sai → 400 nhưng không trả `details` theo field | SL-1.6 | Khi client cần hiển thị lỗi theo field | thấp |
+| `TD-12` | Chưa có **soft delete** cho product; `DELETE` là hard delete + cascade SKU | SL-1.6 | Khi bắt đầu `SL-2.x` (order tham chiếu SKU) | cao |
+
+## 8. Changelog
+
 
 | Ngày | Thay đổi |
 |---|---|
@@ -2377,6 +2418,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | `SL-1.8` → `Done`: OpenAPI spec Phase 1 — thêm `springdoc-openapi-starter-webmvc-api` **3.2.0** (Boot 4.1.x ⇒ springdoc 3.x) cho 3 service, expose `/v3/api-docs`; khung spec (info + security scheme `bearerAuth`) + **bộ response lỗi 400/401/403/404/409 tự gắn cho MỌI operation** (`$ref → ApiError`) đặt ở `service-commons` (`OpenApiAutoConfiguration`), nên endpoint Phase 2 tự có tài liệu lỗi. `OpenApiEnvironmentPostProcessor` ép tắt spec khi `APP_ENV != local` (**fail-closed**, override bằng `SHOPLAB_OPENAPI_ENABLED`). `tools/export-openapi.sh` merge spec identity + catalog → **`docs/api/openapi.yaml`** (`servers` = gateway, sort key để diff ổn định) + **tự validate** bằng `python3`+`pyyaml`. Verify: 3/3 service `/v3/api-docs` **200**; export **VALIDATE PASS · 17 path · 21 operation · 7 operation cần token · 18 schema**; `APP_ENV=prod` → `/v3/api-docs` **404** (service vẫn 200); e2e-smoke 17/17; cả reactor `mvn verify` xanh (254 unit + 40 IT). |
 | 2026-11-06 | `SL-1.15` → `Done`: **seed dev không còn chạy ở prod** — chuyển `R__seed_dev_data.sql` sang `db/seed/`, `spring.flyway.locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}` (**fail-closed**); compose local + IT tự thêm `,classpath:db/seed`. **Slug tiếng Việt** bỏ dấu (NFD + map `đ/Đ`): `"Điện thoại X"` → `dien-thoai-x`, `"Ốp lưng đẹp"` → `op-lung-dep`. Verify: local `down -v && up -d` → **5/20/24** seed · kiểu prod `APP_ENV=prod` + DB mới → **category=0 product=0 sku=0** (history chỉ V1+V2) · **42 + 61 unit + 18 IT** xanh · e2e-smoke 17/17. Sửa kèm 2 IT bị đỏ do slug mới trùng seed (dùng hậu tố UUID). |
 | 2026-11-06 | `SL-1.17` → `Done`: ẩn endpoint debug khỏi OpenAPI spec bằng `@Hidden` (identity + catalog + gateway) — spec **17 → 14 path**, **21 → 18 operation**, `grep -c '/debug' = 0`, validate vẫn PASS; probe `/health` `/ready` `/version` **giữ** vì là hợp đồng vận hành thật. Docs: `docs/api/README.md` thêm mục "cái gì không nằm trong spec". Verify: export lại + đếm path trước/sau · `mvn verify -DskipITs` xanh toàn reactor · CI xanh. |
+| 2026-11-06 | `SL-1.16` → `Done`: rule [`.clinerules/20-tech-debt.md`](.clinerules/20-tech-debt.md) + **`Backlog.md` §7 Technical debt register** với **12 mục** `TD-1`…`TD-12` (job dọn `refresh_tokens` · admin list không phân trang · handler 403 nên ở commons · smoke chưa vào CI · `merge-pr.sh` chưa retry · offset pagination · `LIKE '%q%'` full scan · sort whitelist hẹp · verify OpenAPI fail-closed bằng tay · dead code · 400 không `details` · **soft delete chưa có — chặn `SL-2.x`**). Changelog đổi thành §8. |
 
 
 

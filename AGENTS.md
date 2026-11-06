@@ -205,6 +205,7 @@ Bộ công cụ giúp Cline làm việc nhất quán, tiết kiệm token. **Fil
 | Rule | `AGENTS.md` | Working agreement — luôn active |
 | Rule | `.clinerules/00-context.md` | Nạp context (Memory Bank lite), liệt kê AI assets |
 | Rule | `.clinerules/10-git-workflow.md` | Git workflow: commit sau mỗi ticket, nhánh, PR |
+| Rule | `.clinerules/20-tech-debt.md` | Ghi nhận **tech debt** vào `Backlog.md` §7 (ID · nguồn · điều kiện revisit) |
 | Skill | `.cline/skills/shoplab-adr` | Cách viết ADR (template + quality bar) |
 | Skill | `.cline/skills/shoplab-ticket` | Format ticket BA-style + DoR/DoD |
 | Skill | `.cline/skills/shoplab-verify` | Verify bằng lệnh thật + dán output |
