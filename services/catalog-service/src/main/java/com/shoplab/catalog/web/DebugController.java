@@ -1,6 +1,7 @@
 package com.shoplab.catalog.web;
 
 import com.shoplab.commons.error.NotFoundException;
+import io.swagger.v3.oas.annotations.Hidden;
 import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,6 +19,9 @@ import org.springframework.web.bind.annotation.RestController;
  * thật thứ ba — nhất là khi debug "lỗi này do gateway hay do service?".
  */
 @RestController
+// SL-1.17: endpoint chỉ để VERIFY hạ tầng (không phải API cho client) ⇒ ẩn khỏi
+// OpenAPI spec. Vẫn bật/tắt bằng `shoplab.debug-endpoints`.
+@Hidden
 @ConditionalOnProperty(name = "shoplab.debug-endpoints", havingValue = "true")
 public class DebugController {
 

@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.17` — docs(api): ẩn endpoint debug khỏi spec |
-| **Ticket tiếp theo** | `SL-1.16` — process: tech debt register + rule · sau đó **DoD Phase 1** |
+| **Ticket đang làm** | `SL-1.16` — process: tech debt register + rule ghi nhận |
+| **Ticket tiếp theo** | **DoD Phase 1**: `docs/phases/phase-1.md` + tag `phase-1` + GitHub Release (ADR-0005) |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -128,7 +128,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 
 | 16 | `SL-1.15` | *(phát sinh)* fix: seed dev chỉ nạp ở local + slug tiếng Việt | S | ✅ Done |
 | 17 | `SL-1.16` | *(phát sinh)* process: tech debt register + rule | S | Todo |
-| 18 | `SL-1.17` | *(phát sinh)* docs(api): ẩn endpoint debug khỏi spec | S | Todo |
+| 18 | `SL-1.17` | *(phát sinh)* docs(api): ẩn endpoint debug khỏi spec | S | ✅ Done |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -2092,7 +2092,7 @@ Một chỗ duy nhất liệt kê tech debt, có **điều kiện revisit**, và
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done |
 | **Phase** | 1 — Walking skeleton *(phát sinh)* |
 | **Phụ thuộc** | SL-1.8 |
 | **Ước lượng** | S |
@@ -2119,12 +2119,38 @@ Contract chỉ chứa API nghiệp vụ + probe vận hành; endpoint debug bị
 
 **Acceptance Criteria**
 
-- [ ] Spec **không còn** path `/debug/*`; số path giảm đúng 3 (17 → 14)
-- [ ] Export + validate vẫn PASS; `mvn verify` + CI xanh
+- [x] Spec **không còn** path `/debug/*`; số path giảm đúng 3 (17 → 14)
+- [x] Export + validate vẫn PASS; `mvn verify` + CI xanh
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify**
 
-**Learning note** *(điền khi Done)*
+```console
+$ bash tools/export-openapi.sh
+  OK identity ← http://localhost:8081/v3/api-docs
+  OK catalog ← http://localhost:8082/v3/api-docs
+  OK gateway ← http://localhost:8080/v3/api-docs
+VALIDATE PASS · 14 path · 18 operation · 7 operation cần token · 18 schema
+
+$ grep -c '/debug' docs/api/openapi.yaml
+0
+```
+
+| AC | Kết quả đo được |
+|---|---|
+| Spec không còn `/debug/*`, số path giảm đúng 3 | PASS — **17 → 14 path**, **21 → 18 operation** (`/debug/slow`, `/debug/error`, `/debug/boom` bị ẩn bằng `@Hidden` trên cả 3 service) |
+| Export + validate vẫn PASS | PASS — `VALIDATE PASS · 14 path · 18 operation · 7 operation cần token · 18 schema` |
+| `mvn verify` + CI xanh | PASS — `mvn -B -ntp verify -DskipITs` **BUILD SUCCESS** (toàn reactor) + CI xanh trên PR |
+| Endpoint vẫn hoạt động ở runtime (chỉ ẩn khỏi docs) | PASS — `@Hidden` chỉ ảnh hưởng spec; `/debug/error` vẫn 200/404 theo `SHOPLAB_DEBUG_ENDPOINTS` |
+
+**Learning note**
+
+- **Contract ≠ danh sách endpoint kỹ thuật**: `/debug/*` tồn tại thật nhưng không phải API cho client.
+  Để trong spec thì client/QA sẽ tưởng đó là API cần dùng, còn reviewer phải tự lọc. Ẩn bằng
+  `@Hidden` là cách nói "endpoint này không thuộc hợp đồng".
+- **Probe (`/health`, `/ready`, `/version`) thì GIỮ**: đó là hợp đồng vận hành thật, runbook dùng,
+  và ổn định. Phân biệt "hạ tầng dùng để verify" với "hạ tầng dùng để vận hành" — cái đầu ẩn, cái sau giữ.
+- **Đổi spec phải export lại rồi so số**, không chỉ sửa annotation: verify bằng **đếm path/operation
+  trước-sau** (17→14, 21→18) để chắc không ẩn nhầm endpoint khác.
 
 ---
 
@@ -2284,6 +2310,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | SL-1.15 | **Comment "không dùng cho prod" không phải chốt chặn**: seed nằm chung `db/migration` ⇒ Flyway chạy ở MỌI môi trường. Fail-closed = **mặc định không có** (image chỉ trỏ `db/migration`), dev **tự thêm** location; verify bằng container `APP_ENV=prod` trên **DB mới** rồi đếm row. |
 | 2026-11-06 | SL-1.15 | **Đổi định dạng dữ liệu sinh ra (slug) làm đỏ test phụ thuộc dữ liệu sẵn có**: `"Điện thoại"` → `dien-thoai` trùng category seed ⇒ 2 IT fail. Test tạo entity có unique constraint phải **tự sinh hậu tố ngẫu nhiên**. |
 | 2026-11-06 | SL-1.15 | **Transliterate tiếng Việt: NFD không đủ** — `đ/Đ` là chữ riêng, không tách được bằng `\p{M}` nên phải map tay; test phải có `Điện`/`Đồ`/`Đỏ`. |
+| 2026-11-06 | SL-1.17 | **Contract ≠ danh sách endpoint kỹ thuật**: `/debug/*` có thật nhưng không phải API cho client ⇒ `@Hidden`. Phân biệt "hạ tầng để verify" (ẩn) với "hạ tầng để vận hành" (`/health`, `/ready`, `/version` — GIỮ, runbook dùng). |
 | 2026-11-05 | process | **Push race với lúc merge ⇒ mất commit**: commit cuối của `SL-1.1` (`feda53a` — status Done + block CI evidence + changelog) push lên đúng lúc user merge; squash merge dùng state **trước** commit đó, rồi nhánh bị xoá ⇒ thay đổi biến mất khỏi `main`. **Bài học**: sau khi merge phải `git show <merge-sha> --stat`/`grep` kiểm nội dung trên `main`, đừng tin "đã push là xong"; commit bị mất vẫn cứu được qua reflog nếu chưa GC. Đã khôi phục trong nhánh `SL-1.2`. |
 | 2026-11-05 | SL-1.9 | **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` đánh giá theo **toàn bộ diff của PR** → commit docs trong PR **có code** vẫn tốn 1 run. `[skip ci]` xử lý đúng case đó. Nhưng GitHub đọc skip instruction ở **HEAD commit của PR** ⇒ docs commit ở cuối PR skip luôn run của cả PR (check treo `Pending`) → đừng tin nó, hãy kiểm bằng **diff thật**. |
 | 2026-11-05 | SL-1.9 | **Guard cũng phải test theo đúng thứ tự**: lần đầu test guard "PR draft" **sau khi** đã chạy `gh pr ready` ⇒ tưởng guard hỏng, thực ra kịch bản test sai. Test guard cần kịch bản cẩn thận y như test code. |
@@ -2349,6 +2376,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | `SL-1.7` → `Done`: `tools/e2e-smoke.sh` mở rộng thành E2E **cả Phase 1** — **17 mục**: health 3 service · register · login · `/v1/users/me` (200/401) · `traceId` xuyên service · **seller** tạo category+product (201, in id) · **guest** list + xem chi tiết (**200, không token**, có `skus`) · **buyer** tạo product (**403**, case mong đợi lỗi) · body lỗi là `ApiError`. Fail ở đâu in **gợi ý lệnh kiểm tra** ở đó. Thêm `docs/runbook-phase-1.md` (sơ đồ luồng · bảng port · kiểm tra **từng tầng** · **5 lỗi**: 401/403/404/503/timeout · §5 là output debug thật). Verify: **17/17 PASS** · chạy **6/6 lần** pass (~430 ms) · `docker stop` catalog → fail đúng **1c (000)** + **8 (503)**, các bước khác vẫn PASS. Sửa 2 bug thật: category trùng slug khi 2 lần chạy cùng giây (**flaky**), và script in **body cũ** khi connection refused. |
 | 2026-11-06 | `SL-1.8` → `Done`: OpenAPI spec Phase 1 — thêm `springdoc-openapi-starter-webmvc-api` **3.2.0** (Boot 4.1.x ⇒ springdoc 3.x) cho 3 service, expose `/v3/api-docs`; khung spec (info + security scheme `bearerAuth`) + **bộ response lỗi 400/401/403/404/409 tự gắn cho MỌI operation** (`$ref → ApiError`) đặt ở `service-commons` (`OpenApiAutoConfiguration`), nên endpoint Phase 2 tự có tài liệu lỗi. `OpenApiEnvironmentPostProcessor` ép tắt spec khi `APP_ENV != local` (**fail-closed**, override bằng `SHOPLAB_OPENAPI_ENABLED`). `tools/export-openapi.sh` merge spec identity + catalog → **`docs/api/openapi.yaml`** (`servers` = gateway, sort key để diff ổn định) + **tự validate** bằng `python3`+`pyyaml`. Verify: 3/3 service `/v3/api-docs` **200**; export **VALIDATE PASS · 17 path · 21 operation · 7 operation cần token · 18 schema**; `APP_ENV=prod` → `/v3/api-docs` **404** (service vẫn 200); e2e-smoke 17/17; cả reactor `mvn verify` xanh (254 unit + 40 IT). |
 | 2026-11-06 | `SL-1.15` → `Done`: **seed dev không còn chạy ở prod** — chuyển `R__seed_dev_data.sql` sang `db/seed/`, `spring.flyway.locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}` (**fail-closed**); compose local + IT tự thêm `,classpath:db/seed`. **Slug tiếng Việt** bỏ dấu (NFD + map `đ/Đ`): `"Điện thoại X"` → `dien-thoai-x`, `"Ốp lưng đẹp"` → `op-lung-dep`. Verify: local `down -v && up -d` → **5/20/24** seed · kiểu prod `APP_ENV=prod` + DB mới → **category=0 product=0 sku=0** (history chỉ V1+V2) · **42 + 61 unit + 18 IT** xanh · e2e-smoke 17/17. Sửa kèm 2 IT bị đỏ do slug mới trùng seed (dùng hậu tố UUID). |
+| 2026-11-06 | `SL-1.17` → `Done`: ẩn endpoint debug khỏi OpenAPI spec bằng `@Hidden` (identity + catalog + gateway) — spec **17 → 14 path**, **21 → 18 operation**, `grep -c '/debug' = 0`, validate vẫn PASS; probe `/health` `/ready` `/version` **giữ** vì là hợp đồng vận hành thật. Docs: `docs/api/README.md` thêm mục "cái gì không nằm trong spec". Verify: export lại + đếm path trước/sau · `mvn verify -DskipITs` xanh toàn reactor · CI xanh. |
 
 
 

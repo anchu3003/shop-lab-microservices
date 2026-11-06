@@ -562,8 +562,8 @@ bash tools/export-openapi.sh    # gom /v3/api-docs của identity + catalog → 
   `service-commons` (nên endpoint Phase 2 cũng tự có).
 - `/v3/api-docs` **chỉ bật ở local**: `APP_ENV != local` ⇒ tự tắt (override có chủ ý bằng
   `SHOPLAB_OPENAPI_ENABLED=true`).
-- Hiện tại: **17 path / 21 operation**, 7 operation cần token. Chi tiết cách đọc + cập nhật:
-  [`docs/api/README.md`](docs/api/README.md).
+- Hiện tại: **14 path / 18 operation**, 7 operation cần token (endpoint `/debug/*` bị ẩn khỏi spec).
+  Chi tiết cách đọc + cập nhật: [`docs/api/README.md`](docs/api/README.md).
 
 ## Debug khi có sự cố
 

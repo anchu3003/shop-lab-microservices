@@ -41,3 +41,14 @@ trong `packages/service-commons/.../openapi/OpenApiAutoConfiguration.java` — v
 `springdoc.api-docs.enabled=false` khi `APP_ENV != local`, trừ khi set tường minh
 `SHOPLAB_OPENAPI_ENABLED=true`. Spec là bản đồ chi tiết hệ thống nên mặc định phải **tắt** ở môi
 trường thật.
+
+## Cái gì **không** nằm trong spec (có chủ ý)
+
+| Endpoint | Lý do |
+|---|---|
+| `/debug/slow`, `/debug/error`, `/debug/boom` | Chỉ để verify hạ tầng (`SL-0.4`), chỉ tồn tại khi `SHOPLAB_DEBUG_ENDPOINTS=true` ⇒ `@Hidden` từ `SL-1.17`. Để trong contract sẽ làm client tưởng là API thật. |
+| Endpoint của **gateway** | Gateway là proxy catch-all (`@Hidden`) — API nghiệp vụ nằm ở spec của service đích |
+
+`/health`, `/ready`, `/version` **vẫn có** trong spec: đó là probe vận hành thật, hợp đồng ổn định, và
+runbook dùng tới.
+
