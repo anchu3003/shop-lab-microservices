@@ -31,8 +31,19 @@ shoplab:
 
   gateway:
     # Path KHÔNG cần token. Mọi path khác bắt buộc token (kể cả /version).
+    #
+    # SL-1.5: catalog là service ĐẦU TIÊN có endpoint public + protected trên cùng prefix
+    # (`GET /v1/products` public, `POST/PUT/DELETE` cần token). Cơ chế public-path ở đây là
+    # theo PATH, không theo METHOD ⇒ phải để cả prefix đi qua, và **catalog tự chặn** phần ghi
+    # (nó verify JWT tại chỗ — defense in depth).
+    #
+    # Đánh đổi đã chấp nhận: gateway không còn là chốt 401 cho các path này; nó chỉ xoá header
+    # danh tính client tự gửi, còn authorization do service quyết. Muốn gateway làm cả hai thì
+    # phải thêm public-path theo (method + path) — làm khi có nhu cầu thật (Phase 3+).
     public-paths:
       - /v1/auth/**
+      - /v1/products/**
+      - /v1/categories/**
       - /.well-known/**
       - /health
       - /ready
@@ -62,6 +73,12 @@ shoplab:
       # client phải gọi thẳng port service (và bỏ qua luôn việc verify token ở gateway).
       - path-prefix: /v1/admin
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}
+      # SL-1.5: catalog-service. Prefix dài nhất thắng, nên /v1/products/* và /v1/categories/*
+      # đi thẳng tới catalog (không đụng /v1/users của identity).
+      - path-prefix: /v1/products
+        base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
+      - path-prefix: /v1/categories
+        base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
       # JWKS công bố qua gateway để client chỉ cần biết MỘT địa chỉ.
       - path-prefix: /.well-known
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}

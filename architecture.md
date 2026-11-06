@@ -738,15 +738,4 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-03 | **Phase 0 (Foundation) hoàn thành**: `SL-0.5` merge, CI xanh trên `main` (3/3 job); trạng thái doc → `DRAFT v0.3` | bạn + AI |
 | 2026-11-03 | ADR-[0005](docs/adr/0005-phase-snapshot-and-release.md): lưu trữ snapshot theo phase bằng **tag `phase-N` + GitHub Release + `docs/phases/phase-N.md`** (không dùng release branch — "lazy D"); thêm `docs/phases/` + DoD của phase | bạn + AI |
 | 2026-11-03 | `SL-1.0`: tối ưu chi phí CI — `paths-ignore` cho docs · `push` chỉ `main` · kill-switch `vars.CI_ENABLED` · bỏ qua draft PR; cập nhật §10.3 | bạn + AI |
-
-
-
-
-
-
-
-
-
-
-
-
+| 2026-11-06 | `SL-1.5`: thêm `catalog-service` (port 8082, DB `catalog`) — service read-heavy đầu tiên; **service tự verify JWT qua JWKS** của identity (defense in depth) và **chỉ tin token, không tin header `x-user-*`**; gateway để cả prefix `/v1/products` + `/v1/categories` đi qua (public-path theo PATH, không theo METHOD) và service tự chặn phần ghi; cập nhật §5 (data ownership) | bạn + AI |
