@@ -498,37 +498,53 @@ khi gặp `kid` lạ — rotate khoá không cần restart, có chặn dội). T
 được → **503** (retry được).
 
 ---
-### E2E smoke — `SL-1.3`
+### E2E smoke — `SL-1.3` → `SL-1.7`
 
-Bằng chứng end-to-end **client → gateway → identity → DB** bằng **1 lệnh**: health → register → login → gọi endpoint
-protected qua gateway → assert 401 khi thiếu token → đối chiếu `traceId` trong log identity. In `PASS/FAIL` từng bước +
+Bằng chứng end-to-end **cả Phase 1** bằng **1 lệnh**: `client → gateway → identity/catalog → DB`.
+
+Luồng kiểm: health 3 service → register → login → `/v1/users/me` (200 khi có token, **401** khi không) →
+`traceId` xuyên service → **seller** tạo category + product (201) → **guest** list/đọc sản phẩm vừa tạo
+(**200, không token**) → **buyer** tạo product (**403**, case mong đợi lỗi). In `PASS/FAIL` từng bước +
 exit code (`0` nếu tất cả pass).
 
 ```bash
-docker compose -f infra/docker-compose.yml --env-file .env up -d    # gateway + identity phải healthy
+docker compose -f infra/docker-compose.yml --env-file .env up -d    # cả 3 service phải healthy
 bash tools/e2e-smoke.sh
 ```
 
 Output mẫu:
 
 ```text
-== E2E smoke — client → gateway → identity → DB
-   email=smoke-1752340000-1234@shoplab.local  correlation=smoke-1752340000
+== E2E smoke — client → gateway → identity/catalog → DB
+   email=smoke-1793975246-8165@shoplab.local  correlation=smoke-1793975246
   PASS [1] 1a health gateway
   PASS [2] 1b health identity
-  PASS [3] 2 register
-  PASS [4] 3 login
-  PASS [5] 4 protected /v1/users/me (có token)
-  PASS [6] 5 /v1/users/me KHÔNG token → 401
-  PASS [7] 6 traceId smoke-1752340000 có trong log identity (gateway forward header)
+  PASS [3] 1c health catalog
+  PASS [4] 2 register
+  PASS [5] 3 login
+  PASS [6] 4 protected /v1/users/me (có token)
+  PASS [7] 5 /v1/users/me KHÔNG token → 401
+  PASS [8] 6 traceId smoke-1793975246 có trong log identity (gateway forward header)
+  PASS [9] 7 login seller (seller@shoplab.local)
+  PASS [10] 8 seller tạo category → 201
+  PASS [11] 9 seller tạo product → 201
+    product id = f36347f0-d1b3-4e58-9ecd-682d1aa47505
+  PASS [12] 10 guest list product (KHÔNG token) → 200
+  PASS [13] 10b product f36347f0-… xuất hiện trong list của guest
+  PASS [14] 11 guest xem chi tiết product → 200
+  PASS [15] 11b chi tiết product có field skus
+  PASS [16] 12 buyer tạo product → 403 (đúng như mong đợi)
+  PASS [17] 12b body 403 là ApiError FORBIDDEN (không phải HTML)
 
-== Kết quả: 7 PASS / 0 FAIL · 6 request · 1234 ms
+== Kết quả: 17 PASS / 0 FAIL · 13 request · 927 ms
 E2E smoke: OK
 ```
 
-- Script chỉ dùng `curl` + `python3` (không cần `jq`); **email ngẫu nhiên mỗi lần** nên chạy lại vẫn pass.
-- Bước trái phép assert **đúng 401** (không phải "khác 200") — tránh bẫy 500 cũng bị tính là pass.
-- Bước 6 chứng minh `traceId` xuyên service: script gửi `x-correlation-id`, identity log đúng id đó (gateway forward header).
+- Chỉ dùng `curl` + `python3` (không cần `jq`); **email/category ngẫu nhiên mỗi lần** nên chạy lại vẫn pass
+  (đã chạy 6 lần liên tiếp: 6/6 pass, ~430 ms/lần).
+- Case trái phép assert **đúng 401/403**, không phải "khác 200" — nếu không, 500 cũng bị tính là pass.
+- **Fail ở đâu in gợi ý lệnh kiểm tra ở đó** → làm theo [`docs/runbook-phase-1.md`](docs/runbook-phase-1.md)
+  (sơ đồ luồng · bảng port · kiểm tra từng tầng · **5 lỗi thường gặp**: 401 · 403 · 404 · 503 · timeout).
 
 
 
