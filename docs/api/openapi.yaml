@@ -36,6 +36,18 @@ paths:
               schema:
                 type: object
                 additionalProperties: {}
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '403':
           description: Đã xác thực nhưng thiếu quyền
           content:
@@ -50,18 +62,6 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '409':
           description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '400':
-          description: Input không hợp lệ (xem `details` theo từng field)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -85,14 +85,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -103,8 +97,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -128,14 +128,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -146,8 +140,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -166,6 +166,18 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '403':
           description: Đã xác thực nhưng thiếu quyền
           content:
@@ -180,18 +192,6 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '409':
           description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '400':
-          description: Input không hợp lệ (xem `details` theo từng field)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -216,6 +216,18 @@ paths:
             '*/*':
               schema:
                 $ref: '#/components/schemas/AuthTokenResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '403':
           description: Đã xác thực nhưng thiếu quyền
           content:
@@ -230,18 +242,6 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '409':
           description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '400':
-          description: Input không hợp lệ (xem `details` theo từng field)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -260,6 +260,18 @@ paths:
       responses:
         '204':
           description: No Content
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '403':
           description: Đã xác thực nhưng thiếu quyền
           content:
@@ -274,18 +286,6 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '409':
           description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '400':
-          description: Input không hợp lệ (xem `details` theo từng field)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -308,6 +308,18 @@ paths:
             '*/*':
               schema:
                 $ref: '#/components/schemas/AuthTokenResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '403':
           description: Đã xác thực nhưng thiếu quyền
           content:
@@ -322,18 +334,6 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '409':
           description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '400':
-          description: Input không hợp lệ (xem `details` theo từng field)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -356,6 +356,18 @@ paths:
             '*/*':
               schema:
                 $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '403':
           description: Đã xác thực nhưng thiếu quyền
           content:
@@ -370,18 +382,6 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '409':
           description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '400':
-          description: Input không hợp lệ (xem `details` theo từng field)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -406,14 +406,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -424,8 +418,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -453,14 +453,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -471,8 +465,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -523,14 +523,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -541,8 +535,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -570,14 +570,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -588,8 +582,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -617,14 +617,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -635,8 +629,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -667,14 +667,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -685,8 +679,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -721,14 +721,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -739,8 +733,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -778,14 +778,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -796,8 +790,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:
@@ -816,6 +816,18 @@ paths:
             '*/*':
               schema:
                 $ref: '#/components/schemas/CurrentUserResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
         '403':
           description: Đã xác thực nhưng thiếu quyền
           content:
@@ -830,18 +842,6 @@ paths:
                 $ref: '#/components/schemas/ApiError'
         '409':
           description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '400':
-          description: Input không hợp lệ (xem `details` theo từng field)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -868,14 +868,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '409':
-          description: Xung đột dữ liệu (trùng mã, version lệch...)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '404':
-          description: Không tìm thấy tài nguyên
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
           content:
             application/json:
               schema:
@@ -886,8 +880,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '401':
-          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
           content:
             application/json:
               schema:

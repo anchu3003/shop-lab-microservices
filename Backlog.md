@@ -129,8 +129,63 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 17 | `SL-1.16` | *(phát sinh)* tech debt register + rule | S | ✅ Done |
 | 18 | `SL-1.17` | *(phát sinh)* ẩn endpoint debug khỏi spec | S | ✅ Done |
 | 19 | `SL-1.18` | *(phát sinh)* grace window 30s cho refresh reuse | S | ✅ Done |
+| 20 | `SL-1.19` | *(phát sinh sau DoD)* fix: export OpenAPI deterministic | S | ✅ Done |
 
 
+
+---
+
+### SL-1.19 — *(phát sinh sau DoD)* fix: export OpenAPI deterministic
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 1 — Walking skeleton *(phát sinh khi làm DoD)* |
+| **Phụ thuộc** | SL-1.8 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+`bash tools/export-openapi.sh` chạy 2 lần cho ra 2 file **khác nhau** dù code không đổi: 56 dòng đổi chỗ
+giữa mỗi lần export. Nguyên nhân gốc: `ERROR_RESPONSES` trong `OpenApiAutoConfiguration` dùng
+`Map.copyOf(...)` — map bất biến **không giữ thứ tự** ⇒ thứ tự mã lỗi (400/401/403/404/409) đổi mỗi lần
+khởi động JVM. Phát hiện khi chuẩn bị tag `phase-1` (spec trong snapshot phải ổn định).
+
+**Mục tiêu**
+
+Export **idempotent**: chạy lại bao nhiêu lần cũng ra cùng một file.
+
+**In scope**
+
+- `OpenApiAutoConfiguration`: giữ thứ tự bằng `Collections.unmodifiableMap(new LinkedHashMap<>(...))`
+- `tools/export-openapi.sh`: **sort `responses`** của mọi operation (phòng thủ lớp 2)
+- Export lại `docs/api/openapi.yaml`
+
+**Acceptance Criteria**
+
+- [x] Export 2 lần liên tiếp → **md5 giống nhau**, `git diff` rỗng
+- [x] Spec vẫn `VALIDATE PASS` (14 path / 18 operation / 7 cần token)
+- [x] `mvn verify` + CI xanh
+
+**Kết quả verify**
+
+```console
+$ bash tools/export-openapi.sh          # lần 1
+VALIDATE PASS · 14 path · 18 operation · 7 operation cần token · 18 schema
+$ md5sum docs/api/openapi.yaml
+23e5751c77eb753320cc7817352c64d7  docs/api/openapi.yaml
+$ bash tools/export-openapi.sh          # lần 2
+$ md5sum docs/api/openapi.yaml
+23e5751c77eb753320cc7817352c64d7  docs/api/openapi.yaml   ✅ idempotent
+```
+
+**Learning note**
+
+- **`Map.copyOf` / `Map.of` không giữ thứ tự** — chỉ dùng khi thứ tự không quan trọng. Với artifact **diff
+  được trong git** (spec, generated code) thì thứ tự là một phần của artifact: phải dùng
+  `LinkedHashMap` **và** sort ở chỗ ghi file (phòng thủ 2 lớp: nguồn + nơi serialize).
+- **Test "idempotent" phải so hash hai lần chạy**, không phải đọc code thấy `sorted(...)` là tin. Bug này
+  chỉ lộ khi chạy 2 lần liên tiếp — đúng thứ tự tự nhiên của một script export.
 
 ---
 
