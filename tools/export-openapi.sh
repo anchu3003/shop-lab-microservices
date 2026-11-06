@@ -92,8 +92,19 @@ for spec in (identity, catalog):
     merged["tags"].extend(tag for tag in spec.get("tags", []) if tag not in merged["tags"])
 
 # Sắp xếp để file **ổn định** giữa các lần export (git diff chỉ hiện thay đổi thật).
+def sorted_operation(operation):
+    """Sort cả `responses` — thứ tự mã lỗi không được phụ thuộc thứ tự map của service."""
+    responses = operation.get("responses")
+    if responses:
+        operation["responses"] = dict(sorted(responses.items()))
+    return operation
+
+
 merged["paths"] = {
-    path: {method: merged["paths"][path][method] for method in sorted(merged["paths"][path])}
+    path: {
+        method: sorted_operation(merged["paths"][path][method])
+        for method in sorted(merged["paths"][path])
+    }
     for path in sorted(merged["paths"])
 }
 merged["components"]["schemas"] = dict(sorted(merged["components"]["schemas"].items()))

@@ -12,6 +12,7 @@ import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springdoc.core.customizers.OpenApiCustomizer;
@@ -58,7 +59,9 @@ public class OpenApiAutoConfiguration {
     responses.put("403", "Đã xác thực nhưng thiếu quyền");
     responses.put("404", "Không tìm thấy tài nguyên");
     responses.put("409", "Xung đột dữ liệu (trùng mã, version lệch...)");
-    return Map.copyOf(responses);
+    // LinkedHashMap (không Map.copyOf) để giữ THỨ TỰ: spec phải deterministic giữa các lần
+    // export, nếu không mỗi lần chạy sẽ đổi thứ tự mã lỗi ⇒ git diff rác.
+    return Collections.unmodifiableMap(responses);
   }
 
   /**
