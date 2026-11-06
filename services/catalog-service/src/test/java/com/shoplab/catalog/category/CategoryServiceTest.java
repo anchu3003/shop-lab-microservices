@@ -35,9 +35,8 @@ class CategoryServiceTest {
     CategoryResponse created = service.create(new CreateCategoryRequest("  Điện Thoại  "));
 
     assertThat(created.name()).isEqualTo("Điện Thoại");
-    // Tiếng Việt có dấu: mỗi ký tự không thuộc [a-z0-9] thành một '-' (chưa transliterate ở Phase
-    // 1).
-    assertThat(created.slug()).isEqualTo("i-n-tho-i");
+    // SL-1.15: bỏ dấu tiếng Việt trước khi slugify ⇒ slug đọc được, không phải "i-n-tho-i".
+    assertThat(created.slug()).isEqualTo("dien-thoai");
     assertThat(created.createdAt()).isEqualTo(NOW);
     assertThat(created.updatedAt()).isEqualTo(NOW);
     assertThat(created.id()).isNotNull();
@@ -60,6 +59,17 @@ class CategoryServiceTest {
   void slugifyShouldCollapseSeparators() {
     assertThat(CategoryService.slugify("  Ao   Thun  ")).isEqualTo("ao-thun");
     assertThat(CategoryService.slugify("Giay/Dep-2026")).isEqualTo("giay-dep-2026");
+  }
+
+  @Test
+  @DisplayName("slugify: bỏ dấu tiếng Việt, kể cả đ/Đ (không tách được bằng NFD)")
+  void slugifyShouldStripVietnameseDiacritics() {
+    assertThat(CategoryService.slugify("Điện thoại")).isEqualTo("dien-thoai");
+    assertThat(CategoryService.slugify("Đồ gia dụng")).isEqualTo("do-gia-dung");
+    assertThat(CategoryService.slugify("Áo thun")).isEqualTo("ao-thun");
+    assertThat(CategoryService.slugify("Giày thể thao")).isEqualTo("giay-the-thao");
+    // đ ở giữa từ, không có dấu thanh: "đồ" → "do", "đỏ" → "do"
+    assertThat(CategoryService.slugify("Đỏ đen")).isEqualTo("do-den");
   }
 
   @Test

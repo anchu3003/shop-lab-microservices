@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — Phase 1 **đã xong** (`SL-1.0` → `SL-1.14` Done) |
-| **Ticket tiếp theo** | **DoD Phase 1**: `docs/phases/phase-1.md` + tag `phase-1` + GitHub Release (ADR-0005) |
+| **Ticket đang làm** | `SL-1.17` — docs(api): ẩn endpoint debug khỏi spec |
+| **Ticket tiếp theo** | `SL-1.16` — process: tech debt register + rule · sau đó **DoD Phase 1** |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -125,6 +125,10 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 14 | `SL-1.13` | *(phát sinh)* compose: `service-template` vào **profile** `template` | S | ✅ Done |
 | 15 | `SL-1.14` | *(phát sinh)* `merge-pr.sh`: cho phép PR **docs-only** + comment evidence **hậu merge** | S | ✅ Done |
 
+
+| 16 | `SL-1.15` | *(phát sinh)* fix: seed dev chỉ nạp ở local + slug tiếng Việt | S | ✅ Done |
+| 17 | `SL-1.16` | *(phát sinh)* process: tech debt register + rule | S | Todo |
+| 18 | `SL-1.17` | *(phát sinh)* docs(api): ẩn endpoint debug khỏi spec | S | Todo |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-03)*: gateway **MVC tự viết** (dùng lại 100% `service-commons`) ·
 JWT **RS256 + JWKS** · khoá dev sinh bằng `tools/gen-dev-keys.sh` (**không** commit) · **Spring Data JPA + Flyway** ·
@@ -1956,6 +1960,176 @@ $ gh pr view 17 --json state → MERGED · $ git ls-remote --heads origin → ch
 
 ---
 
+### SL-1.15 — *(phát sinh)* fix: seed dev chỉ nạp ở local + slug tiếng Việt
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 1 — Walking skeleton *(phát sinh)* |
+| **Phụ thuộc** | SL-1.6 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Rà soát sau Phase 1 phát hiện 2 lỗi tiềm ẩn:
+
+1. **Seed dev sẽ chạy ở staging/prod**: `R__seed_dev_data.sql` nằm chung `db/migration` và Flyway chạy
+   ở **mọi** môi trường ⇒ prod có 20 product "Du lieu dev". Comment trong file nói "không dùng cho
+   prod" nhưng **không có gì chặn** — đúng kiểu fail-open nguy hiểm.
+2. **Slug tiếng Việt bị xấu**: `"Điện thoại"` → `i-n-tho-i` (mỗi ký tự có dấu thành một `-`), vì
+   `slugify` chỉ giữ `[a-z0-9]` sau khi lower-case.
+
+**Mục tiêu**
+
+Seed chỉ nạp khi local (fail-closed), và slug đọc được với tên tiếng Việt.
+
+**In scope**
+
+- Chuyển `R__seed_dev_data.sql` → `src/main/resources/db/seed/`
+- `spring.flyway.locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}` (**mặc định không có
+  seed**); compose local + IT set thêm `classpath:db/seed`; `.env.example` ghi rõ
+- `CategoryService.slugify`: transliterate (NFD + bỏ dấu) + map `đ/Đ → d/D` trước khi slugify
+- Test: unit cho slug (có dấu, `đ`, ký tự đặc biệt) + IT/verify: container `APP_ENV=prod` **không** có
+  seed, local **có** seed
+
+**Out of scope**
+
+- Không đổi dữ liệu slug đã tạo (category cũ giữ slug cũ — đổi sẽ làm chết link)
+- Không thêm bảng transliterate đầy đủ cho ngôn ngữ khác
+
+**Acceptance Criteria**
+
+- [ ] `docker compose down -v && up -d` (local) → vẫn có **5 category / 20 product / 24 sku**
+- [ ] Container với `APP_ENV=prod` (không set `SHOPLAB_FLYWAY_LOCATIONS`) → DB **rỗng** (0 product, 0 sku)
+- [ ] `POST /v1/categories {"name":"Điện thoại"}` → slug `dien-thoai`
+- [ ] `mvn verify` + CI xanh
+
+**Ghi chú kỹ thuật**
+
+- Fail-closed: mặc định **không** seed; chỉ compose local/IT thêm location ⇒ prod không bao giờ seed
+  dù ai đó quên.
+- Slug không đổi với category đã có ⇒ không phá link/dữ liệu.
+
+**Kết quả verify**
+
+**Unit + IT** — `mvn -B -ntp -pl services/catalog-service -am verify`: **42 commons + 61 unit + 18 IT**
+· `BUILD SUCCESS`.
+
+**AC trên stack thật**
+
+| AC | Kết quả đo được |
+|---|---|
+| `docker compose down -v && up -d` (local) → vẫn có seed | **5 category / 20 product / 24 sku**; `flyway_schema_history`: `1 V1`, `2 V2`, `- R__seed_dev_data.sql` (repeatable có `version = null`) |
+| Container kiểu prod (`APP_ENV=prod`, **không** set `SHOPLAB_FLYWAY_LOCATIONS`), DB mới | `/health` **200** nhưng `category=0 product=0 sku=0`; history **chỉ V1 + V2** (không có `R__seed`) ⇒ **fail-closed đúng** |
+| `POST /v1/categories` tên tiếng Việt → slug đọc được | `"Điện thoại X"` → **`dien-thoai-x`** · `"Ốp lưng đẹp"` → **`op-lung-dep`** · `"Đồ gia dụng 2"` → **`do-gia-dung-2`** |
+| `mvn verify` + CI xanh | PASS (CI xanh trên PR) |
+
+**Regression**: `bash tools/e2e-smoke.sh` → **17 PASS / 0 FAIL**; slug seed vẫn sạch (`ao-thun`,
+`dien-thoai`, `do-gia-dung`, `giay-dep`…).
+
+**Bug phụ phát hiện khi sửa (đã xử lý)**: đổi slug sang bỏ dấu làm IT **fail 2 test** vì `"Điện thoại"`
+giờ ra `dien-thoai` — **trùng category seed**. Bài học: test tạo dữ liệu phải **tự bảo đảm unique**
+(thêm UUID vào tên), không được ngầm dựa vào việc slug của mình khác dữ liệu sẵn có.
+
+**Learning note**
+
+- **Comment "không dùng cho prod" không phải là chốt chặn**: seed nằm chung `db/migration` nghĩa là
+  Flyway chạy ở **mọi** môi trường. Fail-closed đúng nghĩa là **mặc định không có** (image chỉ trỏ
+  `db/migration`), môi trường dev **tự thêm** location. Cùng nguyên tắc đã dùng cho `/v3/api-docs`
+  (SL-1.8) — "an toàn là mặc định, bật là hành động có chủ ý".
+- **Đổi định dạng dữ liệu sinh ra (slug) làm lộ test phụ thuộc dữ liệu có sẵn**: 2 IT đỏ vì slug mới
+  trùng seed. Test tạo entity có unique constraint phải tự sinh hậu tố ngẫu nhiên — nếu không, test
+  đúng hôm nay và đỏ ở lần đổi logic/dữ liệu sau.
+- **Transliterate tiếng Việt: NFD không đủ**: `đ/Đ` là **chữ riêng**, không phải dấu kết hợp nên
+  `Normalizer NFD` không tách được — phải map tay. Kiểm bằng test có cả `Điện`, `Đồ`, `Đỏ`.
+- **Verify fail-closed phải tạo môi trường sạch thật**: chạy container `APP_ENV=prod` trên **DB mới**
+  rồi đếm row, thay vì suy luận từ config. Nếu chỉ đọc `application.yml` thì không phát hiện được
+  việc compose (hoặc `.env`) vô tình bật seed.
+
+### SL-1.16 — *(phát sinh)* process: tech debt register + rule ghi nhận
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton *(phát sinh)* |
+| **Phụ thuộc** | — |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Debt đang nằm rải rác trong learning note của từng ticket (`SL-1.4`: không có job dọn `refresh_tokens`
+· `SL-1.7`: smoke chưa vào CI · `SL-1.14`: `merge-pr.sh` chưa retry...). Muốn biết "còn nợ gì" phải
+đọc lại toàn bộ backlog ⇒ thực tế là **không ai đọc**.
+
+**Mục tiêu**
+
+Một chỗ duy nhất liệt kê tech debt, có **điều kiện revisit**, và một rule buộc ghi lại khi phát hiện.
+
+**In scope**
+
+- `.clinerules/20-tech-debt.md`: khi nào ghi · format `TD-<số>` · bắt buộc có *điều kiện revisit* ·
+  khi nào được trả nợ (không gộp vào ticket khác nếu là thay đổi code)
+- `Backlog.md` § **Technical debt register**: bảng `ID · mô tả · nguồn (ticket) · điều kiện revisit ·
+  mức độ`
+- Ghi lại toàn bộ debt đang biết (từ `SL-1.4`, `1.7`, `1.8`, `1.14` + rà soát Phase 1)
+- `AGENTS.md` §10 + `.clinerules/00-context.md`: thêm rule vào bảng AI assets
+
+**Out of scope**
+
+- Không sửa debt nào trong ticket này (chỉ ghi nhận)
+
+**Acceptance Criteria**
+
+- [ ] Rule tồn tại + được liệt kê trong `AGENTS.md` §10 và `.clinerules/00-context.md`
+- [ ] Bảng debt có ≥ 8 mục, mỗi mục có nguồn + điều kiện revisit
+- [ ] Không mục nào trùng lặp với ticket đang mở
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-1.17 — *(phát sinh)* docs(api): ẩn endpoint debug khỏi OpenAPI spec
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 1 — Walking skeleton *(phát sinh)* |
+| **Phụ thuộc** | SL-1.8 |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Spec Phase 1 đang có `/debug/slow`, `/debug/error`, `/debug/boom` — endpoint **chỉ để verify hạ tầng**
+(SL-0.4), chỉ tồn tại khi `SHOPLAB_DEBUG_ENDPOINTS=true`, và **không phải** API cho client. Để trong
+contract làm client tưởng đó là API thật.
+
+**Mục tiêu**
+
+Contract chỉ chứa API nghiệp vụ + probe vận hành; endpoint debug bị ẩn.
+
+**In scope**
+
+- `@Hidden` (springdoc) trên `DebugController` của identity + catalog + gateway
+- Export lại `docs/api/openapi.yaml`; ghi chú trong `docs/api/README.md` (probe `/health` `/ready`
+  `/version` **giữ** vì ops dùng và hợp đồng ổn định)
+
+**Out of scope**
+
+- Không đổi hành vi runtime của endpoint debug (vẫn bật/tắt bằng `SHOPLAB_DEBUG_ENDPOINTS`)
+
+**Acceptance Criteria**
+
+- [ ] Spec **không còn** path `/debug/*`; số path giảm đúng 3 (17 → 14)
+- [ ] Export + validate vẫn PASS; `mvn verify` + CI xanh
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+---
+
+## 5. Phase 2 → 8 — Epic outline
+
 ## 5. Phase 2 → 8 — Epic outline
 
 > Các phase này **chỉ ở mức epic**. Chỉ breakdown thành ticket chi tiết khi tới lượt — breakdown sớm sẽ phải viết lại
@@ -2107,6 +2281,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | SL-1.8 | **Gateway không nằm trong spec nghiệp vụ**: nó là proxy catch-all ⇒ `@Hidden` + export chỉ merge identity/catalog. Vẫn giữ `/v3/api-docs` của gateway (200) để debug route, nhưng không trộn vào contract client. |
 | 2026-11-06 | SL-1.8 | **Thêm annotation qua script phải chạy `spotless:apply` ngay**: import/annotation chèn bằng python làm `spotless:check` fail **bên trong `docker build`** (image đỏ, không phải CI đỏ) — sửa bằng `mvn spotless:apply` trước khi build lại. |
 
+| 2026-11-06 | SL-1.15 | **Comment "không dùng cho prod" không phải chốt chặn**: seed nằm chung `db/migration` ⇒ Flyway chạy ở MỌI môi trường. Fail-closed = **mặc định không có** (image chỉ trỏ `db/migration`), dev **tự thêm** location; verify bằng container `APP_ENV=prod` trên **DB mới** rồi đếm row. |
+| 2026-11-06 | SL-1.15 | **Đổi định dạng dữ liệu sinh ra (slug) làm đỏ test phụ thuộc dữ liệu sẵn có**: `"Điện thoại"` → `dien-thoai` trùng category seed ⇒ 2 IT fail. Test tạo entity có unique constraint phải **tự sinh hậu tố ngẫu nhiên**. |
+| 2026-11-06 | SL-1.15 | **Transliterate tiếng Việt: NFD không đủ** — `đ/Đ` là chữ riêng, không tách được bằng `\p{M}` nên phải map tay; test phải có `Điện`/`Đồ`/`Đỏ`. |
 | 2026-11-05 | process | **Push race với lúc merge ⇒ mất commit**: commit cuối của `SL-1.1` (`feda53a` — status Done + block CI evidence + changelog) push lên đúng lúc user merge; squash merge dùng state **trước** commit đó, rồi nhánh bị xoá ⇒ thay đổi biến mất khỏi `main`. **Bài học**: sau khi merge phải `git show <merge-sha> --stat`/`grep` kiểm nội dung trên `main`, đừng tin "đã push là xong"; commit bị mất vẫn cứu được qua reflog nếu chưa GC. Đã khôi phục trong nhánh `SL-1.2`. |
 | 2026-11-05 | SL-1.9 | **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` đánh giá theo **toàn bộ diff của PR** → commit docs trong PR **có code** vẫn tốn 1 run. `[skip ci]` xử lý đúng case đó. Nhưng GitHub đọc skip instruction ở **HEAD commit của PR** ⇒ docs commit ở cuối PR skip luôn run của cả PR (check treo `Pending`) → đừng tin nó, hãy kiểm bằng **diff thật**. |
 | 2026-11-05 | SL-1.9 | **Guard cũng phải test theo đúng thứ tự**: lần đầu test guard "PR draft" **sau khi** đã chạy `gh pr ready` ⇒ tưởng guard hỏng, thực ra kịch bản test sai. Test guard cần kịch bản cẩn thận y như test code. |
@@ -2171,6 +2348,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | `SL-1.6` → `Done`: `catalog-service` có **SKU** (`V2__create_sku.sql`: `code` unique, `price_override` NULL = dùng giá product, `stock_hint` chỉ là gợi ý — tồn kho thật là việc của inventory Phase 2) + **list phân trang/filter/sort** (`GET /v1/products?page=&size=&categoryId=&q=&sort=` → `{content,page,size,totalElements,totalPages}`, public cho guest) + **seed dev** (`R__seed_dev_data.sql`: 5 category / 20 product / 24 SKU, idempotent bằng `ON CONFLICT`). Tham số sai (`size` ngoài 1..100 · `page<0` · `sort` lạ · `categoryId` không UUID) → **400 `VALIDATION_ERROR`**, **không clamp**; sort whitelist `price,asc|desc` · `createdAt,asc|desc`. Verify: **60 unit + 18 IT** xanh; **35/35 mục AC** trên stack thật (paging không trùng id · filter · `q` không phân biệt hoa/thường · sort đúng thứ tự · 400 cho mọi input xấu · SKU trong chi tiết · **`down -v && up -d` → 5/20/24 seed** · restart **không** nhân đôi · `EXPLAIN` dùng `ix_product_created_at`); `e2e-smoke` 7/7. |
 | 2026-11-06 | `SL-1.7` → `Done`: `tools/e2e-smoke.sh` mở rộng thành E2E **cả Phase 1** — **17 mục**: health 3 service · register · login · `/v1/users/me` (200/401) · `traceId` xuyên service · **seller** tạo category+product (201, in id) · **guest** list + xem chi tiết (**200, không token**, có `skus`) · **buyer** tạo product (**403**, case mong đợi lỗi) · body lỗi là `ApiError`. Fail ở đâu in **gợi ý lệnh kiểm tra** ở đó. Thêm `docs/runbook-phase-1.md` (sơ đồ luồng · bảng port · kiểm tra **từng tầng** · **5 lỗi**: 401/403/404/503/timeout · §5 là output debug thật). Verify: **17/17 PASS** · chạy **6/6 lần** pass (~430 ms) · `docker stop` catalog → fail đúng **1c (000)** + **8 (503)**, các bước khác vẫn PASS. Sửa 2 bug thật: category trùng slug khi 2 lần chạy cùng giây (**flaky**), và script in **body cũ** khi connection refused. |
 | 2026-11-06 | `SL-1.8` → `Done`: OpenAPI spec Phase 1 — thêm `springdoc-openapi-starter-webmvc-api` **3.2.0** (Boot 4.1.x ⇒ springdoc 3.x) cho 3 service, expose `/v3/api-docs`; khung spec (info + security scheme `bearerAuth`) + **bộ response lỗi 400/401/403/404/409 tự gắn cho MỌI operation** (`$ref → ApiError`) đặt ở `service-commons` (`OpenApiAutoConfiguration`), nên endpoint Phase 2 tự có tài liệu lỗi. `OpenApiEnvironmentPostProcessor` ép tắt spec khi `APP_ENV != local` (**fail-closed**, override bằng `SHOPLAB_OPENAPI_ENABLED`). `tools/export-openapi.sh` merge spec identity + catalog → **`docs/api/openapi.yaml`** (`servers` = gateway, sort key để diff ổn định) + **tự validate** bằng `python3`+`pyyaml`. Verify: 3/3 service `/v3/api-docs` **200**; export **VALIDATE PASS · 17 path · 21 operation · 7 operation cần token · 18 schema**; `APP_ENV=prod` → `/v3/api-docs` **404** (service vẫn 200); e2e-smoke 17/17; cả reactor `mvn verify` xanh (254 unit + 40 IT). |
+| 2026-11-06 | `SL-1.15` → `Done`: **seed dev không còn chạy ở prod** — chuyển `R__seed_dev_data.sql` sang `db/seed/`, `spring.flyway.locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}` (**fail-closed**); compose local + IT tự thêm `,classpath:db/seed`. **Slug tiếng Việt** bỏ dấu (NFD + map `đ/Đ`): `"Điện thoại X"` → `dien-thoai-x`, `"Ốp lưng đẹp"` → `op-lung-dep`. Verify: local `down -v && up -d` → **5/20/24** seed · kiểu prod `APP_ENV=prod` + DB mới → **category=0 product=0 sku=0** (history chỉ V1+V2) · **42 + 61 unit + 18 IT** xanh · e2e-smoke 17/17. Sửa kèm 2 IT bị đỏ do slug mới trùng seed (dùng hậu tố UUID). |
 
 
 
