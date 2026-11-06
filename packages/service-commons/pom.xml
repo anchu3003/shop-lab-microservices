@@ -53,6 +53,17 @@
       <artifactId>logstash-logback-encoder</artifactId>
     </dependency>
 
+    <!--
+      springdoc (OpenAPI) — optional vì commons chỉ dùng để dựng auto-config cho service CÓ khai
+      starter springdoc; service không khai thì không kéo dependency này (không phình image).
+      Chi tiết: `OpenApiAutoConfiguration`.
+    -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+      <optional>true</optional>
+    </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>

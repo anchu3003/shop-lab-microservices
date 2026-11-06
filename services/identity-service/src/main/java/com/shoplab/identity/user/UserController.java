@@ -1,6 +1,8 @@
 package com.shoplab.identity.user;
 
 import com.shoplab.identity.auth.jwt.JwtService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.UUID;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -15,6 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
  * tính từ <b>token</b>, không còn tin header {@code x-user-*} của gateway. Header đó chỉ còn là hợp
  * đồng cho service chưa tự verify (catalog ở SL-1.5) — defense in depth.
  */
+@Tag(name = "User", description = "Hồ sơ người dùng hiện tại")
+@SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequestMapping("/v1/users")
 public class UserController {

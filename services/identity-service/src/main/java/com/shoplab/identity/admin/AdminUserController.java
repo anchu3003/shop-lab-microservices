@@ -2,6 +2,8 @@ package com.shoplab.identity.admin;
 
 import com.shoplab.identity.auth.UserResponse;
 import com.shoplab.identity.user.UserRepository;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,6 +16,8 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Không có endpoint cần quyền thì RBAC chỉ là "có field role trong token": không ai biết nó có
  * chặn đúng hay không. Endpoint này cho phép kiểm chứng cặp 200 (admin) / 403 (buyer).
  */
+@Tag(name = "Admin", description = "Quản trị người dùng (chỉ role ADMIN)")
+@SecurityRequirement(name = "bearerAuth")
 @RestController
 @RequestMapping("/v1/admin")
 public class AdminUserController {

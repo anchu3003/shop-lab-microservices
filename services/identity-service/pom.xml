@@ -104,6 +104,12 @@
       <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
     </dependency>
 
+    <!-- OpenAPI (SL-1.8): /v3/api-docs. Khung spec + bộ response lỗi chuẩn ở commons. -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+    </dependency>
+
     <!-- ===================== test ===================== -->
 
     <dependency>

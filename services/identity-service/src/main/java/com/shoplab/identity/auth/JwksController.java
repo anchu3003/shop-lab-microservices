@@ -1,6 +1,7 @@
 package com.shoplab.identity.auth;
 
 import com.shoplab.identity.auth.jwt.JwtService;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Đường dẫn {@code /.well-known/jwks.json} là quy ước chuẩn (RFC 8615 + JWK Set RFC 7517) — đặt
  * đúng chỗ để client/thư viện khác tự tìm được mà không phải cấu hình.
  */
+@Tag(name = "JWKS", description = "Public key để service khác verify token")
 @RestController
 public class JwksController {
 

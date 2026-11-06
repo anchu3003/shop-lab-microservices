@@ -1,6 +1,7 @@
 package com.shoplab.identity.auth;
 
 import com.shoplab.identity.user.User;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>Version qua path {@code /v1/...} (AGENTS.md §6).
  */
+@Tag(name = "Auth", description = "Đăng ký / đăng nhập / refresh / logout")
 @RestController
 @RequestMapping("/v1/auth")
 public class AuthController {

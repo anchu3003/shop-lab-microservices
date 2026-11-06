@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.8` — OpenAPI spec cho các endpoint Phase 1 |
-| **Ticket tiếp theo** | *(hết Phase 1)* — DoD phase: `docs/phases/phase-1.md` + tag `phase-1` + GitHub Release |
+| **Ticket đang làm** | — Phase 1 **đã xong** (`SL-1.0` → `SL-1.14` Done) |
+| **Ticket tiếp theo** | **DoD Phase 1**: `docs/phases/phase-1.md` + tag `phase-1` + GitHub Release (ADR-0005) |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -117,7 +117,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 6 | `SL-1.5` | `catalog-service`: CRUD category/product | M | ✅ Done |
 | 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | ✅ Done |
 | 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | ✅ Done |
-| 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | Todo |
+| 9 | `SL-1.8` | OpenAPI spec Phase 1 | S | ✅ Done |
 | 10 | `SL-1.9` | *(phát sinh)* process: docs không cần CI + auto-merge PR | S | ✅ Done |
 | 11 | `SL-1.10` | *(phát sinh)* fix: `[skip ci]` lọt vào squash message → `main` không chạy CI | S | ✅ Done |
 | 12 | `SL-1.11` | *(phát sinh)* fix: message chẩn đoán của `merge-pr.sh` gây hiểu nhầm | S | ✅ Done |
@@ -1216,7 +1216,7 @@ E2E smoke: OK
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.7 |
 | **Ước lượng** | S |
@@ -1262,9 +1262,59 @@ Có spec **khớp với thực tế**, đọc được, và **diff được tron
 - Đặt spec ở `docs/api/openapi.yaml` để nằm cùng chỗ với các doc khác và **diff được theo phase** (Phase 2 sẽ thấy rõ API
   mới thêm gì).
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify**
 
-**Learning note** *(điền khi Done)*
+**Export + validate** — `bash tools/export-openapi.sh`:
+
+```console
+$ bash tools/export-openapi.sh
+== Lấy spec của từng service
+  OK identity ← http://localhost:8081/v3/api-docs
+  OK catalog ← http://localhost:8082/v3/api-docs
+  OK gateway ← http://localhost:8080/v3/api-docs
+== Merge + validate → docs/api/openapi.yaml
+VALIDATE PASS · 17 path · 21 operation · 7 operation cần token · 18 schema
+```
+
+| AC | Kết quả đo được |
+|---|---|
+| `GET /v3/api-docs` trên **cả 3 service** → 200 + JSON hợp lệ | PASS — `:8080` 200 · `:8081` 200 · `:8082` 200 |
+| `bash tools/export-openapi.sh` sinh `docs/api/openapi.yaml` không lỗi, file được commit | PASS (`VALIDATE PASS`) |
+| Spec liệt kê **đủ** endpoint Phase 1 — đếm + ghi số | **17 path / 21 operation**: identity 7 (`auth/register`, `login`, `refresh`, `logout`, `users/me`, `admin/users`, `well-known/jwks.json`) · catalog 8 (`categories` GET+POST, `products` GET+POST, `products/{id}` GET/PUT/DELETE, `products/{productId}/skus` POST) · probe 4 (`health`, `ready`, `version`, `debug/*`) |
+| Có security scheme **bearer** + endpoint protected đánh dấu cần auth | PASS — `components.securitySchemes.bearerAuth` (http/bearer/JWT); **7 operation** có `security` (admin/users · users/me · category POST · product POST/PUT/DELETE · sku POST), các GET public **không** có (đúng thực tế) |
+| Response lỗi dùng schema **`ApiError`** (400/401/403/404/409) | PASS — validate kiểm từng operation: cả 5 mã đều `$ref: #/components/schemas/ApiError` |
+| Spec **validate pass** (ghi rõ cách đã dùng) | PASS — `python3` + `pyyaml` 6.0.3 (máy không có spectral/swagger-cli): kiểm `openapi` 3.x · `info.title` · `servers` · bearer scheme · `ApiError` · đủ 5 response lỗi cho mọi operation |
+| `/v3/api-docs` **không** bật khi `APP_ENV != local` | PASS — chạy container với `APP_ENV=prod`: `/v3/api-docs` → **404**, `/health` → 200, `/v1/products` → 200 (service vẫn chạy bình thường) |
+
+**Regression**: `bash tools/e2e-smoke.sh` → **17 PASS / 0 FAIL**; cả reactor `mvn verify` xanh
+(unit 42 commons + 35 template + 46 identity + 60 catalog + 71 gateway, IT 22 + 18).
+
+**Spot-check spec ↔ thực tế** (gọi thật đúng như spec mô tả): `POST /v1/auth/register` body rỗng →
+**400** `VALIDATION_ERROR` (spec ghi 400 + details) · `GET /v1/products?size=1` → **200** ·
+`GET /.well-known/jwks.json` → **200**.
+
+**Learning note**
+
+- **Version springdoc phải tra bảng tương thích, không đoán**: Boot 4.1.x cần springdoc **3.x**
+  (3.1–3.2); dòng 2.x là cho Boot 3. Cách kiểm nhanh mà không cần đọc blog: `maven-metadata.xml` của
+  artifact trên Maven Central cho biết version nào tồn tại, còn trang FAQ của springdoc có bảng
+  Boot ↔ springdoc. Đoán version ở đây tốn cả một vòng build image (~5 phút).
+- **Tài liệu lỗi nên sinh bằng customizer, không bằng annotation rải rác**: 400/401/403/404/409 là
+  hành vi của *toàn hệ* (`GlobalExceptionHandler` + security chain). Một `OperationCustomizer` ở
+  commons ⇒ endpoint thêm ở Phase 2 **tự** có tài liệu lỗi, không phụ thuộc việc dev nhớ annotation.
+  Đây là cùng nguyên tắc "một nguồn sự thật" như `ApiError`.
+- **`$ref` không tự sinh schema**: muốn `#/components/schemas/ApiError` có thật trong spec thì phải
+  thêm schema vào components bằng tay (`ModelConverters.readAll(ApiError.class)` trong
+  `OpenApiCustomizer`). Ref "treo" là spec trông đúng mà client generate code sẽ vỡ.
+- **Bật/tắt spec phải fail-closed và kiểm bằng env thật**: `/v3/api-docs` là bản đồ chi tiết hệ thống
+  ⇒ mặc định **tắt** ngoài local. Cài bằng `EnvironmentPostProcessor` (chạy sau config data) thay vì
+  tin vào việc ai đó nhớ set env — và verify bằng cách **chạy container `APP_ENV=prod`** rồi curl, chứ
+  không chỉ đọc code.
+- **Export phải deterministic mới diff được**: sort `paths`/`schemas`/`tags` trước khi ghi YAML. Nếu
+  không, mỗi lần export sẽ đổi thứ tự ⇒ git diff rác ⇒ không ai review spec nữa.
+- **Gateway không nên xuất hiện trong spec nghiệp vụ**: nó là proxy catch-all ⇒ `@Hidden` và export
+  merge identity + catalog. Vẫn giữ `/v3/api-docs` của gateway (200) để debug cấu hình route, nhưng
+  không trộn vào contract của client.
 
 ---
 
@@ -2049,6 +2099,14 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | SL-1.7 | **Runbook chỉ đáng tin khi đã dùng nó để debug thật**: `docs/runbook-phase-1.md` §5 dán **nguyên văn** output của lần giả lập lỗi (stop catalog → fail 1c/8 → `docker ps` → `up -d`), không phải ví dụ viết tay. |
 
 
+| 2026-11-06 | SL-1.8 | **Version springdoc phải tra bảng tương thích, không đoán**: Boot **4.1.x** ⇒ springdoc **3.x** (3.1–3.2); dòng 2.x là cho Boot 3. Kiểm nhanh: `maven-metadata.xml` trên Maven Central + bảng Boot↔springdoc trong FAQ. Đoán sai tốn cả vòng build image (~5 phút). |
+| 2026-11-06 | SL-1.8 | **Tài liệu lỗi sinh bằng `OperationCustomizer`, không rải annotation**: 400/401/403/404/409 là hành vi của *toàn hệ* (`GlobalExceptionHandler` + security chain) ⇒ một customizer ở commons làm endpoint mới **tự** có, không phụ thuộc dev nhớ annotation. |
+| 2026-11-06 | SL-1.8 | **`$ref` không tự sinh schema**: phải tự thêm `ApiError` vào `components.schemas` (`ModelConverters.readAll`) thì ref mới resolve. Ref treo = spec trông đúng nhưng generate client sẽ vỡ. |
+| 2026-11-06 | SL-1.8 | **Bật/tắt spec phải fail-closed + verify bằng env thật**: dùng `EnvironmentPostProcessor` (chạy SAU config data, nếu không bị yml ghi đè) ép `false` khi `APP_ENV != local`; verify bằng **chạy container `APP_ENV=prod`** rồi curl `/v3/api-docs` → 404, không chỉ đọc code. |
+| 2026-11-06 | SL-1.8 | **Export phải deterministic mới diff được**: sort `paths`/`schemas`/`tags` trước khi ghi YAML — nếu không, lần export nào cũng đổi thứ tự ⇒ git diff rác ⇒ không ai review spec. |
+| 2026-11-06 | SL-1.8 | **Gateway không nằm trong spec nghiệp vụ**: nó là proxy catch-all ⇒ `@Hidden` + export chỉ merge identity/catalog. Vẫn giữ `/v3/api-docs` của gateway (200) để debug route, nhưng không trộn vào contract client. |
+| 2026-11-06 | SL-1.8 | **Thêm annotation qua script phải chạy `spotless:apply` ngay**: import/annotation chèn bằng python làm `spotless:check` fail **bên trong `docker build`** (image đỏ, không phải CI đỏ) — sửa bằng `mvn spotless:apply` trước khi build lại. |
+
 | 2026-11-05 | process | **Push race với lúc merge ⇒ mất commit**: commit cuối của `SL-1.1` (`feda53a` — status Done + block CI evidence + changelog) push lên đúng lúc user merge; squash merge dùng state **trước** commit đó, rồi nhánh bị xoá ⇒ thay đổi biến mất khỏi `main`. **Bài học**: sau khi merge phải `git show <merge-sha> --stat`/`grep` kiểm nội dung trên `main`, đừng tin "đã push là xong"; commit bị mất vẫn cứu được qua reflog nếu chưa GC. Đã khôi phục trong nhánh `SL-1.2`. |
 | 2026-11-05 | SL-1.9 | **`paths-ignore` và `[skip ci]` bổ sung nhau, không thay thế nhau**: `paths-ignore` đánh giá theo **toàn bộ diff của PR** → commit docs trong PR **có code** vẫn tốn 1 run. `[skip ci]` xử lý đúng case đó. Nhưng GitHub đọc skip instruction ở **HEAD commit của PR** ⇒ docs commit ở cuối PR skip luôn run của cả PR (check treo `Pending`) → đừng tin nó, hãy kiểm bằng **diff thật**. |
 | 2026-11-05 | SL-1.9 | **Guard cũng phải test theo đúng thứ tự**: lần đầu test guard "PR draft" **sau khi** đã chạy `gh pr ready` ⇒ tưởng guard hỏng, thực ra kịch bản test sai. Test guard cần kịch bản cẩn thận y như test code. |
@@ -2112,6 +2170,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | `SL-1.5` → `Done`: `catalog-service` (port **8082**, DB `catalog`, Flyway `V1__create_catalog.sql` với `price NUMERIC(12,2)` + `@Version` + FK/index) — `POST/GET /v1/categories`, `POST/GET/PUT/DELETE /v1/products`; guest **đọc** được, chỉ `seller`/`admin` **ghi**. Service **tự verify JWT qua JWKS của identity** (defense in depth: gọi thẳng :8082 không token vẫn 401, `x-user-role` client gửi bị bỏ qua). Error **400/401/403/404/409** đều là `ApiError` có `traceId`. Hạ tầng: module mới ở parent pom, 4 Dockerfile `COPY` pom mới, CI matrix **4 service**, compose + `.env.example` + gateway route `/v1/products` `/v1/categories`. Verify: **36 unit + 12 IT** (+37 commons) xanh; **36/36 mục AC** trên stack thật (seller 201 · buyer 403 · guest 200 · 404 · 400 details · 401 gọi thẳng · không leo quyền · `version` +1); `e2e-smoke` vẫn 7/7. Sửa 3 bug thật: `@PreAuthorize` → **500** thay vì 403, `@Version` trả số cũ trong response `PUT`, image build đỏ vì JaCoCo gate bị `-DskipITs`. |
 | 2026-11-06 | `SL-1.6` → `Done`: `catalog-service` có **SKU** (`V2__create_sku.sql`: `code` unique, `price_override` NULL = dùng giá product, `stock_hint` chỉ là gợi ý — tồn kho thật là việc của inventory Phase 2) + **list phân trang/filter/sort** (`GET /v1/products?page=&size=&categoryId=&q=&sort=` → `{content,page,size,totalElements,totalPages}`, public cho guest) + **seed dev** (`R__seed_dev_data.sql`: 5 category / 20 product / 24 SKU, idempotent bằng `ON CONFLICT`). Tham số sai (`size` ngoài 1..100 · `page<0` · `sort` lạ · `categoryId` không UUID) → **400 `VALIDATION_ERROR`**, **không clamp**; sort whitelist `price,asc|desc` · `createdAt,asc|desc`. Verify: **60 unit + 18 IT** xanh; **35/35 mục AC** trên stack thật (paging không trùng id · filter · `q` không phân biệt hoa/thường · sort đúng thứ tự · 400 cho mọi input xấu · SKU trong chi tiết · **`down -v && up -d` → 5/20/24 seed** · restart **không** nhân đôi · `EXPLAIN` dùng `ix_product_created_at`); `e2e-smoke` 7/7. |
 | 2026-11-06 | `SL-1.7` → `Done`: `tools/e2e-smoke.sh` mở rộng thành E2E **cả Phase 1** — **17 mục**: health 3 service · register · login · `/v1/users/me` (200/401) · `traceId` xuyên service · **seller** tạo category+product (201, in id) · **guest** list + xem chi tiết (**200, không token**, có `skus`) · **buyer** tạo product (**403**, case mong đợi lỗi) · body lỗi là `ApiError`. Fail ở đâu in **gợi ý lệnh kiểm tra** ở đó. Thêm `docs/runbook-phase-1.md` (sơ đồ luồng · bảng port · kiểm tra **từng tầng** · **5 lỗi**: 401/403/404/503/timeout · §5 là output debug thật). Verify: **17/17 PASS** · chạy **6/6 lần** pass (~430 ms) · `docker stop` catalog → fail đúng **1c (000)** + **8 (503)**, các bước khác vẫn PASS. Sửa 2 bug thật: category trùng slug khi 2 lần chạy cùng giây (**flaky**), và script in **body cũ** khi connection refused. |
+| 2026-11-06 | `SL-1.8` → `Done`: OpenAPI spec Phase 1 — thêm `springdoc-openapi-starter-webmvc-api` **3.2.0** (Boot 4.1.x ⇒ springdoc 3.x) cho 3 service, expose `/v3/api-docs`; khung spec (info + security scheme `bearerAuth`) + **bộ response lỗi 400/401/403/404/409 tự gắn cho MỌI operation** (`$ref → ApiError`) đặt ở `service-commons` (`OpenApiAutoConfiguration`), nên endpoint Phase 2 tự có tài liệu lỗi. `OpenApiEnvironmentPostProcessor` ép tắt spec khi `APP_ENV != local` (**fail-closed**, override bằng `SHOPLAB_OPENAPI_ENABLED`). `tools/export-openapi.sh` merge spec identity + catalog → **`docs/api/openapi.yaml`** (`servers` = gateway, sort key để diff ổn định) + **tự validate** bằng `python3`+`pyyaml`. Verify: 3/3 service `/v3/api-docs` **200**; export **VALIDATE PASS · 17 path · 21 operation · 7 operation cần token · 18 schema**; `APP_ENV=prod` → `/v3/api-docs` **404** (service vẫn 200); e2e-smoke 17/17; cả reactor `mvn verify` xanh (254 unit + 40 IT). |
+
 
 
 | 2026-11-05 | `SL-1.4` → `Done`: refresh token (**opaque 256-bit, lưu SHA-256**) + **rotate + reuse detection** (dùng lại token đã rotate ⇒ 401 **và revoke cả chuỗi**), logout, `GET /v1/admin/users` (ADMIN 200 / buyer **403**), security filter chain (identity **tự verify JWT** — defense in depth) + 401/403 trả **ApiError** có `traceId`. Seed `admin@`/`seller@` bằng `LocalDevUserSeeder` (chỉ `APP_ENV=local`). Verify: **46 unit + 22 IT** xanh; E2E **9 mục** trên stack thật (rotate/reuse/logout/RBAC/hash-trong-DB/**qua gateway**); `tools/e2e-smoke.sh` vẫn 7/7. Sửa 3 lỗi thật: `noRollbackFor` (revoke bị rollback), thiếu route `/v1/admin` ở gateway, path lạ 404→**401**. |

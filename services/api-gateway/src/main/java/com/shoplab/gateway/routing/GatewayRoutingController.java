@@ -3,6 +3,7 @@ package com.shoplab.gateway.routing;
 import com.shoplab.commons.error.AppException;
 import com.shoplab.commons.error.ErrorCode;
 import com.shoplab.gateway.config.GatewayProperties;
+import io.swagger.v3.oas.annotations.Hidden;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
 import org.springframework.http.ResponseEntity;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>Body được đọc thẳng từ {@code InputStream} (không dùng {@code @RequestBody}): gateway không
  * cần hiểu body, chỉ cần chuyển tiếp nguyên byte — nhờ vậy mọi content-type đều đi qua được.
  */
+@Hidden // proxy catch-all: không phải API nghiệp vụ, tài liệu ở spec của service đích (SL-1.8)
 @RestController
 public class GatewayRoutingController {
 
