@@ -353,6 +353,50 @@ TTL mặc định 15 phút (`IDENTITY_JWT_ACCESS_TTL`).
 
 ---
 
+### Token & phân quyền — `SL-1.4`
+
+Vòng đời token đầy đủ + RBAC cơ bản. Access token là **JWT 15 phút** (stateless); refresh token là **chuỗi opaque
+14 ngày**, DB chỉ lưu **hash SHA-256**.
+
+| Endpoint | Trả về | Ghi chú |
+|---|---|---|
+| `POST /v1/auth/login` | `200` + `{accessToken, refreshToken, tokenType, expiresIn}` | sai → `401` (message giống nhau, không lộ email) |
+| `POST /v1/auth/refresh` | cặp token **mới** | **rotate**: token cũ bị vô hiệu ngay; dùng lại token đã rotate ⇒ `401` **và thu hồi cả chuỗi** |
+| `POST /v1/auth/logout` | `204` | thu hồi refresh token hiện tại (idempotent) |
+| `GET /v1/users/me` | `200` + `{userId, role}` | danh tính lấy **từ token** (identity tự verify, không tin header gateway) |
+| `GET /v1/admin/users` | `200` (chỉ **ADMIN**) | buyer → **`403`** (đã xác thực nhưng thiếu quyền) |
+
+**401 vs 403**: 401 = chưa xác thực (thiếu/sai/hết hạn token), 403 = đã xác thực nhưng thiếu quyền. Cả hai trả
+**`ApiError`** (`code`, `message`, `traceId`) — không có HTML mặc định của Spring.
+
+**User dev seed sẵn** (chỉ khi `APP_ENV=local`, **không** seed ở môi trường khác — xem `LocalDevUserSeeder`):
+
+| Email | Role | Mật khẩu dev |
+|---|---|---|
+| `admin@shoplab.local` | `ADMIN` | `matkhau123` |
+| `seller@shoplab.local` | `SELLER` | `matkhau123` |
+
+```bash
+# login → cặp token
+curl -s -X POST localhost:8080/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@shoplab.local","password":"matkhau123"}'
+# refresh (rotate) — dùng refreshToken ở trên
+curl -s -X POST localhost:8080/v1/auth/refresh -H 'Content-Type: application/json' \
+  -d '{"refreshToken":"<refreshToken>"}'
+# endpoint chỉ ADMIN (buyer sẽ nhận 403)
+curl -s localhost:8080/v1/admin/users -H "Authorization: Bearer <accessToken>"
+# logout
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/v1/auth/logout \
+  -H 'Content-Type: application/json' -d '{"refreshToken":"<refreshToken>"}'    # 204
+```
+
+> ⚠️ **Reuse detection là tính năng, không phải lỗi**: nếu client lưu refresh token sai chỗ (2 tab cùng refresh, retry
+> sau timeout...) và dùng lại token **đã rotate** thì cả phiên bị thu hồi — buộc đăng nhập lại. Đây là hành vi đúng
+> (dấu hiệu token bị đánh cắp); client phải lưu **token mới nhất**.
+
+---
+
+
 ### api-gateway — `SL-1.2`
 
 **Cửa vào duy nhất** của hệ thống (port **8080**): route `/v1/**` tới service tương ứng, verify JWT **một chỗ**,

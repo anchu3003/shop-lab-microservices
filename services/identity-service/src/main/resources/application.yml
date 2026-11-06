@@ -58,6 +58,9 @@ shoplab:
     # Không cần resolve được; nó là ĐỊNH DANH của nơi phát token.
     issuer: ${IDENTITY_JWT_ISSUER:https://identity.shoplab.local}
     access-token-ttl: ${IDENTITY_JWT_ACCESS_TTL:15m}
+    # Refresh token sống dài (14 ngày) vì nó giữ phiên đăng nhập; mỗi lần dùng đều rotate nên cửa
+    # sổ bị đánh cắp hẹp. Đổi bằng env, không cần migration (SL-1.4).
+    refresh-token-ttl: ${IDENTITY_JWT_REFRESH_TOKEN_TTL:14d}
     # Private key CHỈ identity-service có; public key công bố qua JWKS.
     # Khoá dev sinh bằng: bash tools/gen-dev-keys.sh (không commit — AGENTS.md §9).
     private-key-path: ${IDENTITY_JWT_PRIVATE_KEY_PATH:infra/keys/dev-private.pem}

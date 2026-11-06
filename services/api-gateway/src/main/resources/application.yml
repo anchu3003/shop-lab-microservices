@@ -58,6 +58,10 @@ shoplab:
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}
       - path-prefix: /v1/users
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}
+      # SL-1.4: endpoint quản trị phải đi qua CỬA VÀO DUY NHẤT như mọi API khác — nếu không thì
+      # client phải gọi thẳng port service (và bỏ qua luôn việc verify token ở gateway).
+      - path-prefix: /v1/admin
+        base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}
       # JWKS công bố qua gateway để client chỉ cần biết MỘT địa chỉ.
       - path-prefix: /.well-known
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}

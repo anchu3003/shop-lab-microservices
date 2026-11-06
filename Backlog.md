@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-1.4` — `identity-service`: refresh token + RBAC + `/v1/users/me` |
-| **Ticket tiếp theo** | `SL-1.5` — `catalog-service`: skeleton + Flyway + category/product CRUD |
+| **Ticket đang làm** | `SL-1.5` — `catalog-service`: skeleton + Flyway + category/product CRUD |
+| **Ticket tiếp theo** | `SL-1.6` — `catalog-service`: SKU + phân trang/filter + seed data |
 | **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
 
 ---
@@ -17,7 +17,7 @@
 | Phase | Tên | Trạng thái | Ticket Done |
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
-| 1 | Walking skeleton | 🔵 In Progress | 10 / 15 |
+| 1 | Walking skeleton | 🔵 In Progress | 11 / 15 |
 | 2 | Core commerce flow | ⚪ Todo (epic) | — |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
@@ -113,7 +113,7 @@ Pattern / thư viện / trade-off đã chấp nhận.
 | 2 | `SL-1.1` | `identity-service`: register/login + JWT | M | ✅ Done |
 | 3 | `SL-1.2` | `api-gateway` bản mỏng | M | ✅ Done |
 | 4 | `SL-1.3` | **E2E sớm**: register → login qua gateway | S | ✅ Done |
-| 5 | `SL-1.4` | `identity-service`: refresh token + RBAC | M | Todo |
+| 5 | `SL-1.4` | `identity-service`: refresh token + RBAC | M | ✅ Done |
 | 6 | `SL-1.5` | `catalog-service`: CRUD category/product | M | Todo |
 | 7 | `SL-1.6` | `catalog-service`: SKU + phân trang/filter + seed | M | Todo |
 | 8 | `SL-1.7` | E2E smoke đầy đủ + runbook | S | Todo |
@@ -752,7 +752,7 @@ $ docker start shoplab-identity-service
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done |
 | **Phase** | 1 — Walking skeleton |
 | **Phụ thuộc** | SL-1.3 |
 | **Ước lượng** | M |
@@ -807,9 +807,43 @@ minh phân quyền hoạt động đúng (401 vs 403).
   **permitAll** cho `/health` `/ready` `/version` để không phá probe + graceful shutdown của SL-0.4.
 - Endpoint `/debug/*` (dev-only) cũng phải nằm trong danh sách permitAll hoặc tắt ở môi trường ngoài local.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-05 — output thật)*
 
-**Learning note** *(điền khi Done)*
+```console
+$ mvn -B -ntp -pl services/identity-service -am verify
+[INFO] Tests run: 46, Failures: 0, Errors: 0     ← unit (mới: RefreshTokenServiceTest 7 test)
+[INFO] Tests run: 22, Failures: 0, Errors: 0     ← IT, Postgres thật (Testcontainers); mới 6 test SL-1.4
+[INFO] BUILD SUCCESS                             ← checkstyle + spotless + jacoco gate
+
+# --- E2E trên stack thật (rebuild image identity + gateway) ---
+1) login admin → accessToken=co refreshToken=co
+2) refresh → token moi khac token cu: YES · access token moi goi /v1/users/me → 200
+3) dung lai refresh CU → HTTP 401  {"code":"UNAUTHORIZED","message":"Refresh token không hợp lệ hoặc đã bị thu hồi"}
+4) sau reuse, refresh MOI nhat → HTTP 401         ← revoke CẢ CHUỖI (đúng kỳ vọng)
+5) /v1/admin/users: admin → 200 · buyer → 403 {"code":"FORBIDDEN","traceId":"75a09d5d…"}
+6) /v1/users/me khong token → 401 {"code":"UNAUTHORIZED","traceId":"3267fb09…"}
+7) logout → 204 · refresh sau logout → 401
+8) DB: token_hash moi nhat = f0217f7bc678842bd242b40bb8e33d865a85045fa3f110d092e2196255c04752   (64 hex)
+9) QUA GATEWAY (8080): admin login + /v1/admin/users → 200 · /v1/users/me → 200
+$ bash tools/e2e-smoke.sh → 7 PASS / 0 FAIL      ← regression SL-1.3 không vỡ
+$ git status → V1__create_users.sql KHÔNG đổi (chỉ thêm V2__create_refresh_tokens.sql)
+```
+
+**Learning note**
+
+- **`@Transactional` + throw = rollback xoá luôn việc vừa ghi**: reuse detection revoke cả chuỗi rồi `throw` 401 ⇒
+  transaction rollback ⇒ **mất luôn các lệnh revoke** (đúng thứ vừa phát hiện). Phải `noRollbackFor` ở **mọi tầng**
+  `@Transactional` mà exception đi qua — sửa ở tầng trong (`RefreshTokenService`) vẫn hỏng vì tầng **ngoài**
+  (`AuthService.refresh`) mới là cái quyết định commit. **IT bắt được, unit test mock thì không** ⇒ bài học: test tích hợp
+  không phải "cho có", nó bắt đúng lớp lỗi transaction mà mock che mất.
+- **Endpoint mới phải verify qua CỬA VÀO DUY NHẤT**: `/v1/admin/users` trả 200 khi gọi thẳng identity nhưng **404 qua
+  gateway** vì gateway chưa có route `/v1/admin`. Chỉ lộ ra khi test qua 8080 → đã thêm route + test lại.
+- **Security filter đổi hành vi cũ**: `anyRequest().authenticated()` làm path không tồn tại trả **401** thay vì 404
+  (không cho người lạ dò danh sách route). Test cũ fail — sửa test theo **hành vi đúng**, không sửa cho xanh.
+- **Defense in depth có giá trị thật**: gọi thẳng port service (8081) vẫn phải có token hợp lệ; header `x-user-*` không
+  còn là nguồn tin duy nhất ở identity.
+- **Seed bằng code, không bằng SQL**: hash BCrypt nhúng trong migration là thứ ai đọc repo cũng thấy và không đổi được
+  nếu không viết migration mới → dùng `LocalDevUserSeeder` (idempotent, chỉ `APP_ENV=local`).
 
 ### SL-1.5 — `catalog-service`: skeleton + Flyway + category/product CRUD
 
@@ -1833,7 +1867,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | SL-1.12 | **Chốt chặn giả sống được 2 ticket**: `build-image` "xanh" suốt `SL-1.1`+`SL-1.2` mà chỉ kiểm 1/3 service — không ai đọc lại job CI khi thêm service. **Song song ≠ rẻ**: 3 image chạy song song giữ nguyên thời gian *chờ* nhưng nhân 3 phút *billable* — đo bằng số, không bằng cảm giác. |
 | 2026-11-05 | SL-1.13 | **Service optional ⇒ dùng compose profile chứ đừng xoá/để mặc định**: profile giữ được "chốt chặn sống" (template vẫn build/chạy được khi cần) mà `up -d` không tốn RAM/build cho nó. |
 | 2026-11-05 | SL-1.3 | **Smoke script phải chịu được hạ tầng chết**: `set -e` + curl connection-refused (exit 7) kill script trước khi báo lỗi → `curl \|\| true` để lấy status `000`, guard token rỗng để `python3` không KeyError. Bonus: **GNU date `%3N` ra 9 chữ số** (nanosec) trên hệ này → dùng `%s%N`/1e6. |
-
+| 2026-11-05 | SL-1.4 | **`@Transactional` + throw = rollback xoá luôn việc vừa ghi**: reuse detection revoke cả chuỗi rồi throw 401 ⇒ mất revoke. Phải `noRollbackFor` ở **mọi tầng** `@Transactional` mà exception đi qua (tầng ngoài mới quyết định commit). **IT bắt được, unit test mock thì không.** |
+| 2026-11-05 | SL-1.4 | **Endpoint mới phải verify qua CỬA VÀO DUY NHẤT**: `/v1/admin/users` 200 khi gọi thẳng identity nhưng **404 qua gateway** (thiếu route) — chỉ lộ khi test qua 8080. Và security filter đổi hành vi path lạ 404 → **401** (có chủ ý: không lộ route). |
 | 2026-11-05 | process | **Đừng dùng backtick trong `--body` của `gh` khi gõ trực tiếp**: shell thực thi phần trong backtick (`tools/merge-pr.sh` → `Permission denied`, `null: command not found`) và **body PR bị hỏng**. Luôn dùng `--body-file` với heredoc (`<<'EOF'`). |
 
 ---
@@ -1870,6 +1905,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | `SL-1.12` → `Done`: job `build-image` chuyển sang **matrix** (`service-template` · `identity-service` · `api-gateway`, `fail-fast: false`) + `--build-arg SKIP_TESTS=true` (bỏ test trùng trong image — job `test` đã chạy cả reactor). **Test âm thật**: phá `api-gateway/Dockerfile` → run `42064872154` **chỉ** job gateway đỏ (`Child module … does not exist`), 2 job image kia xanh; revert → run `42065751051` **5/5 xanh**. Số đo: billable 194s → 343s (**+2,5 phút/run**, wall-clock gần như không đổi vì chạy song song). Cập nhật `README.md` + `architecture.md` §10.3 + comment `ci.yml`. PR [#20](https://github.com/anchu3003/shop-lab-microservices/pull/20). |
 | 2026-11-05 | `SL-1.13` → `Done`: `service-template` vào **compose profile** `template` ⇒ `up -d` mặc định chỉ dựng hệ thống thật (không tốn RAM/build cho service mẫu). Verify: `config --services` (không profile) **không** có template · `up -d` không tạo `shoplab-service-template` · `--profile template up -d service-template` → Started, `/ready` 200 · gateway/identity vẫn healthy. Cập nhật `README.md` (bảng port + lệnh) + comment `infra/docker-compose.yml`. |
 | 2026-11-05 | `SL-1.3` → `Done`: `tools/e2e-smoke.sh` — health gateway+identity → register (email random) → login → `/v1/users/me` có token → 200 · thiếu token → **401** · đối chiếu `traceId` trong log identity; `PASS/FAIL` từng bước + exit code. Verify: **7/7 PASS** · exit 0 · chạy lại 3 lần pass · **test âm** (stop identity) → fail đúng bước `1b` + `exit=1`. Thêm mục README "E2E smoke". Sửa 2 bug: `date +%s%3N` ra nanosec → `%s%N`/1e6; curl connection-refused + `set -e` → `\| true`. |
+| 2026-11-05 | `SL-1.4` → `Done`: refresh token (**opaque 256-bit, lưu SHA-256**) + **rotate + reuse detection** (dùng lại token đã rotate ⇒ 401 **và revoke cả chuỗi**), logout, `GET /v1/admin/users` (ADMIN 200 / buyer **403**), security filter chain (identity **tự verify JWT** — defense in depth) + 401/403 trả **ApiError** có `traceId`. Seed `admin@`/`seller@` bằng `LocalDevUserSeeder` (chỉ `APP_ENV=local`). Verify: **46 unit + 22 IT** xanh; E2E **9 mục** trên stack thật (rotate/reuse/logout/RBAC/hash-trong-DB/**qua gateway**); `tools/e2e-smoke.sh` vẫn 7/7. Sửa 3 lỗi thật: `noRollbackFor` (revoke bị rollback), thiếu route `/v1/admin` ở gateway, path lạ 404→**401**. |
+
 
 | 2026-11-02 | Tạo PR [#4](https://github.com/anchu3003/shop-lab-microservices/pull/4) cho `SL-0.4` (nhánh `feat/sl-0.4-service-template`, 5 commit). Merge bằng **squash** theo `docs/git-flow.md`. |
 | 2026-11-03 | `SL-0.5` → `In Progress`: nhánh `feat/sl-0.5-ci-pipeline`. Chốt với user: **giữ remote HTTPS** (token VS Code có scope `workflow`, không cần đổi SSH). |

@@ -9,9 +9,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.shoplab.commons.error.ErrorCode;
-import com.shoplab.identity.auth.jwt.IssuedToken;
 import com.shoplab.identity.auth.jwt.JwtProperties;
 import com.shoplab.identity.auth.jwt.JwtService;
+import com.shoplab.identity.auth.refresh.RefreshTokenService;
 import com.shoplab.identity.testsupport.JwtTestKeys;
 import com.shoplab.identity.user.Role;
 import com.shoplab.identity.user.User;
@@ -56,10 +56,15 @@ class AuthServiceTest {
             new JwtProperties(
                 "https://identity.shoplab.local",
                 Duration.ofMinutes(15),
+                Duration.ofDays(14),
                 keys.privateKeyPath().toString(),
                 keys.publicKeyPath().toString()));
+    RefreshTokenService refreshTokens = mock(RefreshTokenService.class);
+    when(refreshTokens.issue(any()))
+        .thenAnswer(invocation -> new RefreshTokenService.IssuedRefresh("raw-refresh-token", null));
     authService =
-        new AuthService(users, passwordEncoder, jwtService, Clock.fixed(NOW, ZoneOffset.UTC));
+        new AuthService(
+            users, passwordEncoder, jwtService, refreshTokens, Clock.fixed(NOW, ZoneOffset.UTC));
   }
 
   private void existingUser(String email, String rawPassword) {
@@ -109,12 +114,16 @@ class AuthServiceTest {
     User registered = authService.register("an@example.com", "matkhau123", "An");
     when(users.findByEmail("an@example.com")).thenReturn(Optional.of(registered));
 
-    IssuedToken token = authService.login("AN@example.com", "matkhau123");
+    AuthSession session = authService.login("AN@example.com", "matkhau123");
 
-    Jwt jwt = decode(token.value());
+    Jwt jwt = decode(session.accessToken().value());
     assertThat(jwt.getSubject()).isEqualTo(registered.id().toString());
     assertThat(jwt.getClaimAsString(JwtService.ROLE_CLAIM)).isEqualTo("BUYER");
-    assertThat(token.expiresInSeconds()).isEqualTo(Duration.ofMinutes(15).toSeconds());
+    assertThat(session.accessToken().expiresInSeconds())
+        .isEqualTo(Duration.ofMinutes(15).toSeconds());
+    // Refresh token cũng được phát ngay khi login (SL-1.4) — không có nó thì phiên chết sau 15
+    // phút.
+    assertThat(session.refreshToken()).isEqualTo("raw-refresh-token");
   }
 
   /**

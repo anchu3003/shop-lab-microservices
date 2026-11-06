@@ -100,6 +100,16 @@ public class JwtService {
     return keyId;
   }
 
+  /**
+   * Public key để service này <b>tự verify</b> token do chính nó phát hành (SL-1.4: identity vừa là
+   * issuer vừa là resource server — defense in depth, gateway cũng verify).
+   *
+   * <p>Chỉ trả public key; private key không bao giờ rời khỏi {@link #signingKey()}.
+   */
+  public RSAPublicKey publicKey() {
+    return publicKey;
+  }
+
   /** Thời gian sống của access token — controller trả về cho client. */
   public Duration accessTokenTtl() {
     return properties.accessTokenTtl();
