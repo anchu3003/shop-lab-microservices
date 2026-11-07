@@ -24,6 +24,7 @@ INVENTORY="${INVENTORY:-http://localhost:8084}"
 PROMOTION="${PROMOTION:-http://localhost:8086}"
 ORDER="${ORDER:-http://localhost:8087}"
 PAYMENT="${PAYMENT:-http://localhost:8088}"
+CART="${CART:-http://localhost:8083}"
 GATEWAY="${GATEWAY:-http://localhost:8080}"
 OUT="docs/api/openapi.yaml"
 
@@ -48,6 +49,7 @@ fetch inventory "$INVENTORY/v3/api-docs"
 fetch promotion "$PROMOTION/v3/api-docs"
 fetch order "$ORDER/v3/api-docs"
 fetch payment "$PAYMENT/v3/api-docs"
+fetch cart "$CART/v3/api-docs"
 fetch gateway "$GATEWAY/v3/api-docs"
 
 echo "== Merge + validate → $OUT"
@@ -68,6 +70,7 @@ inventory = json.loads((tmp / "inventory.json").read_text(encoding="utf-8"))
 promotion = json.loads((tmp / "promotion.json").read_text(encoding="utf-8"))
 order = json.loads((tmp / "order.json").read_text(encoding="utf-8"))
 payment = json.loads((tmp / "payment.json").read_text(encoding="utf-8"))
+cart = json.loads((tmp / "cart.json").read_text(encoding="utf-8"))
 
 merged = {
     "openapi": "3.0.1",
@@ -75,7 +78,7 @@ merged = {
         "title": "ShopLab API — Phase 1 + Phase 2 (inventory)",
         "version": "v1",
         "description": (
-            "API hiện có: identity (auth/RBAC) + catalog (product/SKU) + inventory (tồn kho) + promotion (voucher) + order (đơn hàng) + payment (thanh toán).\n\n"
+            "API hiện có: identity (auth/RBAC) + catalog (product/SKU) + inventory (tồn kho) + promotion (voucher) + order (đơn hàng) + payment (thanh toán) + cart (giỏ hàng).\n\n"
             "Sinh tự động bằng `bash tools/export-openapi.sh` — KHÔNG sửa file này bằng tay.\n\n"
             "Mọi lỗi dùng schema `ApiError` (có `traceId` để grep log): "
             "401 = chưa xác thực · 403 = thiếu quyền · 503 = dependency chết (retry được)."
@@ -92,7 +95,7 @@ merged = {
     "components": {"schemas": {}, "securitySchemes": {}},
 }
 
-for spec in (identity, catalog, inventory, promotion, order, payment):
+for spec in (identity, catalog, inventory, promotion, order, payment, cart):
     merged["paths"].update(spec.get("paths", {}))
     components = spec.get("components", {})
     for name, schema in components.get("schemas", {}).items():

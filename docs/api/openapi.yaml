@@ -3,7 +3,7 @@ info:
   title: ShopLab API — Phase 1 + Phase 2 (inventory)
   version: v1
   description: 'API hiện có: identity (auth/RBAC) + catalog (product/SKU) + inventory (tồn kho) + promotion
-    (voucher) + order (đơn hàng) + payment (thanh toán).
+    (voucher) + order (đơn hàng) + payment (thanh toán) + cart (giỏ hàng).
 
 
     Sinh tự động bằng `bash tools/export-openapi.sh` — KHÔNG sửa file này bằng tay.
@@ -443,6 +443,322 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+  /v1/carts:
+    delete:
+      tags:
+      - Cart
+      summary: Xoá toàn bộ giỏ
+      operationId: clear
+      parameters:
+      - name: X-Cart-Token
+        in: header
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/CartResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+    get:
+      tags:
+      - Cart
+      summary: Xem giỏ hiện tại
+      operationId: get
+      parameters:
+      - name: X-Cart-Token
+        in: header
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/CartResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+  /v1/carts/guest:
+    post:
+      tags:
+      - Cart
+      summary: Cấp guest cart token (khách chưa đăng nhập)
+      operationId: guest
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/GuestCartResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /v1/carts/items/{skuId}:
+    delete:
+      tags:
+      - Cart
+      summary: Xoá một dòng khỏi giỏ
+      operationId: removeItem
+      parameters:
+      - name: skuId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Cart-Token
+        in: header
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/CartResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+    put:
+      tags:
+      - Cart
+      summary: Đặt số lượng cho một dòng (idempotent)
+      operationId: setItem
+      parameters:
+      - name: skuId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Cart-Token
+        in: header
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetItemRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/CartResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+  /v1/carts/merge:
+    post:
+      tags:
+      - Cart
+      summary: Merge giỏ guest vào giỏ user (gọi sau khi login)
+      description: Cộng dồn qty theo SKU, cap ở maxQty; xoá giỏ guest sau khi merge nên gọi lại không
+        cộng lần nữa.
+      operationId: merge
+      parameters:
+      - name: X-Cart-Token
+        in: header
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/CartResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
   /v1/categories:
     get:
       tags:
@@ -2027,6 +2343,21 @@ components:
         expiresIn:
           type: integer
           format: int64
+    CartResponse:
+      type: object
+      properties:
+        owner:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineItem'
+        totalQty:
+          type: integer
+          format: int32
+        ttlSeconds:
+          type: integer
+          format: int64
     CategoryResponse:
       type: object
       properties:
@@ -2181,6 +2512,14 @@ components:
           type: string
         message:
           type: string
+    GuestCartResponse:
+      type: object
+      properties:
+        cartToken:
+          type: string
+        expiresInSeconds:
+          type: integer
+          format: int64
     Item:
       type: object
       properties:
@@ -2221,6 +2560,18 @@ components:
       - skuId
       - title
       - unitPrice
+    LineItem:
+      type: object
+      properties:
+        skuId:
+          type: string
+          format: uuid
+        qty:
+          type: integer
+          format: int32
+        addedAt:
+          type: string
+          format: date-time
     LockVoucherRequest:
       type: object
       properties:
@@ -2504,6 +2855,14 @@ components:
       required:
       - items
       - orderId
+    SetItemRequest:
+      type: object
+      properties:
+        qty:
+          type: integer
+          format: int32
+      required:
+      - qty
     SetStockRequest:
       type: object
       properties:

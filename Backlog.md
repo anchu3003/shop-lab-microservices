@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.7` ✅ **Done** — payment service đã lên `main`) |
-| **Ticket tiếp theo** | `SL-2.1` — `cart-service` (Redis) — **cần xong trước** `SL-2.6` · `SL-2.6` — **Checkout Saga** |
-| **Số ticket chi tiết hiện có** | 30 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 7) |
+| **Ticket đang làm** | — (`SL-2.1` ✅ **Done** — cart service đã lên `main`) |
+| **Ticket tiếp theo** | `SL-2.6` — **Checkout Saga** (orchestration + compensating, `L` → tách 2) · `SL-2.8` — E2E checkout |
+| **Số ticket chi tiết hiện có** | 31 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 8) |
 
 ---
 
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 7 / 13 |
+| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 8 / 13 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -205,7 +205,7 @@ $ md5sum docs/api/openapi.yaml
 | # | Ticket | Nội dung | Ước lượng | Trạng thái |
 |---|---|---|---|---|
 | 1 | `SL-2.0` | **ADR-0006** chốt mô hình checkout (reservation TTL · idempotency key · snapshot vs FK · sync Phase 2 / async Phase 3 · quyết định `TD-12` soft delete) | S | ✅ Done |
-| 2 | `SL-2.1` | `cart-service` (8083, Redis): add/update/remove/get, TTL, **merge cart khi login** | M | Todo |
+| 2 | `SL-2.1` | `cart-service` (8083, Redis): add/update/remove/get, TTL, **merge cart khi login** | M | ✅ Done |
 | 3 | `SL-2.2` | `inventory-service` (8084, DB `inventory`): schema `stock`/`reservations`/`stock_ledger` + API `reserve`/`commit`/`release`; **atomic** chống oversell | M | ✅ Done |
 | 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M | ✅ Done |
 | 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | ✅ Done |
@@ -1236,6 +1236,149 @@ $ bash tools/export-openapi.sh   VALIDATE PASS · 32 path · 39 operation · 37 
   phát hiện bằng test chức năng.
 - **`.env` phải bổ sung biến REQUIRED của compose** (`${VAR:?}`) trước khi `up` — nếu không compose dừng cả stack vì một
   service mới, dễ hiểu nhầm là lỗi image.
+### SL-2.1 — `cart-service`: giỏ hàng trên Redis + TTL + merge khi login
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 2 — Core commerce flow |
+| **Phụ thuộc** | Chốt ở `SL-2.0` ([ADR-0006](docs/adr/0006-checkout-model.md) D4 `cart (read)` là bước 1 của saga); **chặn** `SL-2.6` (saga đọc giỏ) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Giỏ hàng là thứ **duy nhất trong hệ thống chấp nhận mất dữ liệu**: mất giỏ = khách bỏ hàng vào lại, không ai mất tiền, không sai sổ
+sách. Nhờ vậy nó là chỗ đúng để dùng **Redis TTL 30 ngày** thay Postgres (`architecture.md` §8.3/§8.5).
+
+Hai đặc thù mới so với 6 service trước:
+
+1. **Khách chưa đăng nhập vẫn có giỏ** ⇒ identity không chỉ đến từ JWT (guest token).
+2. **Một dòng giỏ là read-modify-write** (cộng/đặt số lượng) ⇒ phải nguyên tử, nếu không hai request cùng SKU sẽ mất update.
+
+**Mục tiêu**
+
+Service thứ 8 (`8083`, **không có Postgres**): guest tạo giỏ, thêm/sửa/xoá dòng, xem giỏ, TTL 30 ngày tự làm mới khi có ghi, và
+**merge giỏ guest vào giỏ user khi login**.
+
+**In scope**
+
+- Service mới (pom `spring-boot-starter-data-redis` · Dockerfile · yml · security · health · logback), **không** datasource/Flyway.
+- Redis HASH `cart:<owner>` (owner = `u:<userId>` hoặc `g:<guestToken>`), field = `skuId`, value = `{qty, addedAt}`, TTL 30 ngày.
+- API: `POST /v1/carts/guest` · `GET /v1/carts` · `PUT /v1/carts/items/{skuId}` (set qty, idempotent) ·
+  `DELETE /v1/carts/items/{skuId}` · `DELETE /v1/carts` · `POST /v1/carts/merge`.
+- **Lua script** cho mọi phép ghi (đặt số lượng, xoá, merge) — atomic + giữ bất biến `1..999` ngay trong Redis.
+- Hạ tầng: compose (depends redis) · `.env.example` · gateway route `/v1/carts` + **public-path** · CI matrix ·
+  Dockerfile 8 service · `tools/export-openapi.sh`.
+
+**Out of scope**
+
+- **Không** snapshot giá/title, **không** gọi `catalog`: quyết định A — giá hiển thị lấy từ product page, còn tiền thật do
+  `order-service` tính lại từ payload lúc checkout (`SL-2.5`). Hệ quả ghi `TD-20`.
+- Không kiểm tồn kho ở giỏ (inventory `reserve` quyết lúc checkout), không coupon/voucher trong giỏ (saga `SL-2.6`).
+- Không merge user→user, không gộp giỏ khách vãng lai nhiều thiết bị, không gọi service nào (Phase 2 chỉ 1 chiều).
+
+**Acceptance Criteria**
+
+- [x] `POST /v1/carts/guest` (public) → **201** `{cartToken, expiresAt}`; token là UUID do **server** cấp.
+- [x] Chưa login, có `X-Cart-Token`: thêm / sửa / xoá / xem giỏ đều **200**; token sai/không tồn tại → **401**.
+- [x] Có JWT: giỏ của user (không cần `X-Cart-Token`); không JWT + không token → **401**.
+- [x] `PUT /v1/carts/items/{skuId}` **idempotent** (gọi 2 lần cùng qty ⇒ cùng kết quả); `qty` ngoài `1..999` → **422**.
+- [x] Giỏ quá **50 dòng** → **422** (chặn memory abuse ở endpoint public).
+- [x] **20 request song song `POST /v1/carts/merge` cùng guest token ⇒ giỏ user cộng đúng 1 lần** (không nhân 20) —
+      chứng minh Lua cộng dồn + `DEL` giỏ guest là một bước nguyên tử.
+- [x] **20 request song song `PUT` khác qty cùng SKU ⇒ giá trị cuối là một trong các giá trị đã gửi** và dữ liệu
+      không hỏng (JSON đọc lại được) — không có ghi xen kẽ.
+- [x] TTL luôn > 0 sau mỗi lần ghi (Redis `TTL` kiểm thật).
+- [x] `POST /v1/carts/merge` (JWT + `X-Cart-Token`): cộng dồn qty theo SKU, **cap 999**, xoá giỏ guest; merge lần 2 → giỏ
+      guest trống nên **không cộng lần nữa** (idempotent theo dữ liệu).
+- [x] `DELETE /v1/carts` xoá cả giỏ; `GET` sau đó trả giỏ rỗng (không 404 — giỏ rỗng là trạng thái hợp lệ).
+- [x] Unit + IT xanh; `e2e-smoke` 17/17; OpenAPI export pass.
+
+**Ghi chú kỹ thuật**
+
+- **Vì sao Lua, không phải GET-then-SET**: value của field là JSON (`qty` + `addedAt`) nên `HINCRBY` không dùng được. Đọc ở
+  Java rồi ghi lại = hai lệnh rời ⇒ hai request song song đọc cùng giá trị cũ và cái sau ghi đè cái trước (**lost update**).
+  Lua chạy trong Redis nên cả read+write là một bước.
+- **Guest token do server cấp**: nếu để client tự sinh, bất kỳ ai đoán/giữ token cũ đều đọc được giỏ người khác và không có
+  cách thu hồi. Token server cấp còn cho phép đặt TTL + rate limit sau này.
+- **`/v1/carts/**` là public ở gateway** (guest không có JWT) ⇒ authorization nằm ở cart-service: có JWT thì dùng giỏ user,
+  không có thì **bắt buộc** token hợp lệ. Cùng pattern defense-in-depth với public GET của catalog.
+- **Bất biến `1..999` kiểm trong Lua**, không kiểm ở Java rồi ghi — kiểm ngoài là TOCTOU (đã đúng lúc đọc, sai lúc ghi).
+- Không có Postgres ⇒ **không** datasource, **không** Flyway; readiness check TCP tới Redis.
+
+**Kết quả verify** *(chạy thật: Docker + Redis 7)*
+
+**1) `mvn -B -ntp verify` toàn repo — BUILD SUCCESS (03:12)**
+
+```text
+[INFO] ShopLab :: Order Service ........................... SUCCESS [ 17.933 s]
+[INFO] ShopLab :: Payment Service ......................... SUCCESS [ 18.654 s]
+[INFO] ShopLab :: Cart Service ............................ SUCCESS [ 16.218 s]
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [  8.756 s]
+[INFO] BUILD SUCCESS   Total time: 03:12 min
+```
+
+`cart` unit **34** (`CartServiceTest` 8 · `OwnerResolverTest` 4 · config/health 22) · IT **6** (Redis Testcontainers,
+gồm 2 test đồng thời) · jacoco `config/*`+`health/*` **80.8 %** (gate 80 %).
+
+**2) Luồng thật qua gateway** (`bash /tmp/verify-cart.sh`)
+
+```text
+ 1) cấp guest token (public)        HTTP 201 · expiresIn=2592000s (30 ngày)
+ 2) xem giỏ guest                   HTTP 200 · owner=g:2199951b-… · items=0 · ttl=0
+ 3) thêm SKU A qty=2                HTTP 200 · totalQty=2 · ttl=2592000s (TTL làm mới khi ghi)
+ 4) PUT lại cùng qty (idempotent)   HTTP 200 · totalQty=2 (KHÔNG nhân đôi)
+ 5) qty=0 → 422 · qty=1000 → 422
+ 6) thêm SKU B qty=3                totalQty=5
+ 7) không token → 401 · token bịa → 401
+ 8) giỏ user (JWT)                  owner=u:04bbc511-… · qty SKU A trước merge = 1
+ 9) merge                           HTTP 200 · qty SKU A = 3  (1 + 2, cộng dồn)
+10) guest token sau merge           HTTP 401 (bị thu hồi)
+11) merge lần 2                     HTTP 401 ⇒ không cộng lần nữa
+12) **10 merge SONG SONG cùng token** {200: 2, 401: 8} ⇒ qty SKU C = **5**, không phải 50
+13) xoá 1 dòng → 200 · 14) xoá cả giỏ → 200 · totalQty=0 (giỏ rỗng là hợp lệ)
+```
+
+**3) Kiểm trực tiếp Redis**
+
+```text
+$ TYPE cart:g:8cecc7a2-…   → hash
+$ HLEN cart:g:8cecc7a2-…   → 1
+$ TTL  cart:g:8cecc7a2-…   → 2592000   (= 30 ngày)
+$ TTL  cart:guest:8cecc7a2-… → 2592000  (marker token do server cấp)
+$ HGETALL cart:g:8cecc7a2-… → {"addedAt":"2026-11-07T15:01:47.224819732Z","qty":4}
+$ curl /ready → {"status":"UP","dependencies":[{"name":"redis","status":"UP","latency":"PT0.0048S"}]}
+```
+
+**4) Regression + contract**
+
+```text
+$ bash tools/e2e-smoke.sh        17 PASS / 0 FAIL · 13 request · 744 ms
+$ bash tools/export-openapi.sh   VALIDATE PASS · 36 path · 45 operation · 41 schema  (trước: 32/39/37)
+```
+
+**Sự cố trong lúc verify (2 lỗi thật)**
+
+- **Bẫy copy-service lần 3**: `services/cart-service/Dockerfile` copy từ payment rồi `sed payment-service → cart-service`
+  ⇒ **mất** dòng `COPY services/payment-service/pom.xml` ⇒ `docker build` sẽ chết với "Child module does not exist". Phát
+  hiện bằng cách grep danh sách `COPY services` thay vì tin vào sed.
+- **OpenAPI trùng schema `Line` lần 2**: cart có `CartResponse.Line`, order (từ `SL-2.5`) đã chiếm tên `Line` ⇒ script merge
+  từ chối export. Đổi thành `LineItem`. Bài học: **đặt tên DTO lồng theo domain**, đừng đặt tên chung chung.
+
+**Learning note**
+
+- **Khi value là JSON thì `HINCRBY` vô dụng — phải Lua**: đọc ở Java rồi ghi lại là *lost update* thật (khách bấm "+" 2 lần
+  nhanh sẽ mất 1 lần). Lua chạy trong Redis nên read-modify-write là một bước; bất biến (`qty 1..999`, `maxLines`) cũng
+  phải kiểm **trong script** — kiểm ở Java là TOCTOU (đúng lúc đọc, sai lúc ghi).
+- **Guest token phải do server cấp + có marker**: nếu client tự sinh, ai giữ token cũ vẫn đọc được giỏ người khác và không
+  có cách thu hồi. Marker `cart:guest:<token>` là thứ duy nhất phân biệt "token thật" với "token bịa" mà không cần bảng DB.
+- **Merge phải nguyên tử cả hai vế** (cộng dồn **và** xoá giỏ guest): tách 2 bước thì 10 request song song cộng 10 lần.
+  Verify thật cho đúng kết quả đó: `{200: 2, 401: 8}` ⇒ qty 5 (không phải 50).
+- **Public path ở gateway ⇒ authorization chuyển vào service**: gateway chỉ biết public theo *path*, mà `/v1/carts/**` vừa
+  có guest vừa có user ⇒ cart phải tự phân xử (JWT thắng, không JWT thì bắt buộc token hợp lệ). Đánh đổi đã ghi: gateway
+  không còn là chốt 401 cho prefix này.
+- **Service không có Postgres là chuyện bình thường nếu dữ liệu chịu mất**: cart bỏ Flyway/datasource, readiness chỉ check
+  Redis. Ngược lại, không có DB nghĩa là **không có ràng buộc DB canh bất biến** ⇒ phải dồn hết vào Lua và test đồng thời.
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
 
@@ -1435,6 +1578,11 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | SL-2.7 | **Mock phải đi qua đúng đường thật**: mock tự set `SUCCEEDED` thì test xanh mà production gãy ở chỗ khó thấy nhất (chữ ký, dedupe, compare-and-set). Cho mock đi qua webhook ⇒ một lần verify chứng minh cả ba. |
 | 2026-11-07 | SL-2.7 | **Cờ "chỉ local" + secret bắt buộc phải fail-closed lúc boot**: mock provider cho không hàng, secret rỗng cho ai cũng ký — cả hai là lỗi mà test chức năng không bao giờ phát hiện. |
 | 2026-11-07 | SL-2.7 | **`Types.TIMESTAMP_WITH_TIMEZONE` + `java.sql.Timestamp` bị PSQLException**: chỉ IT với Postgres thật bắt được (unit test mock repo thì không). Lỗi kiểu này là lý do IT bắt buộc cho mọi service có I/O. |
+| 2026-11-07 | SL-2.1 | **Value là JSON thì `HINCRBY` vô dụng — phải Lua**: đọc ở Java rồi ghi lại là lost update thật; bất biến (`qty 1..999`, `maxLines`) cũng phải kiểm **trong script** (kiểm ngoài = TOCTOU). |
+| 2026-11-07 | SL-2.1 | **Guest token phải do server cấp + có marker key**: client tự sinh token thì ai giữ token cũ vẫn đọc được giỏ người khác và không thu hồi được; marker `cart:guest:<token>` thay cho một bảng DB. |
+| 2026-11-07 | SL-2.1 | **Merge phải nguyên tử cả cộng-dồn và xoá-giỏ-guest**: tách 2 bước thì N request song song cộng N lần. Verify thật: 10 merge song song → `{200: 2, 401: 8}`, qty = 5 (không phải 50). |
+| 2026-11-07 | SL-2.1 | **Public path ở gateway ⇒ authorization chuyển vào service**: gateway chỉ public theo path, mà `/v1/carts/**` vừa guest vừa user ⇒ service tự phân xử (JWT thắng, không JWT thì bắt buộc token hợp lệ). |
+| 2026-11-07 | SL-2.1 | **Service không Postgres là hợp lý khi dữ liệu chịu mất** — nhưng cũng mất luôn ràng buộc DB canh bất biến ⇒ dồn hết vào Lua + test đồng thời. |
 
 ---
 
@@ -1465,6 +1613,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-17` | Webhook `payment.succeeded` **không** cập nhật order (Phase 2 chưa có broker) ⇒ nếu saga không chạy, tiền đã thu mà đơn vẫn `PENDING_PAYMENT`; chưa có `refund`/`transactions` để hoàn tiền ca này | SL-2.7 | Khi làm `SL-2.6`/`SL-2.9` (test compensating thấy ca này) **hoặc** khi Phase 3 có event `payment.succeeded` | cao |
 | `TD-18` | Webhook dùng **một** HMAC secret tĩnh, không key id/rotation; không lưu raw body (chỉ sha256) nên điều tra tranh chấp phải xin lại provider | SL-2.7 | Khi nối provider thật (Stripe/VNPay) — họ có key id + rotation riêng | thấp |
 | `TD-19` | Idempotency store (`idempotency_keys` + `IdempotencyService`) **copy lần 2** (order, payment) chưa có module chung ở `packages/` | SL-2.7 | Khi có service thứ 3 cần idempotency (dự kiến không có ở Phase 2 ⇒ quyết ở `SL-2.12` hoặc Phase 3) | thấp |
+| `TD-20` | Cart **không** lưu `price_snapshot` và không gọi catalog (quyết định `SL-2.1`) ⇒ hiển thị giá trong giỏ phải gọi catalog riêng; giỏ không phát hiện được SKU đã archive/đổi giá | SL-2.1 | Khi catalog có `GET /v1/skus?ids=` (batch) **hoặc** khi UI cần hiển thị giá trong giỏ ở `SL-2.8` | trung bình |
+| `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
 
 ## 8. Changelog
 
@@ -1538,3 +1688,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | `SL-2.4` → `Done`: thêm **`promotion-service`** (8086, DB `promotion`) — voucher `PERCENT` (cap `max_discount`) + `FIXED`, `lock`/`commit`/`release` cùng pattern conditional `UPDATE` của inventory; `voucher_locks` 1 row/order + snapshot `discount`/`subtotal`; bất biến `used + locked <= quota` do CHECK canh; sweeper TTL (`SKIP LOCKED`) trả lượt bị bỏ quên. Hạ tầng: compose + gateway route `/v1/vouchers` + CI matrix + Dockerfile 6 service. Verify: `mvn verify` **BUILD SUCCESS** (promotion 48 unit + 13 IT) · container healthy · flow thật: lock 201 → retry 200 cùng id → commit (used=1) → release sau commit 409 → quá TTL 410 + trả lượt → sweeper tự trả trong ~1,5 s · **100 request song song: 10×201 / 90×409**, `used+locked<=quota` OK · `e2e-smoke` 17/17 · OpenAPI 23 path. |
 | 2026-11-07 | `SL-2.5` → `Done`: thêm **`order-service`** (8087, DB `order`) — tạo đơn **idempotent** (`Idempotency-Key`: 201 · 200 replay + header · 422 key dùng lại · 409 đang chạy · 400 thiếu header), `order_items` **snapshot** giá/tên, state machine `PENDING_PAYMENT → CONFIRMED|CANCELLED|EXPIRED` + history, bất biến tiền bằng CHECK ở DB; job dọn `idempotency_keys` (**trả `TD-14`**); `commons` thêm `422`. Verify: `mvn verify` **BUILD SUCCESS** (order 43 unit + 10 IT, toàn repo xanh) · flow thật: 201 → retry 200 cùng id → 422 → 400 · confirm 200 · confirm#2 không ghi history · cancel sau confirm 409 · cancel/expire 200 + reason · **20 request song song cùng key ⇒ 1 đơn** · job dọn xoá row 48h trong 3 s · `e2e-smoke` 17/17 · OpenAPI 28 path. **Sự cố thật**: deadlock pool do `REQUIRES_NEW` lồng transaction (đã fix bằng `OrderWriter`). |
 | 2026-11-07 | `SL-2.7` → `Done`: thêm **`payment-service`** (8088, DB `payment`) — payment intent **idempotent** (`Idempotency-Key`: 201/200 replay/422/409/400, mỗi đơn 1 intent sống), **mock provider** (fail-closed ngoài local), webhook **idempotent** theo khoá tự nhiên (`provider_event_id` PK + `provider_txn_id` UNIQUE) + **HMAC-SHA256 trên raw body** & timestamp window (chống replay), bất biến tiền bằng CHECK (`amount > 0`, `SUCCEEDED ⇔ paid_at`); gateway public-path `/v1/webhooks/**` + `/mock-provider/**`. Verify: `mvn verify` **BUILD SUCCESS** (payment 59 unit + 12 IT, toàn repo xanh, jacoco 88.6 %) · flow thật: 201 → retry 200 cùng id → 422 → 400 → 409 khác tiền · mock-pay → SUCCEEDED · **webhook gửi lại 5 lần + 20 request song song ⇒ 1 event row** · chữ ký sai/timestamp cũ 401 · sai tiền 409 không đổi trạng thái · `?fail=true` → FAILED · `e2e-smoke` 17/17 · OpenAPI 32 path/39 operation. **Sự cố**: `Types.TIMESTAMP_WITH_TIMEZONE` + `Timestamp` ⇒ 500 (chỉ IT bắt được); checkstyle `MethodLength` + jacoco gate ⇒ tách method + viết test cho phần fail-closed. Debt mới: `TD-17`…`TD-19`. |
+| 2026-11-07 | `SL-2.1` → `Done`: thêm **`cart-service`** (8083) — service **đầu tiên không có Postgres**: Redis HASH `cart:<owner>` (owner = `u:<userId>` | `g:<guestToken>`), TTL **30 ngày** refresh mỗi lần ghi; mọi phép ghi chạy **Lua** (read-modify-write nguyên tử + bất biến `qty 1..999`/`maxLines` trong script); **guest cart** với token do **server** cấp (marker `cart:guest:<token>`); **merge khi login** cộng dồn + cap + xoá giỏ guest trong cùng script; gateway để `/v1/carts/**` public và cart tự phân xử danh tính. Verify: `mvn verify` **BUILD SUCCESS** (cart 34 unit + 6 IT, toàn repo xanh, jacoco 80.8 %) · flow thật: guest 201 → PUT idempotent → 422 biên → 401 không token/token bịa → merge cộng dồn 1+2=3 → token bị thu hồi → **10 merge song song ⇒ qty 5** · Redis: type=hash, TTL 2592000s · `e2e-smoke` 17/17 · OpenAPI 36 path/45 operation. **Sự cố**: Dockerfile mất `COPY payment pom` (bẫy copy-service lần 3); OpenAPI trùng schema `Line` ⇒ đổi `LineItem`. Debt mới: `TD-20`, `TD-21`. |

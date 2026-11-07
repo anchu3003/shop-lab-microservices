@@ -1,0 +1,68 @@
+# ==============================================================================
+# application.yml — cấu hình cart-service (SL-2.1)
+#
+# Service DUY NHẤT không có Postgres: state nằm ở Redis (TTL 30 ngày, chấp nhận mất — architecture §8.5).
+# Vì vậy file này KHÔNG có `spring.datasource` và KHÔNG có Flyway; thêm vào là Spring Boot cố tạo
+# DataSource và service chết lúc boot (không có driver).
+# ==============================================================================
+
+spring:
+  application:
+    name: cart-service
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Compose bật `requirepass` ⇒ password là bắt buộc (validate ở RequiredEnv).
+      password: ${REDIS_PASSWORD:}
+      # Timeout ngắn: cart là đường nóng của checkout (ADR-0006 D4 cho phép ~100 ms cho bước đọc cart).
+      # Redis treo mà timeout dài thì request xếp hàng chờ thay vì fail nhanh.
+      timeout: ${REDIS_TIMEOUT:500ms}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:500ms}
+
+server:
+  port: ${SERVER_PORT:8083}
+  shutdown: graceful
+
+shoplab:
+  env: ${APP_ENV:local}
+  debug-endpoints: ${SHOPLAB_DEBUG_ENDPOINTS:false}
+  git-commit: ${SHOPLAB_GIT_COMMIT:unknown}
+
+  jwt:
+    # cart là RESOURCE SERVER: chỉ tải public key qua JWKS của identity.
+    jwks-uri: ${IDENTITY_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+    # PHẢI khớp `IDENTITY_JWT_ISSUER` của identity-service, nếu không mọi token đều bị 401.
+    issuer: ${IDENTITY_JWT_ISSUER:https://identity.shoplab.local}
+
+  readiness:
+    dependencies:
+      # Không có Postgres ⇒ chỉ check Redis.
+      - name: redis
+        host: ${REDIS_HOST:localhost}
+        port: ${REDIS_PORT:6379}
+        timeout: 500ms
+
+  cart:
+    # TTL 30 ngày (architecture §8.3/§8.5): làm mới mỗi lần ghi, nên giỏ "đang dùng" không bao giờ hết hạn.
+    ttl: ${CART_TTL:30d}
+    # Chặn memory abuse ở endpoint public: 50 dòng/giỏ là thừa cho người dùng thật.
+    max-lines: ${CART_MAX_LINES:50}
+    # Cận trên số lượng một dòng (khớp bất biến kiểm trong Lua).
+    max-qty: ${CART_MAX_QTY:999}
+    # Tiền tố key Redis — tách namespace để sau này dùng chung Redis mà không đụng cache của service khác.
+    key-prefix: ${CART_KEY_PREFIX:cart}
+
+logging:
+  level:
+    root: INFO
+    com.shoplab: ${LOG_LEVEL:INFO}
+
+# --- OpenAPI (SL-1.8) ---
+springdoc:
+  api-docs:
+    enabled: ${SHOPLAB_OPENAPI_ENABLED:true}
+    path: /v3/api-docs
