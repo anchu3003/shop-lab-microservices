@@ -292,6 +292,53 @@ services:
       - shoplab-net
 
   # ---------------------------------------------------------------------------
+  # inventory-service — tồn kho (SL-2.2): reserve / commit / release.
+  #
+  # Chống oversell bằng conditional UPDATE trên Postgres (ADR-0006 D1) ⇒ không gọi service nào
+  # khác khi xử lý request (không có phụ thuộc sync ra ngoài), chỉ cần DB + JWKS của identity.
+  # ---------------------------------------------------------------------------
+  inventory-service:
+    build:
+      context: ..
+      dockerfile: services/inventory-service/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-inventory-service:local
+    container_name: shoplab-inventory-service
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${INVENTORY_SERVICE_PORT:-8084}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SHOPLAB_DEBUG_ENDPOINTS: ${SHOPLAB_DEBUG_ENDPOINTS:-true}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB_INVENTORY: ${POSTGRES_DB_INVENTORY:-inventory}
+      POSTGRES_USER: ${POSTGRES_USER:-shoplab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      # JWKS qua network nội bộ (không qua gateway — tránh phụ thuộc vòng).
+      IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
+      IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      # Tham số nghiệp vụ (ADR-0006 D1: TTL 15 phút, 1 kho ở Phase 2).
+      INVENTORY_WAREHOUSE_ID: ${INVENTORY_WAREHOUSE_ID:-WH-1}
+      INVENTORY_RESERVATION_TTL: ${INVENTORY_RESERVATION_TTL:-15m}
+    ports:
+      - "${INVENTORY_SERVICE_PORT:-8084}:${INVENTORY_SERVICE_PORT:-8084}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${SERVER_PORT}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    networks:
+      - shoplab-net
+
+  # ---------------------------------------------------------------------------
   # api-gateway — cửa vào duy nhất (SL-1.2): route /v1/** + verify JWT qua JWKS của identity.
   #
   # Không có DB: gateway không sở hữu dữ liệu nào (architecture.md §5) → readiness check TCP
@@ -323,6 +370,7 @@ services:
       # SL-1.5: route /v1/products + /v1/categories đi tới catalog. Trong container KHÔNG dùng
       # localhost (localhost là chính gateway).
       CATALOG_SERVICE_URL: ${CATALOG_SERVICE_URL:-http://catalog-service:8082}
+      INVENTORY_SERVICE_URL: ${INVENTORY_SERVICE_URL:-http://inventory-service:8084}
       GATEWAY_CONNECT_TIMEOUT: ${GATEWAY_CONNECT_TIMEOUT:-2s}
       GATEWAY_READ_TIMEOUT: ${GATEWAY_READ_TIMEOUT:-5s}
     ports:

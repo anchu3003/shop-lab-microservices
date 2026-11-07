@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.11` ✅ **Done** — soft delete product đã lên `main`) |
-| **Ticket tiếp theo** | `SL-2.2` — `inventory-service` (reserve/commit/release, chống oversell) · `SL-2.1` — `cart-service` (Redis) |
-| **Số ticket chi tiết hiện có** | 25 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 2) |
+| **Ticket đang làm** | — (`SL-2.2` ✅ **Done** — inventory service đã lên `main`) |
+| **Ticket tiếp theo** | `SL-2.3` — inventory: test đồng thời 100 request + sweeper TTL · `SL-2.1` — `cart-service` (Redis) |
+| **Số ticket chi tiết hiện có** | 26 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 3) |
 
 ---
 
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 2 / 12 |
+| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 3 / 13 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -206,7 +206,7 @@ $ md5sum docs/api/openapi.yaml
 |---|---|---|---|---|
 | 1 | `SL-2.0` | **ADR-0006** chốt mô hình checkout (reservation TTL · idempotency key · snapshot vs FK · sync Phase 2 / async Phase 3 · quyết định `TD-12` soft delete) | S | ✅ Done |
 | 2 | `SL-2.1` | `cart-service` (8083, Redis): add/update/remove/get, TTL, **merge cart khi login** | M | Todo |
-| 3 | `SL-2.2` | `inventory-service` (8084, DB `inventory`): schema `stock`/`reservations`/`stock_ledger` + API `reserve`/`commit`/`release`; **atomic** chống oversell | M | Todo |
+| 3 | `SL-2.2` | `inventory-service` (8084, DB `inventory`): schema `stock`/`reservations`/`stock_ledger` + API `reserve`/`commit`/`release`; **atomic** chống oversell | M | ✅ Done |
 | 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M | Todo |
 | 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | Todo |
 | 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M | Todo |
@@ -216,6 +216,7 @@ $ md5sum docs/api/openapi.yaml
 | 10 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M | Todo |
 | 11 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S | Todo |
 | 12 | `SL-2.11` | *(phát sinh từ `SL-2.0`)* `catalog-service`: **soft delete** product — `status = ARCHIVED` + `deleted_at`, `DELETE` không xoá row, list/get ẩn product đã xoá, `reserve` từ chối SKU archived | S | ✅ Done |
+| 13 | `SL-2.12` | *(phát sinh từ `SL-2.2`)* `service-commons`: chuyển `AccessDeniedApiExceptionHandler` (403 cho `@PreAuthorize`) vào commons — xoá 2 bản copy ở catalog/inventory (**trả `TD-3`**) | S | Todo |
 
 **Phụ thuộc & thứ tự** (cập nhật sau `SL-2.0`): `SL-2.0` ✅ chốt mô hình → **`SL-2.11`** (soft delete — `catalog` phải
 xong trước để inventory biết "SKU archived" nghĩa là gì) → `SL-2.2` + `SL-2.3` (inventory — chỗ dễ oversell nhất,
@@ -507,6 +508,159 @@ $ md5sum (export lần 1 vs lần 2) → giống nhau ⇒ export vẫn determini
   product đã xoá vẫn **còn trong DB** (để hiểu vì sao restore cần ticket riêng — `TD-16`).
 
 
+### SL-2.2 — `inventory-service`: reserve / commit / release (atomic chống oversell)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 2 — Core commerce flow |
+| **Phụ thuộc** | `SL-2.0` (ADR-0006 D1) · `SL-2.11` (`sku_id` còn sống sau khi xoá product); **chặn** `SL-2.3`, `SL-2.6` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Đây là chỗ dễ **oversell** nhất của hệ: nhiều buyer cùng mua 1 SKU trong cùng một giây. `architecture.md` §6.1 phác
+`reserve → commit`, ADR-0006 D1 chốt cơ chế: **conditional `UPDATE`** trên Postgres (không Redis lock), reservation có
+**TTL 15′**, ledger append-only. Chưa có service này thì `order-service` (SL-2.5/2.6) không có gì để gọi.
+
+**Mục tiêu**
+
+Service thứ tư chạy được end-to-end: giữ chỗ tồn kho **nguyên tử** (không bao giờ bán quá `on_hand`), commit khi tiền
+về, release khi huỷ/hết hạn, và **mọi thay đổi đều có dấu vết** trong `stock_ledger`.
+
+**In scope**
+
+- Service mới `services/inventory-service` (port **8084**, DB **`inventory`**): pom + Dockerfile + application.yml +
+  security (JWT resource server) + health/readiness + logback.
+- Migration `V1__create_inventory.sql`: `stock` · `reservations` · `reservation_items` · `stock_ledger` + index/constraint.
+- API: `PUT /v1/stock/{skuId}` (admin, set `on_hand`) · `GET /v1/stock/{skuId}` (auth) ·
+  `POST /v1/stock/reserve|commit|release`.
+- Atomic reserve nhiều SKU **all-or-nothing** (sort `sku_id`, 1 transaction) · idempotent theo `orderId` ·
+  commit idempotent · release idempotent · commit khi hết hạn → **410** + release.
+- Hạ tầng: compose + `.env.example` + gateway route `/v1/stock` + CI matrix + Dockerfile của 4 service cũ (mỗi cái
+  thêm 1 dòng `COPY pom.xml` — bẫy module mới) + OpenAPI re-export.
+- `service-commons`: thêm `GONE(410)` cho `RESERVATION_EXPIRED` (ADR ghi 410; commons chưa có mã này).
+
+**Out of scope**
+
+- **Sweeper** `@Scheduled` giải phóng reservation bị bỏ quên + **test 100 request đồng thời** → `SL-2.3`.
+- Không multi-warehouse thật (`warehouse_id = 'WH-1'`), không Redis lock, không gRPC.
+- Không seed dữ liệu dev (tạo tồn kho qua `PUT`, tránh phụ thuộc id seed của catalog).
+- **Không** trả `TD-3` (handler 403 → commons) — theo rule nợ kỹ thuật, đó là ticket riêng; ở đây copy handler như
+  catalog đã làm và ghi nhận `TD-3` đã đạt điều kiện revisit.
+
+**Acceptance Criteria**
+
+- [x] Reserve 2 SKU trong 1 order: hoặc **cả hai** được giữ, hoặc **không cái nào** (rollback sạch, `reserved` không đổi).
+- [x] Reserve khi `available` không đủ → **409** + body nêu `skuId` và số còn lại; `reserved` **không** tăng.
+- [x] Reserve cùng `orderId` lần 2 → trả **cùng** `reservationId` (không tạo reservation thứ hai, không trừ kho 2 lần).
+- [x] Commit → `on_hand` giảm đúng `qty`, `reserved` giảm đúng `qty`; commit lần 2 → **200** (không trừ 2 lần).
+- [x] Release → `reserved` giảm, `on_hand` **không** đổi; release lần 2 → **200**; release reservation đã COMMIT → **409**.
+- [x] Commit reservation đã quá `expires_at` → **410 RESERVATION_EXPIRED** + `reserved` được trả lại.
+- [x] `stock_ledger` có đủ dòng cho mỗi thao tác (`ADJUST`/`RESERVE`/`COMMIT`/`RELEASE`/`EXPIRE`), và
+      `on_hand = Σ delta_on_hand`, `reserved = Σ delta_reserved` (đối soát được bằng SQL).
+- [x] Bất biến DB: `reserved >= 0`, `on_hand >= 0`, `reserved <= on_hand` (CHECK constraint).
+- [x] Unit + IT xanh; OpenAPI + README cập nhật; `e2e-smoke` Phase 1 vẫn 17/17.
+
+**Ghi chú kỹ thuật**
+
+- `reservations` = **1 row/order** + `reservation_items` (chốt với user): nhờ vậy unique `(order_id) WHERE status =
+  'PENDING'` vừa là khoá idempotency tự nhiên vừa giữ API trả **một** `reservationId`. (ADR-0006 D1 được cập nhật theo.)
+- Chuyển trạng thái bằng `UPDATE … WHERE id = :id AND status = 'PENDING'` → **không** cần lock ứng dụng, double-commit
+  bất khả thi; `rowsAffected = 0` ⇒ đọc trạng thái hiện tại để trả 200 (đã xong) / 409 / 410.
+- Ledger ghi **2 cột** `delta_on_hand` + `delta_reserved` (thay vì 1 cột `delta`): nhờ vậy đối soát được **cả hai**
+  con số bằng 1 câu `SUM`, và không phải suy luận ý nghĩa của dấu theo `reason`.
+- `SELECT`/`UPDATE` luôn kèm `warehouse_id` (dù Phase 2 chỉ có `WH-1`) để khi mở multi-warehouse không phải sửa SQL.
+- Trade-off chấp nhận: write của 1 SKU hot bị serialise trên 1 row (đúng ý — chống oversell), điều kiện chuyển sang
+**Kết quả verify** *(chạy thật: Docker Desktop + Postgres 16, không phải suy luận)*
+
+**1) `mvn -B -ntp verify` toàn repo — BUILD SUCCESS (01:13)**
+
+```text
+[INFO] ShopLab :: Service Commons ......................... SUCCESS [  2.713 s]
+[INFO] ShopLab :: Service Template ........................ SUCCESS [  6.687 s]
+[INFO] ShopLab :: Identity Service ........................ SUCCESS [ 21.011 s]
+[INFO] ShopLab :: Catalog Service ......................... SUCCESS [ 18.912 s]
+[INFO] ShopLab :: Inventory Service ....................... SUCCESS [ 14.150 s]
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [  8.416 s]
+[INFO] BUILD SUCCESS   Total time: 01:13 min
+```
+
+| Module | Unit | IT (Testcontainers, Postgres thật) |
+|---|---|---|
+| **inventory** | **40** (`ReservationServiceTest` 10 · `StockServiceTest` 5 · config 17 · health 8) | **12** (reserve/commit/release/all-or-nothing/idempotent/410/409/401/403/ledger) |
+| commons / template / identity / catalog / gateway | 42 / 35 / 50 / 66 / 71 | — / — / 22 / 21 / — |
+
+`checkstyle:check` + `spotless:check`: 0 vi phạm; JaCoCo gate (config + health ≥ 80% LINE) pass.
+
+**2) Dựng container thật + Flyway**
+
+```text
+$ docker compose ... up -d --build inventory-service api-gateway
+shoplab-inventory-service   Up 2 minutes (healthy)     ← probe /health OK, DB kết nối được
+shoplab-api-gateway         Up 2 minutes (healthy)
+
+$ docker exec shoplab-postgres psql -U shoplab -d inventory -c "\dt"
+ stock | reservations | reservation_items | stock_ledger | flyway_schema_history
+```
+
+**3) Luồng thật qua gateway** (`bash /tmp/verify-inventory.sh`, user thật từ identity)
+
+```text
+== 1) admin PUT stock: A=10, B=1        {"onHand":10,...}  {"onHand":1,...}
+== 2) GET stock (buyer)                 onHand=10 reserved=0 available=10
+== 3) reserve A×3                       HTTP 201 · reservationId=c1d20550-… · expiresAt=+15'
+== 4) retry CÙNG orderId                HTTP 200 · cùng reservationId · onHand=10 reserved=3 available=7
+== 5) reserve B×5 khi còn 1             HTTP 409 · details=[{field: <skuB>, message: "còn 1, cần 5"}]
+== 6) commit                            HTTP 200 · onHand=7 reserved=0
+== 7) commit lần 2                      HTTP 200 · onHand=7  (không trừ 2 lần)
+== 8) release sau commit                HTTP 409
+== 9) commit reservation quá TTL        HTTP 410 · reservation status=EXPIRED · SKU_B onHand=1 reserved=0
+== 10) đối soát ledger                  A: stock=(7,0) ledger=(7,0) · B: stock=(1,0) ledger=(1,0)
+== 11) buyer PUT stock → 403 · không token → 401
+```
+
+**4) Regression**
+
+```text
+$ bash tools/e2e-smoke.sh      17 PASS / 0 FAIL · 13 request · 612 ms
+$ bash tools/export-openapi.sh VALIDATE PASS · 18 path · 23 operation · 12 operation cần token · 24 schema
+   (thêm 4 path + 5 operation của /v1/stock; script export đã thêm inventory vào danh sách fetch)
+```
+
+**Sự cố trong lúc làm (ghi lại vì là bài học thật)**
+
+- **`@Transactional` + ném exception = mất phần bù trừ**: nhánh "commit khi đã hết hạn" vừa phải **release stock**
+  vừa phải ném `410`. Mặc định Spring rollback ⇒ phần release bị xoá ⇒ hàng bị treo vĩnh viễn mà test HTTP vẫn
+  "đúng" (410). Phải khai `@Transactional(noRollbackFor = ReservationExpiredException.class)`.
+- **Editor/heredoc làm gãy cấu trúc file 2 lần**: chèn block lớn vào giữa method làm mất/ thừa `}` — `javac` báo
+  "';' expected" ở mọi dòng `void …()`, đọc lên rất giống lỗi cú pháp vô nghĩa. Cách tìm nhanh: script đếm độ sâu
+  `{}` để biết chính xác dòng nào làm depth về 0 (hoặc EOF lệch 1).
+- **`mvn -pl <module> verify` không tự build module phụ thuộc** ⇒ cần `-am`, nếu không Maven báo thiếu
+  `shoplab-service-commons:jar` (đã gặp ở `SL-2.11`).
+
+**Learning note**
+
+- **Điều kiện nằm trong câu `UPDATE` là toàn bộ cơ chế**: `on_hand - reserved >= :qty` khiến Postgres quyết định
+  trong cùng row lock; `rowsAffected = 0` chính là tín hiệu hết hàng. Không cần `SELECT … FOR UPDATE`, không cần
+  distributed lock — và vì thế **không có khe hở** giữa "kiểm tra" và "ghi".
+- **Idempotency tự nhiên từ ràng buộc dữ liệu**: unique `(order_id) WHERE status='PENDING'` biến "retry cùng
+  orderId" thành *tìm thấy row cũ* thay vì *giữ chỗ lần 2*; không phải tự viết cơ chế dedupe riêng như
+  `idempotency_keys` của order-service.
+- **Idempotent phải định nghĩa theo từng trạng thái, không chỉ "gọi lại được"**: commit lần 2 → 200, release lần 2 →
+  200, nhưng release **sau commit** → 409 (hàng đã rời kho) và commit **sau release** → 409. Nếu gộp thành "mọi lần
+  gọi lại đều 200" thì client mất khả năng phát hiện mình đang làm sai thứ tự.
+- **Ledger 2 cột delta đáng giá hơn 1 cột `reason`**: `Σ delta_on_hand` và `Σ delta_reserved` cho phép đối soát bằng
+  1 câu SQL, và công thức này **đúng cả khi** logic đổi (thêm lý do mới) — verify ở bước 10 đã chứng minh.
+- **JDBC thắng JPA ở đúng bài toán này**: cần `rowsAffected` của câu UPDATE có điều kiện; JPA entity + dirty checking
+  chỉ thêm tầng trung gian. Đổi lại phải tự viết mapping — chấp nhận được vì schema chỉ 4 bảng và SQL là phần cốt lõi.
+- **Test cần "đo được trạng thái thật"**: 3 thứ chỉ IT làm được — rollback all-or-nothing (SKU còn hàng không bị giữ),
+  CHECK constraint của DB, và ledger khớp `stock`. Unit test mock repo **không thể** chứng minh cả 3.
+
+
+  Redis Lua đã ghi ở ADR-0006 Revisit (>1.000 reserve/s hoặc p99 > 50 ms).
+
+
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
 
@@ -683,6 +837,10 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | SL-2.11 | **Idempotent ở domain ≠ idempotent ở API**: `archive()` gọi lại vẫn giữ `deleted_at` gốc (audit), nhưng API trả 404 ở lần xoá thứ 2 vì `require()` đã lọc product đã xoá. Hai tầng phục vụ 2 mục đích — đừng gộp thành một. |
 | 2026-11-07 | SL-2.11 | **IT không được assert aggregate toàn bảng**: `count(*) where status<>'ACTIVE'` = 0 fail vì test khác đã archive product trước đó (thứ tự test không đảm bảo). Chỉ assert trên dữ liệu chính test đó tạo, hoặc trên metadata (`information_schema`). |
 | 2026-11-07 | SL-2.11 | **Test âm phải đúng trạng thái**: thử CHECK constraint trên row *đã* ARCHIVED ⇒ `set deleted_at` lần nữa vẫn hợp lệ, tưởng constraint không chặn. Phải tạo product **ACTIVE** rồi mới thử. |
+| 2026-11-07 | SL-2.2 | **Điều kiện nằm trong câu `UPDATE` là toàn bộ cơ chế chống oversell**: `WHERE on_hand - reserved >= :qty` để Postgres quyết định trong cùng row lock; `rowsAffected = 0` là tín hiệu hết hàng. Không cần `SELECT FOR UPDATE`, không cần distributed lock ⇒ không có khe hở giữa kiểm tra và ghi. |
+| 2026-11-07 | SL-2.2 | **Idempotency có thể đến từ ràng buộc dữ liệu**: unique `(order_id) WHERE status='PENDING'` biến retry cùng `orderId` thành "tìm thấy row cũ" thay vì phải tự viết bảng dedupe như `idempotency_keys`. |
+| 2026-11-07 | SL-2.2 | **`@Transactional` mặc định rollback ⇒ mất phần bù trừ**: nhánh "commit khi hết hạn" vừa release stock vừa ném 410; nếu không khai `noRollbackFor` thì phần release bị xoá ⇒ hàng treo vĩnh viễn mà test HTTP vẫn thấy 410 "đúng". |
+| 2026-11-07 | SL-2.2 | **`mvn -pl <module> verify` không build module phụ thuộc** ⇒ phải `-am`; nếu không sẽ báo thiếu `shoplab-service-commons:jar` — lỗi trông như lỗi cấu hình repo chứ không phải lỗi code. |
 
 ---
 
@@ -696,7 +854,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 |---|---|---|---|---|
 | `TD-1` | Bảng `refresh_tokens` không có job dọn row hết hạn → phình dần | SL-1.4 | Khi bảng > 10⁶ row **hoặc** khi thêm scheduler | trung bình |
 | `TD-2` | `GET /v1/admin/users` trả **toàn bộ** user, không phân trang | SL-1.4 | Khi số user > 1.000 hoặc có màn quản trị thật | thấp |
-| `TD-3` | Handler map `AccessDeniedException` → 403 nằm trong **catalog**; service khác dùng `@PreAuthorize` phải copy | SL-1.5 | Khi có service **thứ hai** dùng `@PreAuthorize` (→ commons) | trung bình |
+| `TD-3` | Handler map `AccessDeniedException` → 403 nằm trong **catalog**; service khác dùng `@PreAuthorize` phải copy | SL-1.5 | **Đã đạt**: `SL-2.2` là service thứ hai dùng `@PreAuthorize` → ticket `SL-2.12` | trung bình (chờ `SL-2.12`) |
 | `TD-4` | `tools/e2e-smoke.sh` phụ thuộc tài khoản seed + `docker logs` ⇒ chỉ chạy local, chưa vào CI | SL-1.7 | Phase 2 (D6: smoke trong CI) | trung bình |
 | `TD-5` | `tools/merge-pr.sh` chưa retry khi GitHub API lỗi tạm thời | SL-1.14 | Lần tới script fail vì API (retry + backoff ~15 dòng) | thấp |
 | `TD-6` | Phân trang **offset** (`OFFSET 100000` quét bỏ rất nhiều row) | SL-1.6 | Phase 4 khi đo được p99 của list (→ keyset) | trung bình |
@@ -778,9 +936,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | `SL-1.10` → `Done`: fix tác dụng phụ của `SL-1.9` — `gh pr merge --squash` ghép *title + subject các commit trong PR* nên `[skip ci]` của commit docs **lọt vào merge commit** ⇒ push `main` bị skip (mất kiểm chứng `main`). Fix: `tools/merge-pr.sh` truyền tường minh `--subject`/`--body` + lọc token skip; thêm cảnh báo vào rule + `docs/git-flow.md`. Verify: `a7d9482` có `1` token skip & **không** có run trên `main`; sau fix merge PR [#13](https://github.com/anchu3003/shop-lab-microservices/pull/13) → `skip-ci tokens: 0` + **có run `push` trên `main`**. |
 | 2026-11-07 | `SL-2.0` → `Done`: **ADR-0006** chốt mô hình checkout Phase 2 — (D1) chống oversell bằng **conditional `UPDATE`** trên `stock` (không Redis lock) · (D2) `idempotency_keys` ở Postgres, scope `userId:endpoint`, retry **replay response** · (D3) `order_items` **snapshot** giá/tên · (D4) **sync REST** Phase 2, async để Phase 3 · (D5) `TD-12` → soft delete product, sinh ticket **`SL-2.11`**. Cập nhật `architecture.md` §6.1/§8.4 + debt mới `TD-14`…`TD-16`. Docs-only, không đổi code. |
 | 2026-11-07 | `SL-2.11` → `Done`: `catalog-service` **soft delete** product (ADR-0006 D5, trả `TD-12` + `TD-10`). Migration `V3__add_soft_delete.sql` (`product.status`/`deleted_at`, `sku.status`, CHECK `ARCHIVED ⟺ deleted_at`, partial index) · `DELETE` = archive + bulk archive SKU (1 câu UPDATE) · mọi đường đọc/ghi lọc `deleted_at is null` (404) · `status` trả ra API + OpenAPI (3 schema). Verify thật: `mvn verify` **BUILD SUCCESS** (catalog 66 unit + **21 IT** trên Postgres Testcontainers; toàn repo xanh) · Flyway V3 trên container `success=t` · curl qua gateway: DELETE 204 → GET 404 → list 0 → DB `status=ARCHIVED` + `deleted_at` not null, SKU còn row và ARCHIVED · CHECK chặn cả 2 chiều sai · `e2e-smoke` 17/17 · OpenAPI export deterministic. |
-
-
-
-
-
-
+| 2026-11-07 | `SL-2.2` → `Done`: thêm **`inventory-service`** (8084, DB `inventory`) — `reserve`/`commit`/`release` chống oversell bằng **conditional UPDATE** (ADR-0006 D1), reservation **TTL 15′** + lazy expire, idempotent theo `orderId`, `stock_ledger` append-only 2 cột delta. Migration `V1__create_inventory.sql` (4 bảng + CHECK bất biến). JDBC thay JPA (cần `rowsAffected`). Hạ tầng: compose + gateway route `/v1/stock` + CI matrix + 4 Dockerfile cũ. `commons` thêm `GONE(410)`. Verify: `mvn verify` **BUILD SUCCESS** (inventory **40 unit + 12 IT** postgres thật, toàn repo xanh) · container `healthy` · luồng curl qua gateway: 201/200 idempotent · 409 + details · commit 10→7 · commit#2 không trừ 2 lần · release sau commit 409 · quá TTL **410** + trả chỗ · ledger khớp `(7,0)`/`(1,0)` · 401/403 đúng · `e2e-smoke` 17/17 · OpenAPI 18 path/23 operation. Sinh `SL-2.12` để trả `TD-3`. |

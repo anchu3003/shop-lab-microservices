@@ -81,6 +81,9 @@ shoplab:
         base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
       - path-prefix: /v1/categories
         base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
+      # SL-2.2: inventory-service (reserve/commit/release). Cần token — không nằm trong public-paths.
+      - path-prefix: /v1/stock
+        base-url: ${INVENTORY_SERVICE_URL:http://localhost:8084}
       # JWKS công bố qua gateway để client chỉ cần biết MỘT địa chỉ.
       - path-prefix: /.well-known
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}

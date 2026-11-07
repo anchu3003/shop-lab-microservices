@@ -102,8 +102,11 @@ Bảng `stock` (DB `inventory`): 1 row = (`sku_id`, `warehouse_id`); Phase 2 m�
   `reason` ∈ `RESERVE | COMMIT | RELEASE | EXPIRE | ADJUST`, `ref_id` = `reservationId`) **trong cùng transaction**.
 - Reserve nhiều SKU = **1 transaction**, sắp `sku_id` tăng dần (tránh deadlock); 1 dòng fail ⇒ rollback cả cụm ⇒
   **all-or-nothing**, trả `409 INSUFFICIENT_STOCK` + `details { skuId, available }` của SKU thiếu.
-- `reservations(id, order_id, sku_id, qty, status, expires_at)` + unique index `(order_id) WHERE status = 'PENDING'`
-  ⇒ retry cùng `orderId` trả **cùng** reservation (200) thay vì tạo cái thứ 2.
+- `reservations(id, order_id, status, expires_at, created_at)` = **1 row/ORDER** + bảng con
+  `reservation_items(reservation_id, sku_id, qty)`; unique index `(order_id) WHERE status = 'PENDING'` ⇒ retry cùng
+  `orderId` trả **cùng** reservation (200) thay vì tạo cái thứ 2 và vẫn giữ được 1 `reservationId` cho API.
+  *(Cập nhật ở `SL-2.2`: bản đầu của mục này ghi `reservations(… sku_id, qty …)` — không tương thích với unique theo
+  `order_id` khi 1 order có nhiều SKU; đã đổi sang header + items khi implement.)*
 - **TTL 15 phút** (khớp §6.1). Hết hạn ⇒ `status = EXPIRED` + `release` + ghi ledger. Sweeper `@Scheduled` mỗi 60 s
   quét `status = 'PENDING' AND expires_at < now()`; **thêm** kiểm tra lazy ngay trong `commit`/`reserve`
   (`expires_at < now()` ⇒ `410 RESERVATION_EXPIRED`) để không phụ thuộc đồng hồ sweeper.

@@ -15,9 +15,10 @@
 | Quyết định kiến trúc (ADR) | [`docs/adr/`](docs/adr/) |
 | Git workflow | [`docs/git-flow.md`](docs/git-flow.md) |
 
-**Trạng thái hiện tại**: Phase 0 — Foundation ✅ **Done (8/8)** — chi tiết ở [`Backlog-phase-0.md`](Backlog-phase-0.md).
-Phase 1 (Walking skeleton) 🔵 **In Progress**: `api-gateway` (8080) + `identity-service` (8081) chạy được và nối với
-nhau — register/login qua gateway, verify JWT bằng JWKS. Xem [Backlog.md](Backlog.md).
+**Trạng thái hiện tại**: Phase 0 ✅ **Done (8/8)** · Phase 1 ✅ **Done (tag `phase-1`)** —
+chi tiết ở [`Backlog-phase-0.md`](Backlog-phase-0.md) và [`docs/phases/phase-1.md`](docs/phases/phase-1.md).
+Phase 2 (Core commerce flow) 🔵 **In Progress**: đã có `inventory-service` (8084) — reserve/commit/release chống
+oversell (ADR-0006); tiếp theo là `cart` / `promotion` / `order` / `payment`. Xem [Backlog.md](Backlog.md).
 
 ---
 
@@ -240,7 +241,8 @@ bash tools/reset-infra.sh
 | `15672` | RabbitMQ management | UI: http://localhost:15672 (`shoplab` / password trong `.env`) |
 | `8085` | Adminer | UI xem dữ liệu Postgres: http://localhost:8085 |
 | `8090` | `service-template` | service mẫu (SL-0.4) — chỉ chạy khi bật profile `template` |
-| `8080` / `8081` / `8082` | — | dành cho `api-gateway` / `identity-service` / `catalog-service` (Phase 1) |
+| `8080` / `8081` / `8082` | `api-gateway` / `identity-service` / `catalog-service` | Phase 1 |
+| `8084` | `inventory-service` | Phase 2 (`SL-2.2`) — `reserve`/`commit`/`release`; DB `inventory` |
 
 > `up -d` mặc định **KHÔNG** dựng `service-template` — service mẫu nằm trong profile `template` (`SL-1.13`). Bật khi cần:
 > `docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template`
@@ -465,6 +467,29 @@ clamp**, vì clamp làm client tưởng đã lấy đủ dữ liệu. `sort` là
 để không lộ schema và không sort trên cột thiếu index.
 
 Xem `docs/` sau `SL-1.7` để có runbook debug từng tầng.
+
+### inventory-service — `SL-2.2`
+
+Tồn kho: giữ chỗ (`reserve`) nguyên tử, chốt hàng (`commit`) khi tiền về, trả chỗ (`release`) khi huỷ/hết hạn.
+Chống oversell bằng **conditional `UPDATE`** trên Postgres (ADR-0006 D1) — điều kiện `on_hand - reserved >= qty` nằm
+**trong** câu UPDATE, không dùng Redis lock. DB riêng `inventory` (`V1__create_inventory.sql`).
+
+**API** (đều cần token; `PUT` chỉ admin)
+
+| Method + path | Quyền | Ghi chú |
+|---|---|---|
+| `PUT /v1/stock/{skuId}` | `admin` | đặt `onHand` (upsert) + ghi ledger `ADJUST`; nhỏ hơn `reserved` → **409** |
+| `GET /v1/stock/{skuId}` | mọi role | `{onHand, reserved, available}`; chưa có tồn kho → **404** |
+| `POST /v1/stock/reserve` | mọi role | `{orderId, items[{skuId, qty}]}` → **201** (+`reservationId`, TTL 15′); retry cùng `orderId` → **200** cùng id; thiếu hàng → **409** + `details` |
+| `POST /v1/stock/commit` | mọi role | `{reservationId}` → **200** (idempotent); quá TTL → **410**; đã release → **409** |
+| `POST /v1/stock/release` | mọi role | `{reservationId}` → **200** (idempotent); đã commit → **409** |
+
+Đối soát tồn kho (ledger append-only, 2 cột delta):
+
+```sql
+SELECT sum(delta_on_hand), sum(delta_reserved) FROM stock_ledger WHERE sku_id = '<sku>';
+-- phải bằng (on_hand, reserved) trong bảng stock
+```
 
 ### api-gateway — `SL-1.2`
 

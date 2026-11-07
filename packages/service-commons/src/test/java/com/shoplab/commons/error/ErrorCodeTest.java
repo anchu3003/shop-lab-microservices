@@ -16,6 +16,9 @@ class ErrorCodeTest {
     assertThat(ErrorCode.fromHttpStatus(403)).isEqualTo(ErrorCode.FORBIDDEN);
     assertThat(ErrorCode.fromHttpStatus(404)).isEqualTo(ErrorCode.NOT_FOUND);
     assertThat(ErrorCode.fromHttpStatus(409)).isEqualTo(ErrorCode.CONFLICT);
+    // SL-2.2: 410 phải giữ đúng nghĩa "đã chết" (reservation hết hạn), không rơi vào REQUEST_ERROR
+    // chung.
+    assertThat(ErrorCode.fromHttpStatus(410)).isEqualTo(ErrorCode.GONE);
     assertThat(ErrorCode.fromHttpStatus(502)).isEqualTo(ErrorCode.UNAVAILABLE);
     assertThat(ErrorCode.fromHttpStatus(503)).isEqualTo(ErrorCode.UNAVAILABLE);
     assertThat(ErrorCode.fromHttpStatus(504)).isEqualTo(ErrorCode.UNAVAILABLE);

@@ -32,6 +32,7 @@ COPY services/service-template/pom.xml services/service-template/
 COPY services/identity-service/pom.xml services/identity-service/
 COPY services/api-gateway/pom.xml services/api-gateway/
 COPY services/catalog-service/pom.xml services/catalog-service/
+COPY services/inventory-service/pom.xml services/inventory-service/
 RUN mvn -B -q -pl services/catalog-service -am dependency:go-offline
 
 COPY packages/ packages/
