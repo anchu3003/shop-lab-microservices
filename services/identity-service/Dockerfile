@@ -35,6 +35,7 @@ COPY services/identity-service/pom.xml services/identity-service/
 COPY services/catalog-service/pom.xml services/catalog-service/
 COPY services/inventory-service/pom.xml services/inventory-service/
 COPY services/promotion-service/pom.xml services/promotion-service/
+COPY services/order-service/pom.xml services/order-service/
 COPY services/api-gateway/pom.xml services/api-gateway/
 RUN mvn -B -q -pl services/identity-service -am dependency:go-offline
 

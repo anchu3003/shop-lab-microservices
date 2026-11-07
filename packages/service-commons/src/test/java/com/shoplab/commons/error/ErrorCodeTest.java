@@ -19,6 +19,8 @@ class ErrorCodeTest {
     // SL-2.2: 410 phải giữ đúng nghĩa "đã chết" (reservation hết hạn), không rơi vào REQUEST_ERROR
     // chung.
     assertThat(ErrorCode.fromHttpStatus(410)).isEqualTo(ErrorCode.GONE);
+    // SL-2.5: 422 = client phải sửa request (idempotency key dùng lại cho payload khác).
+    assertThat(ErrorCode.fromHttpStatus(422)).isEqualTo(ErrorCode.UNPROCESSABLE_ENTITY);
     assertThat(ErrorCode.fromHttpStatus(502)).isEqualTo(ErrorCode.UNAVAILABLE);
     assertThat(ErrorCode.fromHttpStatus(503)).isEqualTo(ErrorCode.UNAVAILABLE);
     assertThat(ErrorCode.fromHttpStatus(504)).isEqualTo(ErrorCode.UNAVAILABLE);
