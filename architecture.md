@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Trạng thái** | `DRAFT v0.3` — Phase 0 (Foundation) **hoàn thành**: repo skeleton · infra local · service template · **CI xanh** |
+| **Trạng thái** | `DRAFT v0.4` — Phase 0 + Phase 1 **hoàn thành**; Phase 2 (core commerce flow) đang làm: đã chốt mô hình checkout ([ADR-0006](docs/adr/0006-checkout-model.md)) |
 | **Người thực hiện** | bạn + AI |
-| **Cập nhật lần cuối** | 2026-11-03 (Phase 0 xong — `SL-0.5` CI xanh trên `main`) |
+| **Cập nhật lần cuối** | 2026-11-07 (`SL-2.0` — ADR-0006 mô hình checkout Phase 2) |
 | **Liên quan** | `AGENTS.md`, `Backlog.md`, `Backlog-phase-0.md`, `docs/adr/`, `docs/phases/` |
 
 ---
@@ -302,6 +302,17 @@ sequenceDiagram
 > có thể mất vài phút — nếu trừ luôn thì user bỏ ngang sẽ làm "cháy" hàng ảo. Reserve giữ chỗ
 > có TTL, commit chỉ khi tiền đã về.
 
+**Cơ chế đã chốt — [ADR-0006](docs/adr/0006-checkout-model.md)** (chốt ở `SL-2.0`, mọi ticket Phase 2 bám theo):
+
+| Điểm | Chốt | Hệ quả |
+|---|---|---|
+| Chống oversell | **conditional `UPDATE`** trên `stock`: `… WHERE on_hand - reserved >= :qty`; `0` row ⇒ `409` (không dùng Redis lock) | Nguyên tử ở row lock của DB, không thêm hạ tầng; reserve nhiều SKU = 1 transaction, sắp `sku_id` để tránh deadlock |
+| Reservation | TTL **15 phút**; sweeper `@Scheduled` 60 s + kiểm tra lazy ở `commit` (`410 RESERVATION_EXPIRED`) | Hàng bị giữ sẽ được trả lại kể cả khi process restart |
+| Idempotency | Bảng `idempotency_keys` (Postgres), PK `(scope, key)`, `scope = userId:endpoint`; có `request_hash` + lưu response ⇒ retry **replay** đúng kết quả cũ | Bấm 2 lần / retry sau timeout không tạo 2 order; Redis chỉ dùng làm fast-path sau này |
+| `order_items` | **Snapshot** (`sku_code`, `title`, `unit_price`, `currency`) + `sku_id` không FK | Hoá đơn bất biến; đổi giá/xoá SKU ở `catalog` không làm sai đơn cũ |
+| Sync vs async | Phase 2 **sync REST** (timeout mỗi bước 300–800 ms) + compensating | p99 mục tiêu ~125 ms; async/outbox để Phase 3 (có baseline để so sánh) |
+| `TD-12` | Soft delete product (`status = ARCHIVED` + `deleted_at`), code ở `SL-2.11` | `stock_ledger`/`reservations` còn tham chiếu được `sku_id` ⇒ reconcile được |
+
 ### 6.2. Payment callback (webhook) — idempotency
 
 Provider có thể gọi webhook **nhiều lần** cho cùng 1 giao dịch (retry, timeout mạng). Nếu xử lý
@@ -429,21 +440,25 @@ Luồng "đọc" bình thường (cache) khác hẳn luồng "tranh mua":
 users(id, email, password_hash, status, created_at)
   └─ user_roles(user_id, role)          -- buyer | seller | admin
 
-products(id, seller_id, title, description, status, created_at)
-  └─ skus(id, product_id, code, price, currency, attributes_json)
+products(id, seller_id, title, description, status, deleted_at, created_at)  -- status ACTIVE|ARCHIVED (soft delete, ADR-0006)
+  └─ skus(id, product_id, code, price, currency, status, attributes_json)
   └─ categories(id, parent_id, name, slug) + product_categories(product_id, category_id)
 
-inventory(id, sku_id, warehouse_id, on_hand, reserved, version)
-  └─ reservations(id, order_id, sku_id, qty, status, expires_at)
+stock(sku_id, warehouse_id, on_hand, reserved, version)   -- PK (sku_id, warehouse_id); available = on_hand - reserved
+  └─ reservations(id, order_id, sku_id, qty, status, expires_at)  -- PENDING|COMMITTED|RELEASED|EXPIRED, TTL 15'
   └─ stock_ledger(id, sku_id, delta, reason, ref_id, created_at)   -- append only
 
 carts  -- Redis hash: { sku_id: {qty, price_snapshot} }, key = user_id hoặc guest_token
 
-vouchers(id, code, type, value, min_order, quota, used, start_at, end_at)
+vouchers(id, code, type, value, min_order, quota, used, locked, start_at, end_at)
+  └─ voucher_locks(id, voucher_id, order_id, status, expires_at)   -- lock/commit/release giống reservation
 
-orders(id, user_id, status, subtotal, discount, total, currency, created_at)
-  └─ order_items(id, order_id, sku_id, qty, unit_price, line_total)
+orders(id, user_id, status, subtotal, discount, total, currency, idempotency_key, payment_intent_id, created_at)
+  └─ order_items(id, order_id, sku_id, sku_code, title, unit_price, currency, qty, line_total)  -- snapshot, KHÔNG FK
   └─ order_status_history(id, order_id, from_status, to_status, reason, created_at)
+
+idempotency_keys(scope, key, request_hash, status, status_code, response_body, resource_id,
+                 created_at, completed_at)   -- PK (scope, key); scope = "<userId>:<METHOD> <path>"; giữ 24h
 
 payments(id, order_id, provider, provider_txn_id UNIQUE, amount, status, idempotency_key UNIQUE)
 
@@ -740,3 +755,5 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-03 | `SL-1.0`: tối ưu chi phí CI — `paths-ignore` cho docs · `push` chỉ `main` · kill-switch `vars.CI_ENABLED` · bỏ qua draft PR; cập nhật §10.3 | bạn + AI |
 | 2026-11-06 | `SL-1.5`: thêm `catalog-service` (port 8082, DB `catalog`) — service read-heavy đầu tiên; **service tự verify JWT qua JWKS** của identity (defense in depth) và **chỉ tin token, không tin header `x-user-*`**; gateway để cả prefix `/v1/products` + `/v1/categories` đi qua (public-path theo PATH, không theo METHOD) và service tự chặn phần ghi; cập nhật §5 (data ownership) | bạn + AI |
 | 2026-11-06 | **Phase 1 (Walking skeleton) hoàn thành** — `SL-1.0`…`SL-1.18` (19/19) Done; 3 service chạy end-to-end qua gateway (auth JWT RS256 + RBAC + refresh rotate/grace, catalog CRUD/SKU/paging, OpenAPI sinh từ code). Snapshot: tag `phase-1` + `docs/phases/phase-1.md` + `Backlog-phase-1.md`; cập nhật §12 | bạn + AI |
+| 2026-11-07 | `SL-2.0`: ADR-[0006](docs/adr/0006-checkout-model.md) chốt **mô hình checkout Phase 2** — reserve/commit/release bằng **conditional `UPDATE`** (chống oversell ở tầng DB, không cần Redis lock) · reservation **TTL 15′** + sweeper + lazy expire · `idempotency_keys` ở Postgres (scope `userId:endpoint`, `request_hash`, replay response) · `order_items` **snapshot** giá/tên (không FK xuyên service) · **sync REST** Phase 2 (async → Phase 3) · `TD-12` soft delete product → tách `SL-2.11`; cập nhật §6.1, §8.4 | bạn + AI |
+
