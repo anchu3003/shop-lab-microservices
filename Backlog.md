@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.3` ✅ **Done** — sweeper TTL + bằng chứng 100 request đồng thời) |
-| **Ticket tiếp theo** | `SL-2.4` — `promotion-service` (voucher lock/commit/release) · `SL-2.1` — `cart-service` (Redis) |
-| **Số ticket chi tiết hiện có** | 27 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 4) |
+| **Ticket đang làm** | — (`SL-2.4` ✅ **Done** — promotion service đã lên `main`) |
+| **Ticket tiếp theo** | `SL-2.5` — `order-service` (idempotent + state machine + snapshot giá) · `SL-2.1` — `cart-service` (Redis) |
+| **Số ticket chi tiết hiện có** | 28 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 5) |
 
 ---
 
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 4 / 13 |
+| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 5 / 13 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -208,7 +208,7 @@ $ md5sum docs/api/openapi.yaml
 | 2 | `SL-2.1` | `cart-service` (8083, Redis): add/update/remove/get, TTL, **merge cart khi login** | M | Todo |
 | 3 | `SL-2.2` | `inventory-service` (8084, DB `inventory`): schema `stock`/`reservations`/`stock_ledger` + API `reserve`/`commit`/`release`; **atomic** chống oversell | M | ✅ Done |
 | 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M | ✅ Done |
-| 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | Todo |
+| 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | ✅ Done |
 | 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M | Todo |
 | 7 | `SL-2.6` | **Checkout Saga** (orchestration): cart → reserve → lock voucher → payment → confirm; **compensating** cho mọi nhánh fail; lưu saga state | L → tách 2 | Todo |
 | 8 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | Todo |
@@ -803,6 +803,149 @@ $ bash tools/e2e-smoke.sh   17 PASS / 0 FAIL · 13 request · 638 ms
   pool nhỏ, request xếp hàng nên không còn đua, test "xanh" mà không chứng minh gì.
 
 
+### SL-2.4 — `promotion-service`: voucher + rule giảm giá + lock/commit/release
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 2 — Core commerce flow |
+| **Phụ thuộc** | `SL-2.2`/`SL-2.3` (pattern reserve/commit/release + sweeper đã chứng minh); **chặn** `SL-2.6` (saga gọi lock voucher) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Luồng checkout §6.1 gọi **lock voucher trước** khi giữ stock — chưa có service này thì `order-service` không có gì để gọi.
+Bài toán giống inventory nhưng ở dạng nhẹ hơn: một voucher có `quota` lượt, và **`used + locked <= quota`** phải được DB
+canh, nếu chỉ đếm `used` thì hai checkout đồng thời cùng thấy "còn lượt" và bán quá quota.
+
+**Mục tiêu**
+
+Service thứ 5 (`8086`, DB `promotion`) chạy end-to-end: admin tạo voucher (PERCENT/FIXED, quota, cửa sổ thời gian), user
+lock 1 lượt (idempotent theo `orderId`), commit khi tiền về, release khi huỷ/hết hạn, sweeper tự trả lượt bị bỏ quên.
+Số tiền giảm giá được **snapshot** tại lúc lock.
+
+**In scope**
+
+- Service mới `services/promotion-service`: pom · Dockerfile · application.yml · security (JWT) · health/readiness ·
+  logback · **JDBC (không JPA)** như inventory.
+- Migration `V1__create_promotion.sql`: `vouchers` (code unique, type, value, max_discount, min_order, quota, used,
+  locked, cửa sổ thời gian) + `voucher_locks` (1 row/order, snapshot subtotal/discount, TTL) + CHECK bất biến.
+- API: `POST /v1/vouchers` (admin) · `GET /v1/vouchers/{code}` (admin) ·
+  `POST /v1/vouchers/lock|commit|release` (user đã đăng nhập).
+- Rule: `PERCENT` (có `max_discount` cap) + `FIXED`, HALF_UP 2 chữ số, giảm không vượt subtotal, `min_order`.
+- Sweeper TTL cho voucher lock (cùng khuôn `SKIP LOCKED` của `SL-2.3`).
+- Hạ tầng: compose · `.env.example` · gateway route `/v1/vouchers` · CI matrix · Dockerfile 6 service (thêm `COPY pom`)
+  · `tools/export-openapi.sh` fetch promotion.
+
+**Out of scope**
+
+- `campaign` / flash sale / stacking nhiều voucher / voucher theo seller (Phase 4+).
+- `FREESHIP` (chưa có khái niệm phí ship trong luồng Phase 2).
+- Không có API "huỷ voucher" cho user (admin vẫn sửa DB được; cần thì ticket sau).
+
+**Acceptance Criteria**
+
+- [x] Tạo voucher: mã chuẩn hoá `UPPER + trim`; trùng mã → **409**; `PERCENT > 100` / `maxDiscount` cho FIXED /
+      `endAt <= startAt` → **400**.
+- [x] Lock: `PERCENT` tính đúng theo `subtotal`, cap bởi `maxDiscount`, giảm ≤ subtotal; trả `discount` + `finalTotal`.
+- [x] Lock retry cùng `orderId` → **200** + **cùng `lockId`**, `locked` không tăng.
+- [x] Lock khi chưa tới giờ / đã hết hạn / hết lượt / dưới `minOrder` → **409** (message nêu đúng lý do).
+- [x] Commit: `used+1, locked-1`; commit lần 2 → **200** (không dùng 2 lượt); release sau commit → **409**.
+- [x] Release: `locked-1`, `used` không đổi; release lần 2 → **200**.
+- [x] Commit lock quá TTL → **410** + trả lượt ngay; sweeper cũng trả lượt cho lock bị bỏ quên.
+- [x] **100 request song song** cùng voucher (quota 10, cùng lúc) ⇒ đúng **10 lock**, 90 bị **409**; `used+locked <= quota`.
+- [x] Unit + IT xanh; OpenAPI + README cập nhật; `e2e-smoke` 17/17.
+
+**Ghi chú kỹ thuật**
+
+- **Cùng pattern với inventory** (ADR-0006 D1): điều kiện quota nằm trong `UPDATE … WHERE used + locked < quota AND now()
+  BETWEEN start_at AND end_at`; `0 row` ⇒ service đọc lại voucher để nói rõ lý do (chưa tới / hết hạn / hết lượt) thay vì
+  một câu "không dùng được" chung chung.
+- **Snapshot `discount` + `subtotal`** vào `voucher_locks`: commit phải dùng đúng con số đã hứa với client, kể cả khi
+  admin sửa `value` trong lúc user đang thanh toán.
+- **`@Transactional(noRollbackFor = VoucherLockExpiredException.class)`** ở `commit`: nhánh hết hạn vừa trả lượt vừa ném
+  410 — mặc định Spring rollback sẽ xoá phần trả lượt (bẫy đã gặp ở `SL-2.2`).
+- **TTL = 15 phút, bằng inventory**: checkout giữ cả hai trong cùng phiên thanh toán; lệch nhau chỉ đẻ thêm nhánh
+  compensating không cần thiết.
+- Đánh đổi đã chấp nhận: `subtotal` do order-service gửi (call nội bộ). Nếu endpoint lộ ra client thì phải tính lại
+  server-side — ghi vào Learning note để nhớ.
+
+
+
+**Kết quả verify** *(chạy thật: Docker + Postgres 16, không phải suy luận)*
+
+**1) `mvn -B -ntp verify` toàn repo — BUILD SUCCESS (01:34)**
+
+```text
+[INFO] ShopLab :: Service Commons ......................... SUCCESS [  2.622 s]
+[INFO] ShopLab :: Service Template ........................ SUCCESS [  5.930 s]
+[INFO] ShopLab :: Identity Service ........................ SUCCESS [ 20.954 s]
+[INFO] ShopLab :: Catalog Service ......................... SUCCESS [ 19.403 s]
+[INFO] ShopLab :: Inventory Service ....................... SUCCESS [ 16.656 s]
+[INFO] ShopLab :: Promotion Service ....................... SUCCESS [ 15.xxx s]
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [  8.249 s]
+[INFO] BUILD SUCCESS   Total time: 01:34 min
+```
+
+`promotion` unit **48** (`VoucherCalculatorTest` 7 · `VoucherServiceTest` 6 · `VoucherLockServiceTest` 11 ·
+`VoucherLockSweeperTest` 2 · config/health 22) · IT **13**. checkstyle + spotless sạch.
+
+**2) Luồng thật qua gateway** (`bash /tmp/verify-promotion.sh`, token thật từ identity)
+
+```text
+1) tạo voucher PERCENT 10% (cap 50k, quota 5)   DB: used=0 locked=0 quota=5
+2) lock đơn 200.000                             HTTP 201 · discount=20000 · finalTotal=180000 · DB: locked=1
+3) retry CÙNG orderId                           HTTP 200 · CÙNG lockId · locked vẫn =1
+4) commit                                       HTTP 200 · DB: used=1 locked=0
+5) release sau commit                           HTTP 409
+6) lock khác + release                          HTTP 200 · DB: used=1 locked=0 (used giữ nguyên)
+7) commit lock quá TTL                          HTTP 410 · lock status=EXPIRED · DB: locked=0
+8) sweeper (interval 2s)                        ~1500ms sau: locked=0, status=EXPIRED
+   log container: "sweeper: đã expire 1 voucher lock quá hạn và trả lượt"
+```
+
+**3) 100 request đồng thời cùng voucher (quota 10)**
+
+```text
+        10 201
+        90 409
+   DB: used=0 locked=10 quota=10 · bất biến used+locked<=quota: OK
+```
+
+**4) Quyền + regression**
+
+```text
+POST /v1/vouchers (buyer) → 403 · POST /v1/vouchers/lock (no token) → 401
+$ bash tools/e2e-smoke.sh      17 PASS / 0 FAIL
+$ bash tools/export-openapi.sh VALIDATE PASS · 23 path · 28 operation · 29 schema
+```
+
+**Sự cố trong lúc làm**
+
+- `docker build` của promotion **fail** ở `dependency:go-offline`: Dockerfile copy từ inventory nhưng `sed` đổi luôn dòng
+  `COPY services/inventory-service/pom.xml` → thành promotion ⇒ **thiếu pom của inventory** ⇒ Maven báo
+  "Child module … does not exist". Fix: thêm lại dòng COPY cho module inventory. Kiểm lại: **6/6 Dockerfile** đều copy đủ
+  6 pom.
+- `<name>` trong pom bị copy nguyên "ShopLab :: Inventory Service" ⇒ reactor in sai tên service (thấy 2 dòng Inventory trong
+  báo cáo build). Fix + xác nhận lại.
+- Thêm block test lớn bằng editor bị **cắt khung** làm gãy `{}` hai lần; cách xử lý hiệu quả: ghi cả file bằng heredoc
+  (`cat > f <<'EOF'` / `cat >> f <<'EOF'`) thay vì chèn từng đoạn bằng editor.
+
+**Learning note**
+
+- **Copy service là con đường ngắn nhất để tạo nợ ẩn**: 3 lỗi trong ticket này đều từ copy (`COPY pom` thiếu, `<name>` sai,
+  comment nói "inventory"). Checklist khi tạo service mới từ service cũ: pom (artifactId/**name**/description/jacoco
+  include) · Dockerfile (đủ **mọi** pom module) · application.yml (DB + port + prefix property) · compose/gateway/CI/env.
+- **Cùng một pattern, lần thứ hai rẻ hơn nhiều**: lock/commit/release của voucher chỉ mất ~1/2 thời gian so với inventory vì
+  đã có khuôn (conditional `UPDATE`, compare-and-set status, `noRollbackFor` cho nhánh vừa-trả-vừa-ném, sweeper
+  `SKIP LOCKED`). Đó là lợi ích thật của việc làm đúng ngay từ service đầu.
+- **Bất biến "used + locked <= quota" phải ở DB**: nếu chỉ kiểm trong code, một đường ghi mới (script, migration, service
+  khác) là bán quá quota. CHECK constraint là thứ duy nhất không thể quên.
+- **Snapshot tiền tại lúc lock**: giảm giá đã hứa với client phải bất biến — commit dùng `discount` trong `voucher_locks`,
+  không tính lại từ `vouchers.value` (admin sửa `value` giữa chừng sẽ làm hoá đơn sai).
+- **Đánh đổi cần nhớ**: `subtotal` hiện do order-service gửi (call nội bộ). Nếu endpoint lộ ra client thì phải tính lại
+  server-side — ghi vào đây để không quên khi mở API cho bên ngoài.
+
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
 
@@ -987,6 +1130,10 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | SL-2.3 | **`FOR UPDATE SKIP LOCKED` biến "chạy N instance" thành chuyện của DB**: không cần advisory lock / leader election. Nhưng **không đủ một mình** — vẫn cần conditional `markStatus` làm chốt thứ hai cho lúc client commit chen vào giữa. |
 | 2026-11-07 | SL-2.3 | **Job nền phải "chết đúng cách"**: bắt `RuntimeException` để 1 nhịp lỗi không giết scheduler, và `spring.task.scheduling.shutdown.await-termination` để shutdown không cắt transaction đang chạy (nếu cắt: `Connection is closed` + `JDBC rollback failed`). IT còn cần `@DirtiesContext(AFTER_CLASS)` để context đóng **trước** khi Testcontainers dừng Postgres. |
 | 2026-11-07 | SL-2.3 | **Bằng chứng oversell phải là số tuyệt đối**: "10 thành công / 90 bị từ chối" + `Σ delta_reserved = reserved` kiểm bằng SQL. Chỉ assert `reserved <= on_hand` thì code "giữ thiếu hàng" vẫn qua. Và test đua phải dùng `CountDownLatch` + pool đủ lớn, nếu không request xếp hàng thì không còn đua. |
+| 2026-11-07 | SL-2.4 | **Copy service là con đường ngắn nhất để tạo nợ ẩn**: 3 lỗi của ticket này đều từ copy (`COPY pom` thiếu trong Dockerfile, `<name>` pom vẫn là Inventory, comment nói "inventory"). Checklist khi tạo service mới: pom (artifactId/**name**/jacoco include) · Dockerfile (đủ **mọi** pom module) · application.yml (DB + port + prefix property) · compose/gateway/CI/env. |
+| 2026-11-07 | SL-2.4 | **Cùng một pattern, lần thứ hai rẻ hơn nhiều**: lock/commit/release của voucher chỉ tốn ~1/2 thời gian so với inventory vì đã có khuôn (conditional `UPDATE`, compare-and-set status, `noRollbackFor` cho nhánh vừa-trả-vừa-ném, sweeper `SKIP LOCKED`). Đó là lợi ích thật của việc làm đúng ngay từ service đầu. |
+| 2026-11-07 | SL-2.4 | **Bất biến `used + locked <= quota` phải ở DB**: kiểm trong code thì một đường ghi mới (script/migration/service khác) là bán quá quota; CHECK constraint là thứ duy nhất không thể quên. |
+| 2026-11-07 | SL-2.4 | **Snapshot tiền tại lúc lock**: giảm giá đã hứa với client phải bất biến — commit dùng `discount` trong `voucher_locks`, không tính lại từ `vouchers.value` (admin sửa `value` giữa chừng sẽ làm hoá đơn sai). Đánh đổi cần nhớ: `subtotal` hiện do order-service gửi; nếu API lộ ra client thì phải tính lại server-side. |
 
 ---
 
@@ -1084,3 +1231,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | `SL-2.11` → `Done`: `catalog-service` **soft delete** product (ADR-0006 D5, trả `TD-12` + `TD-10`). Migration `V3__add_soft_delete.sql` (`product.status`/`deleted_at`, `sku.status`, CHECK `ARCHIVED ⟺ deleted_at`, partial index) · `DELETE` = archive + bulk archive SKU (1 câu UPDATE) · mọi đường đọc/ghi lọc `deleted_at is null` (404) · `status` trả ra API + OpenAPI (3 schema). Verify thật: `mvn verify` **BUILD SUCCESS** (catalog 66 unit + **21 IT** trên Postgres Testcontainers; toàn repo xanh) · Flyway V3 trên container `success=t` · curl qua gateway: DELETE 204 → GET 404 → list 0 → DB `status=ARCHIVED` + `deleted_at` not null, SKU còn row và ARCHIVED · CHECK chặn cả 2 chiều sai · `e2e-smoke` 17/17 · OpenAPI export deterministic. |
 | 2026-11-07 | `SL-2.2` → `Done`: thêm **`inventory-service`** (8084, DB `inventory`) — `reserve`/`commit`/`release` chống oversell bằng **conditional UPDATE** (ADR-0006 D1), reservation **TTL 15′** + lazy expire, idempotent theo `orderId`, `stock_ledger` append-only 2 cột delta. Migration `V1__create_inventory.sql` (4 bảng + CHECK bất biến). JDBC thay JPA (cần `rowsAffected`). Hạ tầng: compose + gateway route `/v1/stock` + CI matrix + 4 Dockerfile cũ. `commons` thêm `GONE(410)`. Verify: `mvn verify` **BUILD SUCCESS** (inventory **40 unit + 12 IT** postgres thật, toàn repo xanh) · container `healthy` · luồng curl qua gateway: 201/200 idempotent · 409 + details · commit 10→7 · commit#2 không trừ 2 lần · release sau commit 409 · quá TTL **410** + trả chỗ · ledger khớp `(7,0)`/`(1,0)` · 401/403 đúng · `e2e-smoke` 17/17 · OpenAPI 18 path/23 operation. Sinh `SL-2.12` để trả `TD-3`. |
 | 2026-11-07 | `SL-2.3` → `Done`: `inventory-service` thêm **sweeper TTL** (`@Scheduled` fixedDelay 60 s, batch 100, `FOR UPDATE SKIP LOCKED` + conditional `markStatus`) — reservation `PENDING` quá hạn tự `EXPIRED` + trả chỗ + ledger `EXPIRE`; trả `TD-15`. Thêm test **100 request HTTP song song** cùng SKU: **đúng 10×201 / 90×409**, `reserved=10`, `Σ delta_reserved=10`, bất biến `reserved<=on_hand` OK. Verify: `mvn verify` **BUILD SUCCESS** (inventory 44 unit + 15 IT) · container thật: sweeper dọn trong ~300 ms, log `đã expire 1 reservation` · `e2e-smoke` 17/17. |
+| 2026-11-07 | `SL-2.4` → `Done`: thêm **`promotion-service`** (8086, DB `promotion`) — voucher `PERCENT` (cap `max_discount`) + `FIXED`, `lock`/`commit`/`release` cùng pattern conditional `UPDATE` của inventory; `voucher_locks` 1 row/order + snapshot `discount`/`subtotal`; bất biến `used + locked <= quota` do CHECK canh; sweeper TTL (`SKIP LOCKED`) trả lượt bị bỏ quên. Hạ tầng: compose + gateway route `/v1/vouchers` + CI matrix + Dockerfile 6 service. Verify: `mvn verify` **BUILD SUCCESS** (promotion 48 unit + 13 IT) · container healthy · flow thật: lock 201 → retry 200 cùng id → commit (used=1) → release sau commit 409 → quá TTL 410 + trả lượt → sweeper tự trả trong ~1,5 s · **100 request song song: 10×201 / 90×409**, `used+locked<=quota` OK · `e2e-smoke` 17/17 · OpenAPI 23 path. |

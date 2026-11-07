@@ -114,6 +114,8 @@ Bảng `stock` (DB `inventory`): 1 row = (`sku_id`, `warehouse_id`); Phase 2 m�
   vẫn không trả chỗ 2 lần — giải quyết `TD-15`.)*
 - `promotion-service` dùng **cùng pattern** trên `vouchers.locked`:
   `UPDATE vouchers SET locked = locked + 1 WHERE code = :code AND locked + used < quota AND now() BETWEEN start_at AND end_at`.
+  *(Triển khai ở `SL-2.4`: `voucher_locks` 1 row/order + unique `(order_id) WHERE status='LOCKED'`, snapshot `discount`
+  và `subtotal` tại lúc lock, TTL 15 phút + sweeper `SKIP LOCKED`; bất biến `used + locked <= quota` do CHECK canh.)*
 
 ### D2 — `idempotency_keys` trong Postgres (chọn A), scope = `user_id + endpoint`
 

@@ -17,8 +17,9 @@
 
 **Trạng thái hiện tại**: Phase 0 ✅ **Done (8/8)** · Phase 1 ✅ **Done (tag `phase-1`)** —
 chi tiết ở [`Backlog-phase-0.md`](Backlog-phase-0.md) và [`docs/phases/phase-1.md`](docs/phases/phase-1.md).
-Phase 2 (Core commerce flow) 🔵 **In Progress**: đã có `inventory-service` (8084) — reserve/commit/release chống
-oversell (ADR-0006); tiếp theo là `cart` / `promotion` / `order` / `payment`. Xem [Backlog.md](Backlog.md).
+Phase 2 (Core commerce flow) 🔵 **In Progress**: đã có `inventory-service` (8084 — reserve/commit/release chống oversell)
+và `promotion-service` (8086 — voucher lock/commit/release); tiếp theo là `cart` / `order` / `payment`.
+Xem [Backlog.md](Backlog.md).
 
 ---
 
@@ -243,6 +244,7 @@ bash tools/reset-infra.sh
 | `8090` | `service-template` | service mẫu (SL-0.4) — chỉ chạy khi bật profile `template` |
 | `8080` / `8081` / `8082` | `api-gateway` / `identity-service` / `catalog-service` | Phase 1 |
 | `8084` | `inventory-service` | Phase 2 (`SL-2.2`) — `reserve`/`commit`/`release`; DB `inventory` |
+| `8086` | `promotion-service` | Phase 2 (`SL-2.4`) — voucher `lock`/`commit`/`release`; DB `promotion` |
 
 > `up -d` mặc định **KHÔNG** dựng `service-template` — service mẫu nằm trong profile `template` (`SL-1.13`). Bật khi cần:
 > `docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template`
@@ -494,6 +496,25 @@ Chống oversell bằng **conditional `UPDATE`** trên Postgres (ADR-0006 D1) �
 SELECT sum(delta_on_hand), sum(delta_reserved) FROM stock_ledger WHERE sku_id = '<sku>';
 -- phải bằng (on_hand, reserved) trong bảng stock
 ```
+
+### promotion-service — `SL-2.4`
+
+Voucher: admin tạo mã (PERCENT có trần `maxDiscount`, hoặc FIXED), user **giữ 1 lượt** khi checkout rồi commit khi tiền về.
+Bất biến chống bán quá quota là **`used + locked <= quota`**, do CHECK constraint ở DB canh + conditional `UPDATE` khi lock
+(cùng pattern với inventory, ADR-0006). DB riêng `promotion` (`V1__create_promotion.sql`).
+
+**API** (`lock/commit/release` cần token; `POST/GET` voucher chỉ admin)
+
+| Method + path | Quyền | Ghi chú |
+|---|---|---|
+| `POST /v1/vouchers` | `admin` | 201; mã chuẩn hoá UPPER; trùng mã → **409**; PERCENT > 100 / `maxDiscount` cho FIXED / `endAt <= startAt` → **400** |
+| `GET /v1/vouchers/{code}` | `admin` | `{quota, used, locked, available, ...}` |
+| `POST /v1/vouchers/lock` | mọi role | `{code, orderId, subtotal}` → **201** `{lockId, discount, finalTotal, expiresAt}` (TTL 15′); retry cùng `orderId` → **200** cùng id; không dùng được → **409** (chưa tới / hết hạn / hết lượt / dưới `minOrder`) |
+| `POST /v1/vouchers/commit` | mọi role | `{lockId}` → **200** (`used+1, locked−1`, idempotent); quá TTL → **410**; đã release → **409** |
+| `POST /v1/vouchers/release` | mọi role | `{lockId}` → **200** idempotent; đã commit → **409** |
+
+Sweeper (`SL-2.4`) trả lượt cho lock bị bỏ quên: mặc định 60 s/nhịp, batch 100, `FOR UPDATE SKIP LOCKED`. Chỉnh bằng
+`SHOPLAB_PROMOTION_SWEEP_INTERVAL_MS` · `_INITIAL_DELAY_MS` · `_BATCH_SIZE` · `PROMOTION_LOCK_TTL`.
 
 ### api-gateway — `SL-1.2`
 

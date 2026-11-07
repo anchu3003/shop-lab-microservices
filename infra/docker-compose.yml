@@ -343,6 +343,53 @@ services:
       - shoplab-net
 
   # ---------------------------------------------------------------------------
+  # promotion-service — voucher / khuyến mãi (SL-2.4): lock / commit / release 1 lượt voucher.
+  #
+  # Cùng pattern conditional UPDATE như inventory (ADR-0006 D1): bất biến `used + locked <= quota`
+  # do DB canh, không đọc-rồi-ghi.
+  # ---------------------------------------------------------------------------
+  promotion-service:
+    build:
+      context: ..
+      dockerfile: services/promotion-service/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-promotion-service:local
+    container_name: shoplab-promotion-service
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${PROMOTION_SERVICE_PORT:-8086}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SHOPLAB_DEBUG_ENDPOINTS: ${SHOPLAB_DEBUG_ENDPOINTS:-true}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB_PROMOTION: ${POSTGRES_DB_PROMOTION:-promotion}
+      POSTGRES_USER: ${POSTGRES_USER:-shoplab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
+      IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      PROMOTION_LOCK_TTL: ${PROMOTION_LOCK_TTL:-15m}
+      SHOPLAB_PROMOTION_SWEEP_INTERVAL_MS: ${SHOPLAB_PROMOTION_SWEEP_INTERVAL_MS:-60000}
+      SHOPLAB_PROMOTION_SWEEP_INITIAL_DELAY_MS: ${SHOPLAB_PROMOTION_SWEEP_INITIAL_DELAY_MS:-30000}
+      SHOPLAB_PROMOTION_SWEEP_BATCH_SIZE: ${SHOPLAB_PROMOTION_SWEEP_BATCH_SIZE:-100}
+    ports:
+      - "${PROMOTION_SERVICE_PORT:-8086}:${PROMOTION_SERVICE_PORT:-8086}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${SERVER_PORT}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    networks:
+      - shoplab-net
+
+  # ---------------------------------------------------------------------------
   # api-gateway — cửa vào duy nhất (SL-1.2): route /v1/** + verify JWT qua JWKS của identity.
   #
   # Không có DB: gateway không sở hữu dữ liệu nào (architecture.md §5) → readiness check TCP
@@ -375,6 +422,7 @@ services:
       # localhost (localhost là chính gateway).
       CATALOG_SERVICE_URL: ${CATALOG_SERVICE_URL:-http://catalog-service:8082}
       INVENTORY_SERVICE_URL: ${INVENTORY_SERVICE_URL:-http://inventory-service:8084}
+      PROMOTION_SERVICE_URL: ${PROMOTION_SERVICE_URL:-http://promotion-service:8086}
       GATEWAY_CONNECT_TIMEOUT: ${GATEWAY_CONNECT_TIMEOUT:-2s}
       GATEWAY_READ_TIMEOUT: ${GATEWAY_READ_TIMEOUT:-5s}
     ports:

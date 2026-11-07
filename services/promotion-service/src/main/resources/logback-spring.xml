@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  logback-spring.xml — chỉ nối "tên service" vào cấu hình log dùng chung.
+
+  Toàn bộ format JSON nằm ở shared lib (packages/service-commons/src/main/resources/logback-shoplab.xml)
+  để mọi service log giống nhau. Ở đây chỉ lấy spring.application.name và include file đó vào.
+-->
+<configuration>
+
+  <springProperty scope="context" name="SHOPLAB_SERVICE_NAME"
+                  source="spring.application.name" defaultValue="unknown"/>
+
+  <include resource="logback-shoplab.xml"/>
+
+  <root level="INFO">
+    <appender-ref ref="SHOPLAB_JSON"/>
+  </root>
+
+</configuration>
