@@ -230,7 +230,7 @@ cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutt
 | `catalog-service` | Product, SKU, category, brand, media ref, giá niêm yết | `products`, `skus`, `categories`, `brands` | PostgreSQL + Redis cache | REST/gRPC | 1 |
 | `cart-service` | Giỏ hàng tạm, merge cart khi login, TTL | `carts`, `cart_items` | Redis (TTL) | REST | 2 |
 | `inventory-service` | Tồn kho theo SKU × warehouse; **reserve / commit / release** (conditional `UPDATE`, ADR-0006) | `stock`, `reservations` (+`reservation_items`), `stock_ledger` | PostgreSQL | REST | 2 |
-| `promotion-service` | Voucher, campaign, flash sale, rule tính giảm giá | `vouchers`, `campaigns`, `redemptions` | PostgreSQL + Redis | REST + event | 2 |
+| `promotion-service` | Voucher (PERCENT/FIXED), rule tính giảm giá, **lock/commit/release** 1 lượt dùng | `vouchers`, `voucher_locks` | PostgreSQL | REST | 2 |
 | `order-service` | Vòng đời order, orchestrate checkout bằng **Saga** | `orders`, `order_items`, `order_status_history`, `outbox` | PostgreSQL | REST + event | 2 |
 | `payment-service` | Payment intent, nhận callback provider, refund, **idempotency** | `payments`, `transactions`, `refunds`, `idempotency_keys`, `outbox` | PostgreSQL | REST + webhook + event | 2 |
 | `notification-service` | Email / SMS / Push theo template | `notification_logs`, `templates` | PostgreSQL | **async consumer** | 3 |
@@ -458,8 +458,10 @@ stock(sku_id, warehouse_id, on_hand, reserved, version)   -- PK (sku_id, warehou
 
 carts  -- Redis hash: { sku_id: {qty, price_snapshot} }, key = user_id hoặc guest_token
 
-vouchers(id, code, type, value, min_order, quota, used, locked, start_at, end_at)
-  └─ voucher_locks(id, voucher_id, order_id, status, expires_at)   -- lock/commit/release giống reservation
+vouchers(id, code UNIQUE, type, value, max_discount, min_order, quota, used, locked, start_at, end_at)
+  -- CHECK used + locked <= quota (bất biến chống bán quá quota), CHECK end_at > start_at
+  └─ voucher_locks(id, voucher_id, order_id, status, subtotal, discount, expires_at)
+       -- 1 row/ORDER; unique (order_id) WHERE status='LOCKED'; snapshot subtotal+discount lúc lock
 
 orders(id, user_id, status, subtotal, discount, total, currency, idempotency_key, payment_intent_id, created_at)
   └─ order_items(id, order_id, sku_id, sku_code, title, unit_price, currency, qty, line_total)  -- snapshot, KHÔNG FK
@@ -769,3 +771,4 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 
 | 2026-11-07 | `SL-2.2`: thêm **`inventory-service`** (8084, DB `inventory`) — `reserve`/`commit`/`release` theo ADR-0006 D1: chống oversell bằng **conditional `UPDATE`** (`on_hand - reserved >= qty` trong câu lệnh, không Redis lock) · reservation **TTL 15′** + lazy expire ở `commit` (sweeper → `SL-2.3`) · idempotent theo `orderId` (unique `(order_id) WHERE status=PENDING`) · `stock_ledger` append-only 2 cột delta để đối soát · **JDBC thay JPA** (cần `rowsAffected` của câu UPDATE) · cập nhật §5, §6.1, §8.4 | bạn + AI |
 | 2026-11-07 | `SL-2.3`: `inventory-service` thêm **sweeper TTL** (`@Scheduled` fixedDelay 60 s, batch 100, `FOR UPDATE SKIP LOCKED` + conditional `markStatus`) — reservation `PENDING` quá hạn tự `EXPIRED` + trả chỗ + ledger `EXPIRE`; trả `TD-15` · thêm test **100 request song song** cùng SKU chứng minh không oversell (10×201 / 90×409) | bạn + AI |
+| 2026-11-07 | `SL-2.4`: thêm **`promotion-service`** (8086, DB `promotion`) — voucher `PERCENT` (cap `max_discount`) + `FIXED`, `lock`/`commit`/`release` theo cùng pattern conditional `UPDATE` của inventory; bất biến `used + locked <= quota` do CHECK canh; snapshot `discount` tại lúc lock; sweeper TTL trả lượt bị bỏ quên (`SKIP LOCKED`); cập nhật §5, §8.4 | bạn + AI |

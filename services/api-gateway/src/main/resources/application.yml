@@ -84,6 +84,9 @@ shoplab:
       # SL-2.2: inventory-service (reserve/commit/release). Cần token — không nằm trong public-paths.
       - path-prefix: /v1/stock
         base-url: ${INVENTORY_SERVICE_URL:http://localhost:8084}
+      # SL-2.4: promotion-service (voucher lock/commit/release + admin CRUD). Cần token.
+      - path-prefix: /v1/vouchers
+        base-url: ${PROMOTION_SERVICE_URL:http://localhost:8086}
       # JWKS công bố qua gateway để client chỉ cần biết MỘT địa chỉ.
       - path-prefix: /.well-known
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}

@@ -155,7 +155,7 @@ jobs:
       fail-fast: false
       matrix:
         # Thêm service mới ⇒ thêm tên thư mục trong services/ vào đây.
-        service: [service-template, identity-service, catalog-service, inventory-service, api-gateway]
+        service: [service-template, identity-service, catalog-service, inventory-service, promotion-service, api-gateway]
     steps:
       - uses: actions/checkout@v4
 

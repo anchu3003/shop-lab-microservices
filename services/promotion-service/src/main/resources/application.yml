@@ -1,0 +1,88 @@
+# ==============================================================================
+# application.yml — cấu hình promotion-service (SL-2.2)
+#
+# Nguyên tắc 12-factor (AGENTS.md §6): mọi giá trị phụ thuộc môi trường đọc từ env; file này chỉ giữ
+# default hợp lý cho máy dev. Không hard-code secret.
+# ==============================================================================
+
+spring:
+  application:
+    name: promotion-service
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+  # Scheduler của sweeper (SL-2.3): 1 thread là đủ (job tuần tự, fixedDelay).
+  # `await-termination` để lúc shutdown KHÔNG cắt ngang transaction đang chạy — nếu cắt, connection bị
+  # đóng giữa lúc rollback và log đầy lỗi "Connection is closed" (đã gặp trong IT).
+  task:
+    scheduling:
+      pool:
+        size: 1
+      shutdown:
+        await-termination: true
+        await-termination-period: 10s
+
+  datasource:
+    # Database RIÊNG của service (database per service — AGENTS.md §6).
+    # Tên DB do init script của Postgres tạo sẵn (infra/init/01-create-databases.sh).
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB_PROMOTION:promotion}
+    username: ${POSTGRES_USER:shoplab}
+    password: ${POSTGRES_PASSWORD:}
+    hikari:
+      # Phase 2 chỉ 1 instance. Reserve là write-heavy nhưng đoạn critical rất ngắn (1 câu UPDATE);
+      # giữ pool nhỏ để thấy nghẽn thật ở Phase 4 thay vì che nó bằng 50 connection.
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:6}
+      minimum-idle: 1
+      connection-timeout: 3000
+      pool-name: promotion-pool
+
+  flyway:
+    enabled: true
+    # FAIL-CLOSED: chỉ migration, không có seed (SL-1.15). Tồn kho tạo bằng PUT /v1/stock/{skuId}.
+    locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}
+    baseline-on-migrate: false
+
+server:
+  port: ${SERVER_PORT:8086}
+  shutdown: graceful
+
+shoplab:
+  env: ${APP_ENV:local}
+  debug-endpoints: ${SHOPLAB_DEBUG_ENDPOINTS:false}
+  git-commit: ${SHOPLAB_GIT_COMMIT:unknown}
+
+  jwt:
+    # promotion là RESOURCE SERVER: chỉ tải public key qua JWKS của identity.
+    jwks-uri: ${IDENTITY_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+    # PHẢI khớp `IDENTITY_JWT_ISSUER` của identity-service, nếu không mọi token đều bị 401.
+    issuer: ${IDENTITY_JWT_ISSUER:https://identity.shoplab.local}
+
+  readiness:
+    dependencies:
+      # Phase 2 giữ check mức TCP (revisit ADR-0004: check sâu khi ≥ 2 service cần).
+      - name: postgres
+        host: ${POSTGRES_HOST:localhost}
+        port: ${POSTGRES_PORT:5432}
+        timeout: 500ms
+
+  promotion:
+    # TTL giữ chỗ 1 lượt voucher. Khớp TTL reservation của inventory (15 phút): checkout giữ cả hai
+    # trong cùng một phiên thanh toán, lệch nhau chỉ tạo thêm nhánh compensating không cần thiết.
+    lock-ttl: ${PROMOTION_LOCK_TTL:15m}
+    # Sweeper trả lượt voucher bị bỏ quên (SL-2.4). fixedDelay ⇒ nhịp sau chờ nhịp trước xong.
+    sweep-interval-ms: ${SHOPLAB_PROMOTION_SWEEP_INTERVAL_MS:60000}
+    sweep-initial-delay-ms: ${SHOPLAB_PROMOTION_SWEEP_INITIAL_DELAY_MS:30000}
+    sweep-batch-size: ${SHOPLAB_PROMOTION_SWEEP_BATCH_SIZE:100}
+
+logging:
+  level:
+    root: INFO
+    com.shoplab: ${LOG_LEVEL:INFO}
+
+# --- OpenAPI (SL-1.8) ---
+# Chỉ để XUẤT spec (docs/api/openapi.yaml), không phục vụ client thật.
+# `OpenApiEnvironmentPostProcessor` (commons) ép `false` khi APP_ENV != local ⇒ fail-closed.
+springdoc:
+  api-docs:
+    enabled: ${SHOPLAB_OPENAPI_ENABLED:true}
+    path: /v3/api-docs

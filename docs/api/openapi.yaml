@@ -2,7 +2,8 @@ openapi: 3.0.1
 info:
   title: ShopLab API — Phase 1 + Phase 2 (inventory)
   version: v1
-  description: 'API hiện có: identity (auth/RBAC) + catalog (product/SKU) + inventory (tồn kho: reserve/commit/release).
+  description: 'API hiện có: identity (auth/RBAC) + catalog (product/SKU) + inventory (tồn kho) + promotion
+    (voucher).
 
 
     Sinh tự động bằng `bash tools/export-openapi.sh` — KHÔNG sửa file này bằng tay.
@@ -1105,6 +1106,256 @@ paths:
                 $ref: '#/components/schemas/ApiError'
       security:
       - bearerAuth: []
+  /v1/vouchers:
+    post:
+      tags:
+      - Voucher
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVoucherRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/VoucherResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+  /v1/vouchers/commit:
+    post:
+      tags:
+      - VoucherLock
+      operationId: commit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoucherLockRefRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/VoucherLockResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+  /v1/vouchers/lock:
+    post:
+      tags:
+      - VoucherLock
+      operationId: lock
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LockVoucherRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/VoucherLockResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+  /v1/vouchers/release:
+    post:
+      tags:
+      - VoucherLock
+      operationId: release
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoucherLockRefRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/VoucherLockResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+  /v1/vouchers/{code}:
+    get:
+      tags:
+      - Voucher
+      operationId: get
+      parameters:
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/VoucherResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
   /version:
     get:
       tags:
@@ -1242,6 +1493,45 @@ components:
           minimum: 0
       required:
       - code
+    CreateVoucherRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          maxLength: 40
+          minLength: 0
+          pattern: '[A-Za-z0-9_-]+'
+        type:
+          type: string
+          enum:
+          - PERCENT
+          - FIXED
+        value:
+          type: number
+          minimum: 0.01
+        maxDiscount:
+          type: number
+          minimum: 0.0
+        minOrder:
+          type: number
+          minimum: 0.0
+        quota:
+          type: integer
+          format: int32
+          minimum: 1
+        startAt:
+          type: string
+          format: date-time
+        endAt:
+          type: string
+          format: date-time
+      required:
+      - code
+      - endAt
+      - quota
+      - startAt
+      - type
+      - value
     CurrentUserResponse:
       type: object
       properties:
@@ -1269,6 +1559,22 @@ components:
       required:
       - qty
       - skuId
+    LockVoucherRequest:
+      type: object
+      properties:
+        code:
+          type: string
+          minLength: 1
+        orderId:
+          type: string
+          format: uuid
+        subtotal:
+          type: number
+          minimum: 0.0
+      required:
+      - code
+      - orderId
+      - subtotal
     LoginRequest:
       type: object
       properties:
@@ -1521,6 +1827,78 @@ components:
         role:
           type: string
         createdAt:
+          type: string
+          format: date-time
+    VoucherLockRefRequest:
+      type: object
+      properties:
+        lockId:
+          type: string
+          format: uuid
+      required:
+      - lockId
+    VoucherLockResponse:
+      type: object
+      properties:
+        lockId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        voucherCode:
+          type: string
+        status:
+          type: string
+          enum:
+          - LOCKED
+          - COMMITTED
+          - RELEASED
+          - EXPIRED
+        subtotal:
+          type: number
+        discount:
+          type: number
+        finalTotal:
+          type: number
+        expiresAt:
+          type: string
+          format: date-time
+    VoucherResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        type:
+          type: string
+          enum:
+          - PERCENT
+          - FIXED
+        value:
+          type: number
+        maxDiscount:
+          type: number
+        minOrder:
+          type: number
+        quota:
+          type: integer
+          format: int32
+        used:
+          type: integer
+          format: int32
+        locked:
+          type: integer
+          format: int32
+        available:
+          type: integer
+          format: int32
+        startAt:
+          type: string
+          format: date-time
+        endAt:
           type: string
           format: date-time
   securitySchemes:
