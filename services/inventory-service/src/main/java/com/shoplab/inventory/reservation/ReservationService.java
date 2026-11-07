@@ -110,6 +110,36 @@ public class ReservationService {
   }
 
   /**
+   * Dọn reservation {@code PENDING} đã quá hạn (SL-2.3) — gọi từ {@code ReservationSweeper}.
+   *
+   * <p>Xử lý theo <b>batch</b> và <b>idempotent theo trạng thái</b>: chỉ khi {@code
+   * markStatus(PENDING → EXPIRED)} trả 1 mới release stock. Nếu trả 0 nghĩa là một đường khác
+   * (client commit đúng lúc, hoặc sweeper instance khác) đã đổi trạng thái trước ⇒ bỏ qua,
+   * **không** trả chỗ lần 2.
+   *
+   * <p>Vì sao cần job này dù đã có lazy expire ở {@code commit}: user bỏ ngang hẳn thì không ai gọi
+   * commit ⇒ thiếu job là hàng bị treo vĩnh viễn ("cháy hàng ảo").
+   *
+   * @return số reservation thực sự đã expire trong lần chạy này
+   */
+  @Transactional
+  public int expireOverdue(Instant now) {
+    List<ReservationRecord> overdue =
+        reservations.findExpiredPending(now, properties.sweepBatchSize());
+    int expired = 0;
+    for (ReservationRecord reservation : overdue) {
+      if (reservations.markStatus(
+              reservation.id(), ReservationStatus.PENDING, ReservationStatus.EXPIRED, now)
+          == 0) {
+        continue; // đã bị xử lý bởi request/instance khác — không release 2 lần
+      }
+      releaseStock(reservation, now, LedgerReason.EXPIRE);
+      expired++;
+    }
+    return expired;
+  }
+
+  /**
    * Chốt hàng: hàng rời kho thật ({@code on_hand} và {@code reserved} cùng giảm).
    *
    * <p><b>Idempotent</b>: commit lần 2 trả lại reservation ở trạng thái COMMITTED, không trừ kho

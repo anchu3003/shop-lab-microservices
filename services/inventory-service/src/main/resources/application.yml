@@ -11,6 +11,17 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 30s
 
+  # Scheduler của sweeper (SL-2.3): 1 thread là đủ (job tuần tự, fixedDelay).
+  # `await-termination` để lúc shutdown KHÔNG cắt ngang transaction đang chạy — nếu cắt, connection bị
+  # đóng giữa lúc rollback và log đầy lỗi "Connection is closed" (đã gặp trong IT).
+  task:
+    scheduling:
+      pool:
+        size: 1
+      shutdown:
+        await-termination: true
+        await-termination-period: 10s
+
   datasource:
     # Database RIÊNG của service (database per service — AGENTS.md §6).
     # Tên DB do init script của Postgres tạo sẵn (infra/init/01-create-databases.sh).
@@ -62,6 +73,11 @@ shoplab:
     reservation-ttl: ${INVENTORY_RESERVATION_TTL:15m}
     # Trần số SKU trong 1 reservation: chặn request 10.000 dòng làm nghẽn DB bằng 1 câu API.
     max-items-per-reservation: ${INVENTORY_MAX_ITEMS:50}
+    # Sweeper (SL-2.3): dọn reservation PENDING quá hạn ⇒ trả chỗ, tránh "cháy hàng ảo".
+    # `fixedDelay` (không phải fixedRate) ⇒ nhịp sau chờ nhịp trước xong, DB chậm thì tự giãn.
+    sweep-interval-ms: ${SHOPLAB_INVENTORY_SWEEP_INTERVAL_MS:60000}
+    sweep-initial-delay-ms: ${SHOPLAB_INVENTORY_SWEEP_INITIAL_DELAY_MS:30000}
+    sweep-batch-size: ${SHOPLAB_INVENTORY_SWEEP_BATCH_SIZE:100}
 
 logging:
   level:

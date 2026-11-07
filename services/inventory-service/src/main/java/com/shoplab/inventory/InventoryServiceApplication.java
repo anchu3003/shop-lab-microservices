@@ -6,6 +6,7 @@ import com.shoplab.inventory.config.RequiredEnv;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * inventory-service — nguồn sự thật về <b>tồn kho</b> (SL-2.2).
@@ -19,6 +20,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
  */
 @SpringBootApplication
 @ConfigurationPropertiesScan
+@EnableScheduling
 public class InventoryServiceApplication {
 
   public static void main(String[] args) {

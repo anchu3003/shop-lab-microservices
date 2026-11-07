@@ -110,6 +110,8 @@ Bảng `stock` (DB `inventory`): 1 row = (`sku_id`, `warehouse_id`); Phase 2 m�
 - **TTL 15 phút** (khớp §6.1). Hết hạn ⇒ `status = EXPIRED` + `release` + ghi ledger. Sweeper `@Scheduled` mỗi 60 s
   quét `status = 'PENDING' AND expires_at < now()`; **thêm** kiểm tra lazy ngay trong `commit`/`reserve`
   (`expires_at < now()` ⇒ `410 RESERVATION_EXPIRED`) để không phụ thuộc đồng hồ sweeper.
+  *(Triển khai ở `SL-2.3`: batch 100/nhịp + `FOR UPDATE SKIP LOCKED` + conditional `markStatus` ⇒ chạy N instance
+  vẫn không trả chỗ 2 lần — giải quyết `TD-15`.)*
 - `promotion-service` dùng **cùng pattern** trên `vouchers.locked`:
   `UPDATE vouchers SET locked = locked + 1 WHERE code = :code AND locked + used < quota AND now() BETWEEN start_at AND end_at`.
 

@@ -38,7 +38,7 @@ class StockServiceTest {
       new StockService(
           stock,
           ledger,
-          new InventoryProperties(WAREHOUSE, Duration.ofMinutes(15), 50),
+          new InventoryProperties(WAREHOUSE, Duration.ofMinutes(15), 50, 100),
           Clock.fixed(NOW, ZoneOffset.UTC));
 
   @Test

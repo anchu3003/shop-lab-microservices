@@ -307,7 +307,7 @@ sequenceDiagram
 | Điểm | Chốt | Hệ quả |
 |---|---|---|
 | Chống oversell | **conditional `UPDATE`** trên `stock`: `… WHERE on_hand - reserved >= :qty`; `0` row ⇒ `409` (không dùng Redis lock) | Nguyên tử ở row lock của DB, không thêm hạ tầng; reserve nhiều SKU = 1 transaction, sắp `sku_id` để tránh deadlock |
-| Reservation | TTL **15 phút**; sweeper `@Scheduled` 60 s + kiểm tra lazy ở `commit` (`410 RESERVATION_EXPIRED`) | Hàng bị giữ sẽ được trả lại kể cả khi process restart |
+| Reservation | TTL **15 phút**; sweeper `@Scheduled` 60 s (batch 100, `FOR UPDATE SKIP LOCKED`) + lazy expire ở `commit` (`410`) | Hàng bị giữ được trả lại kể cả khi process restart; nhiều instance sweeper vẫn không trả chỗ 2 lần (`SL-2.3`) |
 | Idempotency | Bảng `idempotency_keys` (Postgres), PK `(scope, key)`, `scope = userId:endpoint`; có `request_hash` + lưu response ⇒ retry **replay** đúng kết quả cũ | Bấm 2 lần / retry sau timeout không tạo 2 order; Redis chỉ dùng làm fast-path sau này |
 | `order_items` | **Snapshot** (`sku_code`, `title`, `unit_price`, `currency`) + `sku_id` không FK | Hoá đơn bất biến; đổi giá/xoá SKU ở `catalog` không làm sai đơn cũ |
 | Sync vs async | Phase 2 **sync REST** (timeout mỗi bước 300–800 ms) + compensating | p99 mục tiêu ~125 ms; async/outbox để Phase 3 (có baseline để so sánh) |
@@ -768,3 +768,4 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-07 | `SL-2.11`: `catalog-service` **soft delete** product (ADR-0006 D5) — `DELETE` không xoá row nữa mà set `status='ARCHIVED'` + `deleted_at` và archive SKU của nó bằng **1 câu UPDATE**; list/get/ghi coi product đã xoá là **không tồn tại (404)**; bất biến `ARCHIVED ⟺ deleted_at != null` do **CHECK constraint** ở DB canh; trả `TD-12`; cập nhật §8.4 (`sku.status`) | bạn + AI |
 
 | 2026-11-07 | `SL-2.2`: thêm **`inventory-service`** (8084, DB `inventory`) — `reserve`/`commit`/`release` theo ADR-0006 D1: chống oversell bằng **conditional `UPDATE`** (`on_hand - reserved >= qty` trong câu lệnh, không Redis lock) · reservation **TTL 15′** + lazy expire ở `commit` (sweeper → `SL-2.3`) · idempotent theo `orderId` (unique `(order_id) WHERE status=PENDING`) · `stock_ledger` append-only 2 cột delta để đối soát · **JDBC thay JPA** (cần `rowsAffected` của câu UPDATE) · cập nhật §5, §6.1, §8.4 | bạn + AI |
+| 2026-11-07 | `SL-2.3`: `inventory-service` thêm **sweeper TTL** (`@Scheduled` fixedDelay 60 s, batch 100, `FOR UPDATE SKIP LOCKED` + conditional `markStatus`) — reservation `PENDING` quá hạn tự `EXPIRED` + trả chỗ + ledger `EXPIRE`; trả `TD-15` · thêm test **100 request song song** cùng SKU chứng minh không oversell (10×201 / 90×409) | bạn + AI |

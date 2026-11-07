@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.2` ✅ **Done** — inventory service đã lên `main`) |
-| **Ticket tiếp theo** | `SL-2.3` — inventory: test đồng thời 100 request + sweeper TTL · `SL-2.1` — `cart-service` (Redis) |
-| **Số ticket chi tiết hiện có** | 26 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 3) |
+| **Ticket đang làm** | — (`SL-2.3` ✅ **Done** — sweeper TTL + bằng chứng 100 request đồng thời) |
+| **Ticket tiếp theo** | `SL-2.4` — `promotion-service` (voucher lock/commit/release) · `SL-2.1` — `cart-service` (Redis) |
+| **Số ticket chi tiết hiện có** | 27 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 4) |
 
 ---
 
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 3 / 13 |
+| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 4 / 13 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -207,7 +207,7 @@ $ md5sum docs/api/openapi.yaml
 | 1 | `SL-2.0` | **ADR-0006** chốt mô hình checkout (reservation TTL · idempotency key · snapshot vs FK · sync Phase 2 / async Phase 3 · quyết định `TD-12` soft delete) | S | ✅ Done |
 | 2 | `SL-2.1` | `cart-service` (8083, Redis): add/update/remove/get, TTL, **merge cart khi login** | M | Todo |
 | 3 | `SL-2.2` | `inventory-service` (8084, DB `inventory`): schema `stock`/`reservations`/`stock_ledger` + API `reserve`/`commit`/`release`; **atomic** chống oversell | M | ✅ Done |
-| 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M | Todo |
+| 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M | ✅ Done |
 | 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | Todo |
 | 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M | Todo |
 | 7 | `SL-2.6` | **Checkout Saga** (orchestration): cart → reserve → lock voucher → payment → confirm; **compensating** cho mọi nhánh fail; lưu saga state | L → tách 2 | Todo |
@@ -661,6 +661,148 @@ $ bash tools/export-openapi.sh VALIDATE PASS · 18 path · 23 operation · 12 op
   Redis Lua đã ghi ở ADR-0006 Revisit (>1.000 reserve/s hoặc p99 > 50 ms).
 
 
+### SL-2.3 — inventory: sweeper TTL + test 100 request đồng thời
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 2 — Core commerce flow |
+| **Phụ thuộc** | `SL-2.2` (reserve/commit/release + lazy expire); chặn `SL-2.6` (saga cần hàng không bị treo) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+`SL-2.2` đã có **lazy expire**: ai gọi `commit` muộn thì nhận 410 và hàng được trả lại. Nhưng trường hợp phổ biến nhất
+lại là user **bỏ ngang hẳn** — không gọi commit, cũng không gọi release. Khi đó `reserved` bị giữ vô thời hạn ⇒ **"cháy
+hàng ảo"**: kho còn hàng thật nhưng không ai mua được. Phải có job nền dọn.
+
+Đồng thời phase này cần **bằng chứng bằng số liệu** cho tuyên bố "không oversell": 100 request đồng thời cùng 1 SKU thì
+đúng bằng số suất còn lại được nhận, phần còn lại bị từ chối — không phải "tin vào code".
+
+**Mục tiêu**
+
+1. Reservation quá `expires_at` mà vẫn `PENDING` được **tự động** chuyển `EXPIRED`, trả chỗ và ghi ledger `EXPIRE` —
+   không phụ thuộc việc client có gọi API hay không.
+2. Có test chứng minh **không oversell** dưới 100 request song song, kèm số liệu đối soát (`stock` vs `stock_ledger`).
+
+**In scope**
+
+- `ReservationRepository.findExpiredPending(now, limit)` với `FOR UPDATE SKIP LOCKED` + `ORDER BY expires_at LIMIT n`.
+- `ReservationService.expireOverdue(now)`: batch, mỗi reservation `markStatus(PENDING→EXPIRED)` = 1 thì mới
+  `releaseStock(EXPIRE)`; trả số đã xử lý.
+- `ReservationSweeper` (`@Scheduled`, interval/batch đọc từ env) + `@EnableScheduling`; lỗi ở 1 nhịp **không** làm chết
+  scheduler.
+- `InventoryProperties.sweepBatchSize` + `application.yml` / `.env.example` / compose: `sweep-interval-ms`,
+  `sweep-initial-delay-ms`, `sweep-batch-size`.
+- Test: unit (expire + skip khi đã bị xử lý + sweeper delegate) · IT (**100 request HTTP song song**, sweeper chạy thật
+  với interval ngắn, sweeper không đụng reservation còn hạn).
+
+**Out of scope**
+
+- Không thêm endpoint admin chạy sweeper tay (không đổi API surface ⇒ OpenAPI không đổi).
+- Không đụng `TD-14` (job dọn `idempotency_keys` thuộc `order-service`, chưa tồn tại).
+- Không tối ưu throughput write của 1 SKU hot (Redis Lua — điều kiện ở ADR-0006 Revisit, Phase 4).
+
+**Acceptance Criteria**
+
+- [x] Reservation `PENDING` quá hạn được sweeper chuyển `EXPIRED`, `reserved` giảm đúng `qty`, `on_hand` **không** đổi.
+- [x] Mỗi lần expire ghi **đúng 1** dòng ledger `EXPIRE` với `delta_reserved = -qty`.
+- [x] Sweeper **không** đụng reservation `PENDING` còn hạn, và không đụng `COMMITTED/RELEASED/EXPIRED`.
+- [x] Sweeper chạy 2 vòng liên tiếp không trả chỗ 2 lần (idempotent theo trạng thái).
+- [x] 100 request `POST /v1/stock/reserve` song song, cùng SKU, tồn kho 10, mỗi request qty=1 ⇒ **đúng 10 × 201** và
+      **90 × 409**; `reserved = on_hand = 10`; không có `reserved < 0`; `Σ delta_reserved = 10`.
+- [x] Sweeper chạy được trong container compose (log có số reservation đã dọn) và không làm chậm probe `/health`.
+- [x] Unit + IT xanh; `e2e-smoke` 17/17 (không regress).
+
+**Ghi chú kỹ thuật**
+
+- **`FOR UPDATE SKIP LOCKED`** thay vì advisory lock: 2 instance cùng quét thì mỗi reservation chỉ bị **một** instance
+  lấy lock ⇒ trả `TD-15` luôn trong ticket này thay vì để thành nợ. `ORDER BY expires_at` để cái quá hạn lâu nhất được
+  dọn trước (giới hạn batch không làm reservation cũ bị bỏ đói).
+- **Chốt chặn thứ hai**: `markStatus(PENDING→EXPIRED)` trả 0 ⇒ bỏ qua, **không** release. Nếu chỉ tin vào
+  `SKIP LOCKED` thì một đường khác (commit của client) chen vào giữa vẫn có thể gây trả chỗ 2 lần.
+- **Batch 100/nhịp, nhịp 60 s**: đủ dọn 100 reservation/phút; chậm hơn nữa thì hàng treo lâu, nhanh quá thì tốn query vô ích.
+- Sweeper **bắt `RuntimeException`** trong `sweep()`: exception lọt ra khỏi `@Scheduled` làm nhịp đó chết và log đầy stack
+  trace; bắt lại thì nhịp sau vẫn chạy.
+- Test 100 request dùng **HTTP thật** (đúng nghĩa "100 request"): thread pool 20 gửi 100 request đồng thời; kỳ vọng đúng
+  10 thành công — con số này **không phụ thuộc thứ tự**, chỉ phụ thuộc tồn kho.
+
+
+**Kết quả verify** *(chạy thật: Docker + Postgres 16, không phải suy luận)*
+
+**1) `mvn -B -ntp verify` toàn repo — BUILD SUCCESS (01:13)**
+
+```text
+[INFO] ShopLab :: Service Commons ......................... SUCCESS [  2.396 s]
+[INFO] ShopLab :: Service Template ........................ SUCCESS [  6.751 s]
+[INFO] ShopLab :: Identity Service ........................ SUCCESS [ 20.624 s]
+[INFO] ShopLab :: Catalog Service ......................... SUCCESS [ 17.461 s]
+[INFO] ShopLab :: Inventory Service ....................... SUCCESS [ 16.265 s]
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [  8.653 s]
+[INFO] BUILD SUCCESS   Total time: 01:13 min
+```
+
+`inventory` unit **44** (+4: `expireOverdue` ×2 · `ReservationSweeperTest` ×2) · IT **15** (+3: 100 request song song ·
+sweeper expire thật · sweeper không đụng reservation còn hạn). checkstyle + spotless sạch.
+
+**2) Sweeper trên container thật** (`interval=2s` cho stack local, `bash /tmp/verify-sweeper.sh`)
+
+```text
+1) reserve 2/5 → reservationId=451fbfac…      trước: onHand=5 reserved=2 available=3
+2) đẩy expires_at về quá khứ, chờ sweeper →  sau ~300ms: reserved=0
+3) DB sau sweep:
+   reservation_status=EXPIRED
+   stock on_hand=5 reserved=0
+   ledger EXPIRE rows=1
+4) log trong container: "sweeper: đã expire 1 reservation quá hạn và trả chỗ"
+```
+
+**3) 100 request đồng thời cùng 1 SKU (tồn kho 10)**
+
+```text
+   bắn 100 curl song song, mỗi request qty=1 với orderId riêng:
+        10 201
+        90 409
+   DB sau bắn:
+   stock on_hand=10 reserved=10 available=0
+   số reservation PENDING=10
+   ledger sum(delta_reserved)=10
+   bất biến reserved<=on_hand: OK
+```
+
+⇒ **Không oversell**: đúng 10 suất được cấp, 90 request bị từ chối, và ledger là bằng chứng độc lập (10 lần giữ chỗ).
+
+**4) Regression**
+
+```text
+$ bash tools/e2e-smoke.sh   17 PASS / 0 FAIL · 13 request · 638 ms
+```
+
+**Sự cố trong lúc làm (bài học thật)**
+
+- IT ban đầu log đầy `Connection is closed` + `JDBC rollback failed`: sweeper vẫn chạy sau khi test xong, trong khi
+  Testcontainers **đã dừng Postgres** (context Spring được cache tới cuối JVM). Fix: `@DirtiesContext(AFTER_CLASS)` để
+  đóng context ngay sau class + `spring.task.scheduling.shutdown.await-termination` để không cắt ngang transaction.
+  Noise về **0** sau fix.
+- Chạy 2 lệnh `mvn verify` chồng nhau (một cái còn trong pipe) ⇒ lần sau đọc log thấy `BUILD FAILURE` không rõ nguyên
+  nhân. Bài học: **luôn redirect log ra file rồi grep**, đừng pipe trực tiếp khi còn job nền.
+
+**Learning note**
+
+- **Lazy expire và sweeper phục vụ 2 nhánh khác nhau, phải có cả hai**: lazy expire xử lý "client gọi muộn"; sweeper xử
+  lý "client không bao giờ gọi" (bỏ ngang). Chỉ có lazy expire ⇒ hàng treo vĩnh viễn; chỉ có sweeper ⇒ user commit ở
+  phút 15:01 nhận `200` sai. Hai đường, một bất biến.
+- **`FOR UPDATE SKIP LOCKED` biến "chạy N instance" thành chuyện của DB, không phải của app**: không cần advisory lock,
+  không cần leader election. Nhưng nó **không đủ một mình** — vẫn cần conditional `markStatus` làm chốt thứ hai cho
+  trường hợp client commit chen vào giữa lúc sweeper đang xử lý.
+- **Job nền phải "chết đúng cách"**: bắt `RuntimeException` trong `sweep()` để lỗi 1 nhịp không giết scheduler; và cấu
+  hình `await-termination` để shutdown không cắt transaction đang chạy.
+- **Bằng chứng oversell phải là số tuyệt đối, không phải tỉ lệ**: "10 thành công / 90 bị từ chối" + `Σ delta_reserved =
+  reserved` kiểm được bằng SQL; nếu chỉ assert `reserved <= on_hand` thì code sai kiểu "giữ ít hàng hơn thực tế" vẫn qua.
+- **Test đua phải bắn đồng thời thật**: dùng `CountDownLatch` cho 100 thread cùng nhả, và nới connection pool — nếu
+  pool nhỏ, request xếp hàng nên không còn đua, test "xanh" mà không chứng minh gì.
+
+
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
 
@@ -841,6 +983,10 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | SL-2.2 | **Idempotency có thể đến từ ràng buộc dữ liệu**: unique `(order_id) WHERE status='PENDING'` biến retry cùng `orderId` thành "tìm thấy row cũ" thay vì phải tự viết bảng dedupe như `idempotency_keys`. |
 | 2026-11-07 | SL-2.2 | **`@Transactional` mặc định rollback ⇒ mất phần bù trừ**: nhánh "commit khi hết hạn" vừa release stock vừa ném 410; nếu không khai `noRollbackFor` thì phần release bị xoá ⇒ hàng treo vĩnh viễn mà test HTTP vẫn thấy 410 "đúng". |
 | 2026-11-07 | SL-2.2 | **`mvn -pl <module> verify` không build module phụ thuộc** ⇒ phải `-am`; nếu không sẽ báo thiếu `shoplab-service-commons:jar` — lỗi trông như lỗi cấu hình repo chứ không phải lỗi code. |
+| 2026-11-07 | SL-2.3 | **Lazy expire và sweeper phục vụ 2 nhánh khác nhau — phải có cả hai**: lazy xử lý "client gọi muộn", sweeper xử lý "client không bao giờ gọi" (bỏ ngang). Chỉ lazy ⇒ hàng treo vĩnh viễn; chỉ sweeper ⇒ commit ở phút 15:01 bị trả 200 sai. |
+| 2026-11-07 | SL-2.3 | **`FOR UPDATE SKIP LOCKED` biến "chạy N instance" thành chuyện của DB**: không cần advisory lock / leader election. Nhưng **không đủ một mình** — vẫn cần conditional `markStatus` làm chốt thứ hai cho lúc client commit chen vào giữa. |
+| 2026-11-07 | SL-2.3 | **Job nền phải "chết đúng cách"**: bắt `RuntimeException` để 1 nhịp lỗi không giết scheduler, và `spring.task.scheduling.shutdown.await-termination` để shutdown không cắt transaction đang chạy (nếu cắt: `Connection is closed` + `JDBC rollback failed`). IT còn cần `@DirtiesContext(AFTER_CLASS)` để context đóng **trước** khi Testcontainers dừng Postgres. |
+| 2026-11-07 | SL-2.3 | **Bằng chứng oversell phải là số tuyệt đối**: "10 thành công / 90 bị từ chối" + `Σ delta_reserved = reserved` kiểm bằng SQL. Chỉ assert `reserved <= on_hand` thì code "giữ thiếu hàng" vẫn qua. Và test đua phải dùng `CountDownLatch` + pool đủ lớn, nếu không request xếp hàng thì không còn đua. |
 
 ---
 
@@ -866,7 +1012,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-12` | Chưa có **soft delete** cho product; `DELETE` là hard delete + cascade SKU | SL-1.6 | **Chốt ở `SL-2.0` · code xong ở `SL-2.11`** (ARCHIVED + `deleted_at` + CHECK constraint) | ✅ đã trả (SL-2.11) |
 | `TD-13` | **Reuse detection revoke cả chuỗi** ⇒ client hợp lệ vẫn có thể bị logout toàn phiên: 2 tab cùng refresh gần như đồng thời, mất mạng sau khi server đã rotate, hoặc retry tự động gửi lại token cũ | SL-1.4 (rà soát 2026-11-06) | Khi có phản ánh "tự nhiên bị logout" **hoặc** khi làm client thật (Phase 2) → cân nhắc **grace window ~30s** (trả token mới nhất trong chuỗi thay vì revoke) + client single-flight refresh | ✅ đã trả (SL-1.18) |
 | `TD-14` | Bảng `idempotency_keys` không có job dọn row quá 24h ⇒ phình dần (1 row/request checkout) | SL-2.0 | Khi có scheduler chạy thật (sweeper reservation ở `SL-2.3`) ⇒ gộp 1 job dọn cho cả 2 bảng | trung bình |
-| `TD-15` | Reservation sweeper là `@Scheduled` in-process ⇒ chạy trùng khi `inventory-service` > 1 instance | SL-2.0 | Khi `inventory-service` chạy ≥ 2 instance (→ `FOR UPDATE SKIP LOCKED` / advisory lock) | thấp |
+| `TD-15` | Reservation sweeper là `@Scheduled` in-process ⇒ chạy trùng khi `inventory-service` > 1 instance | SL-2.0 | **Đã trả ở `SL-2.3`**: `FOR UPDATE SKIP LOCKED` + conditional `markStatus` ⇒ N instance vẫn không trả chỗ 2 lần | ✅ đã trả (SL-2.3) |
 | `TD-16` | Chưa có API **restore/unarchive** product đã xoá mềm; bán lại cùng product phải tạo mới | SL-2.0 | Khi seller ẩn nhầm cần khôi phục **hoặc** có UI quản trị product | thấp |
 
 ## 8. Changelog
@@ -937,3 +1083,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | `SL-2.0` → `Done`: **ADR-0006** chốt mô hình checkout Phase 2 — (D1) chống oversell bằng **conditional `UPDATE`** trên `stock` (không Redis lock) · (D2) `idempotency_keys` ở Postgres, scope `userId:endpoint`, retry **replay response** · (D3) `order_items` **snapshot** giá/tên · (D4) **sync REST** Phase 2, async để Phase 3 · (D5) `TD-12` → soft delete product, sinh ticket **`SL-2.11`**. Cập nhật `architecture.md` §6.1/§8.4 + debt mới `TD-14`…`TD-16`. Docs-only, không đổi code. |
 | 2026-11-07 | `SL-2.11` → `Done`: `catalog-service` **soft delete** product (ADR-0006 D5, trả `TD-12` + `TD-10`). Migration `V3__add_soft_delete.sql` (`product.status`/`deleted_at`, `sku.status`, CHECK `ARCHIVED ⟺ deleted_at`, partial index) · `DELETE` = archive + bulk archive SKU (1 câu UPDATE) · mọi đường đọc/ghi lọc `deleted_at is null` (404) · `status` trả ra API + OpenAPI (3 schema). Verify thật: `mvn verify` **BUILD SUCCESS** (catalog 66 unit + **21 IT** trên Postgres Testcontainers; toàn repo xanh) · Flyway V3 trên container `success=t` · curl qua gateway: DELETE 204 → GET 404 → list 0 → DB `status=ARCHIVED` + `deleted_at` not null, SKU còn row và ARCHIVED · CHECK chặn cả 2 chiều sai · `e2e-smoke` 17/17 · OpenAPI export deterministic. |
 | 2026-11-07 | `SL-2.2` → `Done`: thêm **`inventory-service`** (8084, DB `inventory`) — `reserve`/`commit`/`release` chống oversell bằng **conditional UPDATE** (ADR-0006 D1), reservation **TTL 15′** + lazy expire, idempotent theo `orderId`, `stock_ledger` append-only 2 cột delta. Migration `V1__create_inventory.sql` (4 bảng + CHECK bất biến). JDBC thay JPA (cần `rowsAffected`). Hạ tầng: compose + gateway route `/v1/stock` + CI matrix + 4 Dockerfile cũ. `commons` thêm `GONE(410)`. Verify: `mvn verify` **BUILD SUCCESS** (inventory **40 unit + 12 IT** postgres thật, toàn repo xanh) · container `healthy` · luồng curl qua gateway: 201/200 idempotent · 409 + details · commit 10→7 · commit#2 không trừ 2 lần · release sau commit 409 · quá TTL **410** + trả chỗ · ledger khớp `(7,0)`/`(1,0)` · 401/403 đúng · `e2e-smoke` 17/17 · OpenAPI 18 path/23 operation. Sinh `SL-2.12` để trả `TD-3`. |
+| 2026-11-07 | `SL-2.3` → `Done`: `inventory-service` thêm **sweeper TTL** (`@Scheduled` fixedDelay 60 s, batch 100, `FOR UPDATE SKIP LOCKED` + conditional `markStatus`) — reservation `PENDING` quá hạn tự `EXPIRED` + trả chỗ + ledger `EXPIRE`; trả `TD-15`. Thêm test **100 request HTTP song song** cùng SKU: **đúng 10×201 / 90×409**, `reserved=10`, `Σ delta_reserved=10`, bất biến `reserved<=on_hand` OK. Verify: `mvn verify` **BUILD SUCCESS** (inventory 44 unit + 15 IT) · container thật: sweeper dọn trong ~300 ms, log `đã expire 1 reservation` · `e2e-smoke` 17/17. |

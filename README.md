@@ -484,6 +484,10 @@ Chống oversell bằng **conditional `UPDATE`** trên Postgres (ADR-0006 D1) �
 | `POST /v1/stock/commit` | mọi role | `{reservationId}` → **200** (idempotent); quá TTL → **410**; đã release → **409** |
 | `POST /v1/stock/release` | mọi role | `{reservationId}` → **200** (idempotent); đã commit → **409** |
 
+**Sweeper TTL** (`SL-2.3`): job nền dọn reservation `PENDING` quá hạn (user bỏ ngang) ⇒ trả chỗ, tránh "cháy hàng
+ảo". Mặc định 60 s/nhịp, batch 100, `FOR UPDATE SKIP LOCKED` (nhiều instance vẫn an toàn). Chỉnh bằng env:
+`SHOPLAB_INVENTORY_SWEEP_INTERVAL_MS` · `SHOPLAB_INVENTORY_SWEEP_INITIAL_DELAY_MS` · `SHOPLAB_INVENTORY_SWEEP_BATCH_SIZE`.
+
 Đối soát tồn kho (ledger append-only, 2 cột delta):
 
 ```sql
