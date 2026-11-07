@@ -2,6 +2,7 @@ package com.shoplab.catalog.product;
 
 import com.shoplab.catalog.category.CategoryRepository;
 import com.shoplab.catalog.sku.SkuRepository;
+import com.shoplab.catalog.sku.SkuStatus;
 import com.shoplab.catalog.web.PageResponse;
 import com.shoplab.commons.error.NotFoundException;
 import java.time.Clock;
@@ -54,17 +55,9 @@ public class ProductService {
   }
 
   /**
-   * @throws NotFoundException khi id không tồn tại
-   */
-  @Transactional(readOnly = true)
-  public ProductResponse findById(UUID id) {
-    return ProductResponse.from(require(id));
-  }
-
-  /**
    * Chi tiết product kèm SKU — dùng cho {@code GET /v1/products/{id}}.
    *
-   * @throws NotFoundException khi id không tồn tại
+   * @throws NotFoundException khi id không tồn tại <b>hoặc</b> đã bị xoá mềm (`SL-2.11`)
    */
   @Transactional(readOnly = true)
   public ProductDetailResponse findDetail(UUID id) {
@@ -114,16 +107,29 @@ public class ProductService {
   }
 
   /**
-   * @throws NotFoundException khi id không tồn tại
+   * Xoá mềm product (SL-2.11, ADR-0006 D5): đánh dấu {@code ARCHIVED} + ghi {@code deletedAt}, và
+   * archive luôn SKU của nó. <b>Không</b> xoá row — Phase 2 còn tham chiếu {@code sku_id} từ
+   * inventory / order.
+   *
+   * <p>Vì sao không {@code products.delete(...)} nữa: `sku.product_id` có {@code ON DELETE CASCADE}
+   * ⇒ xoá product là mất luôn SKU, kéo theo mất khả năng reconcile tồn kho (`TD-12`).
+   *
+   * @throws NotFoundException khi id không tồn tại hoặc đã bị xoá mềm (DELETE lần 2 ⇒ 404)
    */
   @Transactional
   public void delete(UUID id) {
-    products.delete(require(id));
+    Product product = require(id);
+    product.archive(Instant.now(clock));
+    // Bulk update: 1 câu SQL cho mọi SKU của product, không load entity (xem SkuRepository).
+    skus.updateStatusByProductId(id, SkuStatus.ARCHIVED);
   }
 
+  /**
+   * Chỉ trả product <b>còn sống</b> — product đã xoá mềm coi như không tồn tại với mọi đường API.
+   */
   private Product require(UUID id) {
     return products
-        .findById(id)
+        .findByIdAndDeletedAtIsNull(id)
         .orElseThrow(() -> new NotFoundException("Product không tồn tại: " + id));
   }
 

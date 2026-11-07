@@ -26,12 +26,13 @@ public class SkuService {
   /**
    * Tạo SKU cho product.
    *
-   * @throws NotFoundException khi product không tồn tại (404)
+   * @throws NotFoundException khi product không tồn tại <b>hoặc</b> đã bị xoá mềm (SL-2.11: không
+   *     cho thêm biến thể vào sản phẩm đã xoá)
    * @throws DuplicateSkuException khi {@code code} đã dùng (409)
    */
   @Transactional
   public SkuResponse create(UUID productId, CreateSkuRequest request) {
-    if (!products.existsById(productId)) {
+    if (!products.existsByIdAndDeletedAtIsNull(productId)) {
       throw new NotFoundException("Product không tồn tại: " + productId);
     }
     String code = request.code().trim();

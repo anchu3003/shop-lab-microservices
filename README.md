@@ -414,11 +414,11 @@ Service **read-heavy đầu tiên**: guest xem được sản phẩm, chỉ `sel
 | `GET /v1/categories` | **public** | danh sách category, sort theo tên |
 | `POST /v1/categories` | `seller`/`admin` | 201 + `Location`; trùng slug → **409** |
 | `GET /v1/products` | **public** | list phân trang: `page` · `size` (1..100) · `categoryId` · `q` (không phân biệt hoa/thường) · `sort` (`price,asc\|desc` · `createdAt,asc\|desc`) |
-| `GET /v1/products/{id}` | **public** | 200 · không tồn tại → **404**; trả kèm danh sách `skus` |
+| `GET /v1/products/{id}` | **public** | 200 · không tồn tại **hoặc đã xoá mềm** → **404**; trả kèm danh sách `skus` |
 | `POST /v1/products` | `seller`/`admin` | 201; `categoryId` không tồn tại → **404** |
-| `POST /v1/products/{id}/skus` | `seller`/`admin` | 201; `code` trùng → **409** |
-| `PUT /v1/products/{id}` | `seller`/`admin` | thay toàn bộ field sửa được; `version` +1 |
-| `DELETE /v1/products/{id}` | `seller`/`admin` | **204** |
+| `POST /v1/products/{id}/skus` | `seller`/`admin` | 201; `code` trùng → **409**; product đã xoá mềm → **404** |
+| `PUT /v1/products/{id}` | `seller`/`admin` | thay toàn bộ field sửa được; `version` +1; product đã xoá mềm → **404** |
+| `DELETE /v1/products/{id}` | `seller`/`admin` | **204** — **xoá mềm** (`status=ARCHIVED` + `deleted_at`, SKU archive theo, row vẫn còn — ADR-0006 D5); xoá lần 2 → **404** |
 
 **Hai điểm thiết kế quan trọng**
 

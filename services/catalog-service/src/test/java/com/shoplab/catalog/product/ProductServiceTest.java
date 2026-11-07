@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.shoplab.catalog.category.CategoryRepository;
 import com.shoplab.catalog.sku.SkuRepository;
+import com.shoplab.catalog.sku.SkuStatus;
 import com.shoplab.commons.error.NotFoundException;
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -19,7 +20,6 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 
 class ProductServiceTest {
 
@@ -68,12 +68,12 @@ class ProductServiceTest {
   }
 
   @Test
-  @DisplayName("findById không thấy → 404")
-  void findByIdShouldThrowWhenMissing() {
+  @DisplayName("findDetail không thấy → 404")
+  void findDetailShouldThrowWhenMissing() {
     UUID id = UUID.randomUUID();
-    when(products.findById(id)).thenReturn(Optional.empty());
+    when(products.findByIdAndDeletedAtIsNull(id)).thenReturn(Optional.empty());
 
-    assertThatThrownBy(() -> service.findById(id)).isInstanceOf(NotFoundException.class);
+    assertThatThrownBy(() -> service.findDetail(id)).isInstanceOf(NotFoundException.class);
   }
 
   @Test
@@ -83,7 +83,7 @@ class ProductServiceTest {
     Product existing =
         Product.create(
             UUID.randomUUID(), "Cũ", "mô tả cũ", new BigDecimal("1000.00"), NOW.minusSeconds(60));
-    when(products.findById(id)).thenReturn(Optional.of(existing));
+    when(products.findByIdAndDeletedAtIsNull(id)).thenReturn(Optional.of(existing));
     // Service flush để version kịp tăng trước khi map DTO (xem ProductService.update).
     when(products.saveAndFlush(any(Product.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -95,29 +95,48 @@ class ProductServiceTest {
     assertThat(updated.price()).isEqualByComparingTo("2000.00");
     assertThat(updated.updatedAt()).isEqualTo(NOW);
     assertThat(updated.createdAt()).isEqualTo(NOW.minusSeconds(60));
+    assertThat(updated.status()).isEqualTo(ProductStatus.ACTIVE);
   }
 
   @Test
-  @DisplayName("delete không thấy → 404, KHÔNG gọi delete")
+  @DisplayName("update product đã xoá mềm → 404 (findByIdAndDeletedAtIsNull không trả row)")
+  void updateShouldRejectArchivedProduct() {
+    UUID id = UUID.randomUUID();
+    when(products.findByIdAndDeletedAtIsNull(id)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () -> service.update(id, new UpdateProductRequest("Mới", null, new BigDecimal("1.00"))))
+        .isInstanceOf(NotFoundException.class);
+
+    verify(products, never()).saveAndFlush(any());
+  }
+
+  @Test
+  @DisplayName("delete không thấy → 404, KHÔNG archive và KHÔNG đụng SKU")
   void deleteShouldThrowWhenMissing() {
     UUID id = UUID.randomUUID();
-    when(products.findById(id)).thenReturn(Optional.empty());
+    when(products.findByIdAndDeletedAtIsNull(id)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.delete(id)).isInstanceOf(NotFoundException.class);
     verify(products, never()).delete(any());
+    verify(skus, never()).updateStatusByProductId(any(), any());
   }
 
   @Test
-  @DisplayName("delete có thật → gọi delete đúng entity")
-  void deleteShouldRemoveExistingProduct() {
+  @DisplayName("delete = XOÁ MỀM: product ARCHIVED + deletedAt, SKU archive theo — KHÔNG xoá row")
+  void deleteShouldArchiveProductAndSkus() {
     UUID id = UUID.randomUUID();
     Product existing = Product.create(UUID.randomUUID(), "X", null, new BigDecimal("1.00"), NOW);
-    when(products.findById(id)).thenReturn(Optional.of(existing));
+    when(products.findByIdAndDeletedAtIsNull(id)).thenReturn(Optional.of(existing));
+    when(skus.updateStatusByProductId(id, SkuStatus.ARCHIVED)).thenReturn(2);
 
     service.delete(id);
 
-    ArgumentCaptor<Product> captor = ArgumentCaptor.forClass(Product.class);
-    verify(products).delete(captor.capture());
-    assertThat(captor.getValue()).isSameAs(existing);
+    assertThat(existing.status()).isEqualTo(ProductStatus.ARCHIVED);
+    assertThat(existing.deletedAt()).isEqualTo(NOW);
+    assertThat(existing.updatedAt()).isEqualTo(NOW);
+    // Hard delete là thứ đã bị bỏ (TD-12): xoá row sẽ mất luôn SKU do ON DELETE CASCADE.
+    verify(products, never()).delete(any());
+    verify(skus).updateStatusByProductId(id, SkuStatus.ARCHIVED);
   }
 }

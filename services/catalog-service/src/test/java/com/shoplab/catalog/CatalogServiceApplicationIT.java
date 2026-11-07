@@ -1,6 +1,7 @@
 package com.shoplab.catalog;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.shoplab.catalog.testsupport.TokenMinter;
 import java.net.URI;
@@ -20,6 +21,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
@@ -96,7 +98,7 @@ class CatalogServiceApplicationIT {
   // ==========================================================================
 
   @Test
-  @DisplayName("Flyway đã tạo schema catalog + ghi lịch sử migration (V1, V2, seed repeatable)")
+  @DisplayName("Flyway đã tạo schema catalog + ghi lịch sử migration (V1, V2, V3, seed repeatable)")
   void flywayMigratedCatalogSchema() {
     List<String> tables =
         jdbc.queryForList(
@@ -109,7 +111,27 @@ class CatalogServiceApplicationIT {
     List<String> scripts =
         jdbc.queryForList("select script from flyway_schema_history", String.class);
     assertThat(scripts)
-        .contains("V1__create_catalog.sql", "V2__create_sku.sql", "R__seed_dev_data.sql");
+        .contains(
+            "V1__create_catalog.sql",
+            "V2__create_sku.sql",
+            "V3__add_soft_delete.sql",
+            "R__seed_dev_data.sql");
+
+    // SL-2.11: cột soft delete phải tồn tại, `status` có DEFAULT 'ACTIVE' (20 row seed không phải
+    // UPDATE).
+    // KHÔNG assert "cả bảng đều ACTIVE": IT khác có thể đã archive product trước test này (thứ tự
+    // test không được đảm bảo) ⇒ assertion kiểu aggregate toàn bảng là flaky.
+    List<Map<String, Object>> columns =
+        jdbc.queryForList(
+            "select column_name, is_nullable, column_default from information_schema.columns"
+                + " where table_name = 'product' and column_name in ('status', 'deleted_at')");
+    assertThat(columns).hasSize(2);
+    Map<String, Object> status =
+        columns.stream()
+            .filter(c -> "status".equals(c.get("column_name")))
+            .findFirst()
+            .orElseThrow();
+    assertThat(String.valueOf(status.get("column_default"))).contains("ACTIVE");
   }
 
   @Test
@@ -386,6 +408,87 @@ class CatalogServiceApplicationIT {
   }
 
   // ==========================================================================
+  // SL-2.11: soft delete product (ADR-0006 D5)
+  // ==========================================================================
+
+  @Test
+  @DisplayName(
+      "DELETE product = xoá MỀM: row còn, status ARCHIVED, deleted_at set, SKU archive theo")
+  void deleteArchivesProductInsteadOfRemoving() {
+    UUID categoryId = createCategory(sellerToken(), "Do choi");
+    String token = sellerToken();
+    UUID productId = createProduct(token, categoryId, "Lego City", "1200000.00");
+    UUID skuId = createSku(token, productId, "LEGO-CITY-1");
+
+    // Trước khi xoá: API trả status ACTIVE (field mới của SL-2.11).
+    assertThat(get("/v1/products/" + productId).body()).contains("\"status\":\"ACTIVE\"");
+
+    HttpResult deleted = delete("/v1/products/" + productId, token);
+    assertThat(deleted.status()).isEqualTo(204);
+
+    // (1) API coi như không tồn tại
+    assertThat(get("/v1/products/" + productId).status()).isEqualTo(404);
+
+    // (2) List không còn — kể cả khi filter đúng category của nó
+    HttpResult list = get("/v1/products?categoryId=" + categoryId + "&size=100");
+    assertThat(list.status()).isEqualTo(200);
+    assertThat(ids(list.body())).doesNotContain(productId.toString());
+
+    // (3) DB: row VẪN CÒN, đánh dấu ARCHIVED + deleted_at
+    Map<String, Object> row =
+        jdbc.queryForMap("select status, deleted_at from product where id = ?", productId);
+    assertThat(row.get("status")).isEqualTo("ARCHIVED");
+    assertThat(row.get("deleted_at")).isNotNull();
+
+    // (4) SKU còn row (không bị ON DELETE CASCADE xoá) nhưng đã ARCHIVED ⇒ Phase 2 còn tra được
+    // sku_id
+    Map<String, Object> sku = jdbc.queryForMap("select status from sku where id = ?", skuId);
+    assertThat(sku.get("status")).isEqualTo("ARCHIVED");
+  }
+
+  @Test
+  @DisplayName("product đã xoá mềm: PUT / POST SKU / DELETE lần 2 đều 404, không sinh dữ liệu mới")
+  void archivedProductIsInvisibleToWrites() {
+    UUID categoryId = createCategory(sellerToken(), "Noi that");
+    String token = sellerToken();
+    UUID productId = createProduct(token, categoryId, "Noi chien", "900000.00");
+    assertThat(delete("/v1/products/" + productId, token).status()).isEqualTo(204);
+
+    HttpResult put =
+        put("/v1/products/" + productId, token, Map.of("name", "X", "price", "1000.00"));
+    assertThat(put.status()).isEqualTo(404);
+
+    HttpResult addSku =
+        post(
+            "/v1/products/" + productId + "/skus",
+            token,
+            Map.of("code", "NOI-" + UUID.randomUUID()));
+    assertThat(addSku.status()).isEqualTo(404);
+
+    HttpResult secondDelete = delete("/v1/products/" + productId, token);
+    assertThat(secondDelete.status()).isEqualTo(404);
+    assertThat(secondDelete.body()).contains("NOT_FOUND");
+
+    // Không có SKU mới nào được tạo cho product đã xoá.
+    assertThat(
+            jdbc.queryForObject(
+                "select count(*) from sku where product_id = ?", Integer.class, productId))
+        .isZero();
+  }
+
+  @Test
+  @DisplayName(
+      "DB là chốt chặn cuối: status ACTIVE mà deleted_at NOT NULL → vi phạm CHECK constraint")
+  void databaseRejectsInconsistentSoftDeleteState() {
+    UUID categoryId = createCategory(sellerToken(), "Van phong pham");
+    UUID productId = createProduct(sellerToken(), categoryId, "But bi", "5000.00");
+
+    assertThatThrownBy(
+            () -> jdbc.update("update product set deleted_at = now() where id = ?", productId))
+        .isInstanceOf(DataIntegrityViolationException.class);
+  }
+
+  // ==========================================================================
   // Helpers
   // ==========================================================================
 
@@ -414,6 +517,12 @@ class CatalogServiceApplicationIT {
             token,
             Map.of("categoryId", categoryId.toString(), "name", name, "price", price));
     assertThat(created.status()).as("tạo product '%s' phải thành công", name).isEqualTo(201);
+    return UUID.fromString(field(created.body(), "id"));
+  }
+
+  private UUID createSku(String token, UUID productId, String code) {
+    HttpResult created = post("/v1/products/" + productId + "/skus", token, Map.of("code", code));
+    assertThat(created.status()).as("tạo SKU '%s' phải thành công", code).isEqualTo(201);
     return UUID.fromString(field(created.body(), "id"));
   }
 

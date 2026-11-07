@@ -2,6 +2,8 @@ package com.shoplab.catalog.product;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
@@ -22,6 +24,9 @@ import java.util.UUID;
  *       ngoài transaction (đã tắt open-in-view) và tránh kéo cả object khi chỉ cần id.
  *   <li>{@code @Version} = optimistic locking: hai request sửa cùng lúc thì request sau nhận lỗi
  *       thay vì âm thầm ghi đè. Rẻ khi thêm bây giờ, đắt nếu phải sửa dữ liệu về sau.
+ *   <li>{@code status}/{@code deletedAt} = <b>soft delete</b> (SL-2.11, ADR-0006 D5). Không xoá row
+ *       vì Phase 2 tham chiếu {@code sku_id} từ inventory/order — xoá row là mất khả năng reconcile
+ *       và audit. Bất biến {@code ARCHIVED ⟺ deletedAt != null} được DB canh bằng CHECK constraint.
  * </ul>
  */
 @Entity
@@ -44,6 +49,13 @@ public class Product {
   @Column(name = "price", nullable = false, precision = 12, scale = 2)
   private BigDecimal price;
 
+  @Enumerated(EnumType.STRING)
+  @Column(name = "status", nullable = false, length = 16)
+  private ProductStatus status;
+
+  @Column(name = "deleted_at")
+  private Instant deletedAt;
+
   @Version
   @Column(name = "version", nullable = false)
   private long version;
@@ -64,6 +76,7 @@ public class Product {
     this.name = name;
     this.description = description;
     this.price = price;
+    this.status = ProductStatus.ACTIVE;
     this.createdAt = now;
     this.updatedAt = now;
   }
@@ -78,6 +91,21 @@ public class Product {
     this.name = name;
     this.description = description;
     this.price = price;
+    this.updatedAt = now;
+  }
+
+  /**
+   * Xoá mềm: giữ row, đánh dấu {@link ProductStatus#ARCHIVED} + ghi {@code deletedAt}.
+   *
+   * <p><b>Idempotent</b>: gọi lần 2 <b>không</b> ghi đè {@code deletedAt} — mốc thời gian xoá là dữ
+   * liệu audit, đổi nó mỗi lần retry là làm sai lịch sử.
+   */
+  public void archive(Instant now) {
+    if (status == ProductStatus.ARCHIVED) {
+      return;
+    }
+    this.status = ProductStatus.ARCHIVED;
+    this.deletedAt = now;
     this.updatedAt = now;
   }
 
@@ -99,6 +127,14 @@ public class Product {
 
   public BigDecimal price() {
     return price;
+  }
+
+  public ProductStatus status() {
+    return status;
+  }
+
+  public Instant deletedAt() {
+    return deletedAt;
   }
 
   public long version() {
