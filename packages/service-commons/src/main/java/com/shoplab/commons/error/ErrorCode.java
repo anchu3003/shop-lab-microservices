@@ -34,6 +34,15 @@ public enum ErrorCode {
   NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy tài nguyên"),
 
   /**
+   * Tài nguyên <b>đã từng</b> tồn tại nhưng không còn hiệu lực và sẽ không quay lại (vd reservation
+   * đã hết hạn TTL) ⇒ client <b>không nên</b> retry cùng thứ đó, phải tạo cái mới.
+   *
+   * <p>Phân biệt với {@link #CONFLICT}: 409 = "trạng thái đang xung đột, thử lại có ích"; 410 = "đã
+   * chết".
+   */
+  GONE(HttpStatus.GONE, "Tài nguyên không còn hiệu lực"),
+
+  /**
    * Dependency không tới được: service đích chết/timeout, hoặc không lấy được dữ liệu cần để phục
    * vụ request (vd JWKS).
    *
@@ -86,6 +95,9 @@ public enum ErrorCode {
     }
     if (status == HttpStatus.CONFLICT.value()) {
       return CONFLICT;
+    }
+    if (status == HttpStatus.GONE.value()) {
+      return GONE;
     }
     // 502/503/504 đều là "phía sau có vấn đề, thử lại được" → cùng một mã cho client dễ xử lý.
     if (status == HttpStatus.BAD_GATEWAY.value()

@@ -229,7 +229,7 @@ cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutt
 | `identity-service` | Đăng ký, đăng nhập, phát & refresh JWT, profile, role | `users`, `credentials`, `refresh_tokens`, `roles` | PostgreSQL | REST | 1 |
 | `catalog-service` | Product, SKU, category, brand, media ref, giá niêm yết | `products`, `skus`, `categories`, `brands` | PostgreSQL + Redis cache | REST/gRPC | 1 |
 | `cart-service` | Giỏ hàng tạm, merge cart khi login, TTL | `carts`, `cart_items` | Redis (TTL) | REST | 2 |
-| `inventory-service` | Tồn kho theo SKU × warehouse; **reserve / commit / release** | `inventory`, `reservations`, `stock_ledger` | PostgreSQL + Redis lock | gRPC/REST + event | 2 |
+| `inventory-service` | Tồn kho theo SKU × warehouse; **reserve / commit / release** (conditional `UPDATE`, ADR-0006) | `stock`, `reservations` (+`reservation_items`), `stock_ledger` | PostgreSQL | REST | 2 |
 | `promotion-service` | Voucher, campaign, flash sale, rule tính giảm giá | `vouchers`, `campaigns`, `redemptions` | PostgreSQL + Redis | REST + event | 2 |
 | `order-service` | Vòng đời order, orchestrate checkout bằng **Saga** | `orders`, `order_items`, `order_status_history`, `outbox` | PostgreSQL | REST + event | 2 |
 | `payment-service` | Payment intent, nhận callback provider, refund, **idempotency** | `payments`, `transactions`, `refunds`, `idempotency_keys`, `outbox` | PostgreSQL | REST + webhook + event | 2 |
@@ -312,6 +312,12 @@ sequenceDiagram
 | `order_items` | **Snapshot** (`sku_code`, `title`, `unit_price`, `currency`) + `sku_id` không FK | Hoá đơn bất biến; đổi giá/xoá SKU ở `catalog` không làm sai đơn cũ |
 | Sync vs async | Phase 2 **sync REST** (timeout mỗi bước 300–800 ms) + compensating | p99 mục tiêu ~125 ms; async/outbox để Phase 3 (có baseline để so sánh) |
 | `TD-12` | Soft delete product (`status = ARCHIVED` + `deleted_at`), code ở `SL-2.11` | `stock_ledger`/`reservations` còn tham chiếu được `sku_id` ⇒ reconcile được |
+
+**API của `inventory-service`** (`SL-2.2`, đã chạy thật): `PUT /v1/stock/{skuId}` (admin đặt `onHand`) ·
+`GET /v1/stock/{skuId}` → `{onHand, reserved, available}` · `POST /v1/stock/reserve` (`{orderId, items[]}` →
+`201 {reservationId, expiresAt}`; retry cùng `orderId` → `200` cùng id; thiếu hàng → `409` + `details`) ·
+`POST /v1/stock/commit` (→ `200`; quá TTL → `410`; đã release → `409`) · `POST /v1/stock/release` (→ `200`, idempotent).
+Mọi giao dịch ghi thêm 1 dòng `stock_ledger`, đối soát bằng `Σ delta_on_hand` / `Σ delta_reserved`.
 
 ### 6.2. Payment callback (webhook) — idempotency
 
@@ -445,8 +451,10 @@ products(id, seller_id, title, description, status, deleted_at, created_at)  -- 
   └─ categories(id, parent_id, name, slug) + product_categories(product_id, category_id)
 
 stock(sku_id, warehouse_id, on_hand, reserved, version)   -- PK (sku_id, warehouse_id); available = on_hand - reserved
-  └─ reservations(id, order_id, sku_id, qty, status, expires_at)  -- PENDING|COMMITTED|RELEASED|EXPIRED, TTL 15'
-  └─ stock_ledger(id, sku_id, delta, reason, ref_id, created_at)   -- append only
+  └─ reservations(id, order_id, status, expires_at, created_at)  -- 1 row/ORDER; PENDING|COMMITTED|RELEASED|EXPIRED, TTL 15'
+       └─ reservation_items(reservation_id, sku_id, qty)         -- unique (order_id) WHERE status='PENDING' = idempotency
+  └─ stock_ledger(id, sku_id, warehouse_id, delta_on_hand, delta_reserved, reason, ref_id, created_at)
+       -- append only; ADJUST | RESERVE | COMMIT | RELEASE | EXPIRE
 
 carts  -- Redis hash: { sku_id: {qty, price_snapshot} }, key = user_id hoặc guest_token
 
@@ -759,3 +767,4 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 
 | 2026-11-07 | `SL-2.11`: `catalog-service` **soft delete** product (ADR-0006 D5) — `DELETE` không xoá row nữa mà set `status='ARCHIVED'` + `deleted_at` và archive SKU của nó bằng **1 câu UPDATE**; list/get/ghi coi product đã xoá là **không tồn tại (404)**; bất biến `ARCHIVED ⟺ deleted_at != null` do **CHECK constraint** ở DB canh; trả `TD-12`; cập nhật §8.4 (`sku.status`) | bạn + AI |
 
+| 2026-11-07 | `SL-2.2`: thêm **`inventory-service`** (8084, DB `inventory`) — `reserve`/`commit`/`release` theo ADR-0006 D1: chống oversell bằng **conditional `UPDATE`** (`on_hand - reserved >= qty` trong câu lệnh, không Redis lock) · reservation **TTL 15′** + lazy expire ở `commit` (sweeper → `SL-2.3`) · idempotent theo `orderId` (unique `(order_id) WHERE status=PENDING`) · `stock_ledger` append-only 2 cột delta để đối soát · **JDBC thay JPA** (cần `rowsAffected` của câu UPDATE) · cập nhật §5, §6.1, §8.4 | bạn + AI |
