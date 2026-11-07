@@ -44,6 +44,11 @@ shoplab:
       - /v1/auth/**
       - /v1/products/**
       - /v1/categories/**
+      # SL-2.7: webhook provider không thể mang JWT (provider không có token) ⇒ gateway cho đi qua và
+      # payment tự verify HMAC-SHA256 trên raw body + timestamp. Trang thanh toán giả cũng public,
+      # nhưng chỉ tồn tại khi PAYMENT_MOCK_ENABLED=true (và guard chặn ngoài local).
+      - /v1/webhooks/**
+      - /mock-provider/**
       - /.well-known/**
       # SL-1.8: spec OpenAPI của chính gateway (chỉ bật ở local — xem springdoc.api-docs.enabled).
       - /v3/api-docs
@@ -90,6 +95,16 @@ shoplab:
       # SL-2.5: order-service (tạo/xem đơn + chuyển trạng thái). Cần token.
       - path-prefix: /v1/orders
         base-url: ${ORDER_SERVICE_URL:http://localhost:8087}
+      # SL-2.7: payment-service (payment intent). Cần token.
+      - path-prefix: /v1/payment-intents
+        base-url: ${PAYMENT_SERVICE_URL:http://localhost:8088}
+      # SL-2.7: webhook provider — PUBLIC (xác thực bằng HMAC ở payment, không JWT) và trang thanh
+      # toán giả. Hai prefix này KHÔNG nằm trong `routes` chung của /v1/payment-intents vì
+      # public-path ở gateway là theo PATH, không theo method.
+      - path-prefix: /v1/webhooks
+        base-url: ${PAYMENT_SERVICE_URL:http://localhost:8088}
+      - path-prefix: /mock-provider
+        base-url: ${PAYMENT_SERVICE_URL:http://localhost:8088}
       # JWKS công bố qua gateway để client chỉ cần biết MỘT địa chỉ.
       - path-prefix: /.well-known
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}

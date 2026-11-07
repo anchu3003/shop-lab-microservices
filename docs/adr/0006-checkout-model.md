@@ -140,6 +140,11 @@ idempotency_keys(scope, key, request_hash, status, status_code, response_body,
 - `payment-service` webhook dùng **khoá tự nhiên của provider** (`provider_txn_id UNIQUE`) chứ không dùng
   `Idempotency-Key` của client — 2 cơ chế khác nhau vì nguồn gây trùng khác nhau.
 - Retention **24 h**; dọn row cũ = `TD-14` (đã trả ở `SL-2.5`: job xoá `COMPLETED > 24h` + `IN_PROGRESS > 1h`).
+  *(Triển khai ở `SL-2.7`: `payment-service` dùng **đúng** bảng + ngữ nghĩa này, scope `"<userId>:POST
+  /v1/payment-intents"`; webhook provider thì **không** dùng `Idempotency-Key` mà dùng khoá tự nhiên
+  (`provider_event_id` PK + `provider_txn_id UNIQUE`) + HMAC-SHA256 trên raw body & timestamp window. Phase 2
+  chưa có broker ⇒ webhook chỉ ghi `payments`, không phát `payment.succeeded`; việc confirm order do saga
+  `SL-2.6` gọi với token user — ghi nhận ở `TD-17`.)*
   *(Triển khai ở `SL-2.5`: ghi khoá **trước khi** mở transaction tạo đơn — nếu lồng `REQUIRES_NEW` trong transaction thì mỗi
   request cần 2 connection và pool nhỏ bị deadlock; `complete()` nằm trong transaction của đơn để crash không tạo "đơn ma".)*
 

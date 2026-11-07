@@ -232,7 +232,7 @@ cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutt
 | `inventory-service` | Tồn kho theo SKU × warehouse; **reserve / commit / release** (conditional `UPDATE`, ADR-0006) | `stock`, `reservations` (+`reservation_items`), `stock_ledger` | PostgreSQL | REST | 2 |
 | `promotion-service` | Voucher (PERCENT/FIXED), rule tính giảm giá, **lock/commit/release** 1 lượt dùng | `vouchers`, `voucher_locks` | PostgreSQL | REST | 2 |
 | `order-service` | Vòng đời order (**idempotent** theo `Idempotency-Key`), snapshot giá; orchestrator Saga (SL-2.6) | `orders`, `order_items`, `order_status_history`, `idempotency_keys`, `outbox` | PostgreSQL | REST + event | 2 |
-| `payment-service` | Payment intent, nhận callback provider, refund, **idempotency** | `payments`, `transactions`, `refunds`, `idempotency_keys`, `outbox` | PostgreSQL | REST + webhook + event | 2 |
+| `payment-service` | Payment intent (**idempotent**), nhận webhook provider (**idempotent** theo khoá tự nhiên), mock provider cho Phase 2; refund để Phase 6 | `payments`, `payment_webhook_events`, `idempotency_keys` (`transactions`/`refunds`/`outbox` chưa có) | PostgreSQL | REST + webhook | 2 |
 | `notification-service` | Email / SMS / Push theo template | `notification_logs`, `templates` | PostgreSQL | **async consumer** | 3 |
 | `search-service` | Index & query sản phẩm (full-text, filter, sort) | search index (không phải source of truth) | OpenSearch | REST + consumer | 3 |
 | `review-service` | Review, rating, moderation | `reviews`, `ratings` | PostgreSQL | REST + event | 8 |
@@ -330,6 +330,18 @@ Cách xử lý:
 2. Webhook đến → `INSERT ... ON CONFLICT DO NOTHING`. Nếu đã tồn tại → trả `200` ngay, không xử lý lại.
 3. Việc cập nhật order đi qua **event** (`payment.succeeded`), và consumer cũng idempotent
    (dùng `eventId` để dedupe).
+
+**Triển khai ở `SL-2.7`** (Phase 2 chưa có broker nên chưa có bước 3):
+
+- Chốt chặn **hai lớp**: `payment_webhook_events.provider_event_id` (PK + `ON CONFLICT DO NOTHING`) là
+  dedupe sự kiện; `payments.provider_txn_id UNIQUE` là dedupe **giao dịch** (provider đổi `eventId` cho
+  mỗi lần gửi vẫn không cộng tiền 2 lần).
+- Chữ ký **HMAC-SHA256 trên raw body** + `X-Provider-Timestamp` trong chuỗi ký, cửa sổ 5 phút ⇒ chặn
+  cả giả mạo và replay. Ký trên JSON đã parse lại là vô nghĩa (thứ tự key/khoảng trắng đổi ⇒ hash khác).
+- Client vẫn dùng `Idempotency-Key` cho `POST /v1/payment-intents` — **hai cơ chế khác nhau cho hai
+  nguồn trùng khác nhau**, không trộn.
+- Webhook **không** gọi `order-service`: chuyển order sang `CONFIRMED` thuộc saga (`SL-2.6`, nó giữ
+  token user). Hệ quả đã ghi ở `TD-17`.
 
 ### 6.3. Flash sale — bài toán spike
 
@@ -472,7 +484,14 @@ orders(id, user_id, status, subtotal, discount, total, currency, idempotency_key
 idempotency_keys(scope, key, request_hash, status, status_code, response_body, resource_id,
                  created_at, completed_at)   -- PK (scope, key); scope = "<userId>:<METHOD> <path>"; giữ 24h
 
-payments(id, order_id, provider, provider_txn_id UNIQUE, amount, status, idempotency_key UNIQUE)
+payments(id, order_id, user_id, amount, currency, status, provider, provider_intent_id UNIQUE,
+         provider_txn_id UNIQUE, idempotency_key, created_at, updated_at, paid_at)
+  -- CHECK status ∈ REQUIRES_PAYMENT|PROCESSING|SUCCEEDED|FAILED|CANCELLED · CHECK amount > 0
+  -- CHECK (status = 'SUCCEEDED') = (paid_at IS NOT NULL)   -- bất biến kế toán
+  -- UNIQUE INDEX (order_id) WHERE status IN ('REQUIRES_PAYMENT','PROCESSING','SUCCEEDED')
+  --   ⇒ mỗi đơn tối đa 1 intent "sống" (2 request song song vẫn không tạo được 2 đường thu tiền)
+  └─ payment_webhook_events(provider_event_id PK, payment_id, provider_txn_id, status, amount,
+                            payload_sha256, received_at)   -- dedupe webhook, KHÔNG lưu body thẻ
 
 outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
        status, created_at, published_at)
@@ -775,3 +794,4 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-07 | `SL-2.3`: `inventory-service` thêm **sweeper TTL** (`@Scheduled` fixedDelay 60 s, batch 100, `FOR UPDATE SKIP LOCKED` + conditional `markStatus`) — reservation `PENDING` quá hạn tự `EXPIRED` + trả chỗ + ledger `EXPIRE`; trả `TD-15` · thêm test **100 request song song** cùng SKU chứng minh không oversell (10×201 / 90×409) | bạn + AI |
 | 2026-11-07 | `SL-2.4`: thêm **`promotion-service`** (8086, DB `promotion`) — voucher `PERCENT` (cap `max_discount`) + `FIXED`, `lock`/`commit`/`release` theo cùng pattern conditional `UPDATE` của inventory; bất biến `used + locked <= quota` do CHECK canh; snapshot `discount` tại lúc lock; sweeper TTL trả lượt bị bỏ quên (`SKIP LOCKED`); cập nhật §5, §8.4 | bạn + AI |
 | 2026-11-07 | `SL-2.5`: thêm **`order-service`** (8087, DB `order`) — tạo đơn **idempotent** (`Idempotency-Key`: 201/200 replay/422/409), `order_items` **snapshot** giá/tên, state machine `PENDING_PAYMENT → CONFIRMED|CANCELLED|EXPIRED` + history; job dọn `idempotency_keys` (trả `TD-14`); bất biến tiền do CHECK ở DB canh; cập nhật §5, §8.4 | bạn + AI |
+| 2026-11-07 | `SL-2.7`: thêm **`payment-service`** (8088, DB `payment`) — payment intent idempotent (`Idempotency-Key`), **mock provider** (fail-closed ngoài local), webhook **idempotent** theo khoá tự nhiên (`provider_event_id` PK + `provider_txn_id` UNIQUE) + **HMAC-SHA256 trên raw body** & timestamp window; bất biến tiền do CHECK canh (`amount > 0`, `SUCCEEDED ⇔ paid_at`); mỗi đơn tối đa 1 intent sống (unique index có điều kiện). Cập nhật §5, §6.2, §8.4 | bạn + AI |
