@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.shoplab</groupId>
+    <artifactId>shoplab-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>shoplab-cart-service</artifactId>
+  <packaging>jar</packaging>
+
+  <name>ShopLab :: Cart Service</name>
+  <description>
+    Service giỏ hàng (SL-2.1): **Redis** là source of truth duy nhất (TTL 30 ngày, chấp nhận mất dữ liệu —
+    architecture §8.5), atomic read-modify-write bằng **Lua**, guest token do server cấp, merge giỏ guest
+    vào giỏ user khi login. KHÔNG có Postgres ⇒ không datasource, không Flyway.
+  </description>
+
+  <!--
+    Service ĐẦU TIÊN không có Postgres: state nằm ở Redis.
+
+    - `spring-boot-starter-data-redis` kéo Lettuce + `StringRedisTemplate`: đủ cho HASH + Lua (EVAL).
+    - KHÔNG khai `commons-pool2` ⇒ không dùng connection pool của Lettuce; Phase 2 một instance, pool
+      chỉ thêm một tầng cấu hình nữa để sai (revisit ở Phase 4 khi đo nghẽn thật).
+    - KHÔNG có `spring-boot-starter-jdbc`/flyway/postgresql: cart cố ý không có DB quan hệ.
+  -->
+
+  <dependencies>
+    <dependency>
+      <groupId>com.shoplab</groupId>
+      <artifactId>shoplab-service-commons</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+
+    <!-- Tự verify JWT (defense in depth — không tin tuyệt đối vào gateway). -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+    </dependency>
+
+    <!-- OpenAPI (SL-1.8). -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+    </dependency>
+
+    <!-- ===================== test ===================== -->
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!--
+      Testcontainers (core + JUnit 5). Cart KHÔNG dùng module `testcontainers-postgresql` vì không có
+      Postgres; IT của cart chạy Redis thật qua `GenericContainer` (Lua chỉ chạy đúng trên Redis thật —
+      không mock được).
+    -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>repackage</id>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>build-info</id>
+            <goals>
+              <goal>build-info</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!--
+        Failsafe: `classesDirectory` BẮT BUỘC khai tường minh — `spring-boot:repackage` thay jar bằng
+        jar "fat", failsafe mặc định lấy classpath theo artifact đó ⇒ NoClassDefFoundError (bẫy SL-1.1).
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <classesDirectory>${project.build.outputDirectory}</classesDirectory>
+        </configuration>
+        <executions>
+          <execution>
+            <id>integration-tests</id>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>jacoco-prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>jacoco-report</id>
+            <phase>test</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>jacoco-check</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+            <configuration>
+              <includes>
+                <include>com/shoplab/cart/config/*</include>
+                <include>com/shoplab/cart/health/*</include>
+              </includes>
+              <rules>
+                <rule>
+                  <element>BUNDLE</element>
+                  <limits>
+                    <limit>
+                      <counter>LINE</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>0.80</minimum>
+                    </limit>
+                  </limits>
+                </rule>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

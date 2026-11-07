@@ -167,6 +167,11 @@ Thứ tự gọi (đúng §6.1, đổi sang **lock voucher trước reserve** đ
 
 ```
 cart (read) → voucher lock → stock reserve → INSERT order PENDING_PAYMENT + idempotency row
+
+*(Triển khai bước `cart (read)` ở `SL-2.1`: saga đọc `GET /v1/carts` bằng **token user**. Giỏ **guest** không
+checkout được — client phải gọi `POST /v1/carts/merge` sau khi login trước; nhờ vậy saga chỉ cần một loại
+danh tính. Cart **không** giữ giá (`price_snapshot`) — bước INSERT order lấy giá từ payload rồi tính lại ở
+`order-service`, nên giá trong giỏ không bao giờ là nguồn sự thật về tiền.)*
             → payment-intent → 201 {orderId, paymentUrl}
 ```
 

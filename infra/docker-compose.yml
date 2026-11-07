@@ -492,6 +492,48 @@ services:
       - shoplab-net
 
   # ---------------------------------------------------------------------------
+  # cart-service — giỏ hàng (SL-2.1): Redis là source of truth (TTL 30 ngày), Lua cho read-modify-write.
+  # Service DUY NHẤT không có Postgres ⇒ depends_on chỉ redis + identity (JWKS).
+  # ---------------------------------------------------------------------------
+  cart-service:
+    build:
+      context: ..
+      dockerfile: services/cart-service/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-cart-service:local
+    container_name: shoplab-cart-service
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${CART_SERVICE_PORT:-8083}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SHOPLAB_DEBUG_ENDPOINTS: ${SHOPLAB_DEBUG_ENDPOINTS:-true}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
+      IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      CART_TTL: ${CART_TTL:-30d}
+      CART_MAX_LINES: ${CART_MAX_LINES:-50}
+      CART_MAX_QTY: ${CART_MAX_QTY:-999}
+    ports:
+      - "${CART_SERVICE_PORT:-8083}:${CART_SERVICE_PORT:-8083}"
+    depends_on:
+      redis:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${SERVER_PORT}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    networks:
+      - shoplab-net
+
+  # ---------------------------------------------------------------------------
   # api-gateway — cửa vào duy nhất (SL-1.2): route /v1/** + verify JWT qua JWKS của identity.
   #
   # Không có DB: gateway không sở hữu dữ liệu nào (architecture.md §5) → readiness check TCP
@@ -527,6 +569,7 @@ services:
       PROMOTION_SERVICE_URL: ${PROMOTION_SERVICE_URL:-http://promotion-service:8086}
       ORDER_SERVICE_URL: ${ORDER_SERVICE_URL:-http://order-service:8087}
       PAYMENT_SERVICE_URL: ${PAYMENT_SERVICE_URL:-http://payment-service:8088}
+      CART_SERVICE_URL: ${CART_SERVICE_URL:-http://cart-service:8083}
       GATEWAY_CONNECT_TIMEOUT: ${GATEWAY_CONNECT_TIMEOUT:-2s}
       GATEWAY_READ_TIMEOUT: ${GATEWAY_READ_TIMEOUT:-5s}
     ports:

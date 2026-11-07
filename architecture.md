@@ -228,7 +228,7 @@ cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutt
 | `api-gateway` | Edge: routing, verify JWT, rate limit, request aggregation, correlation id | không sở hữu business data | Redis (rate limit counter) | REST in / REST-gRPC out | 1 |
 | `identity-service` | Đăng ký, đăng nhập, phát & refresh JWT, profile, role | `users`, `credentials`, `refresh_tokens`, `roles` | PostgreSQL | REST | 1 |
 | `catalog-service` | Product, SKU, category, brand, media ref, giá niêm yết | `products`, `skus`, `categories`, `brands` | PostgreSQL + Redis cache | REST/gRPC | 1 |
-| `cart-service` | Giỏ hàng tạm, merge cart khi login, TTL | `carts`, `cart_items` | Redis (TTL) | REST | 2 |
+| `cart-service` | Giỏ hàng tạm (**guest token** + user), merge khi login, TTL 30 ngày; ghi bằng **Lua** (read-modify-write nguyên tử) | **Redis HASH** `cart:<owner>` + marker `cart:guest:<token>` — **không có Postgres** | Redis (TTL) | REST | 2 |
 | `inventory-service` | Tồn kho theo SKU × warehouse; **reserve / commit / release** (conditional `UPDATE`, ADR-0006) | `stock`, `reservations` (+`reservation_items`), `stock_ledger` | PostgreSQL | REST | 2 |
 | `promotion-service` | Voucher (PERCENT/FIXED), rule tính giảm giá, **lock/commit/release** 1 lượt dùng | `vouchers`, `voucher_locks` | PostgreSQL | REST | 2 |
 | `order-service` | Vòng đời order (**idempotent** theo `Idempotency-Key`), snapshot giá; orchestrator Saga (SL-2.6) | `orders`, `order_items`, `order_status_history`, `idempotency_keys`, `outbox` | PostgreSQL | REST + event | 2 |
@@ -468,7 +468,12 @@ stock(sku_id, warehouse_id, on_hand, reserved, version)   -- PK (sku_id, warehou
   └─ stock_ledger(id, sku_id, warehouse_id, delta_on_hand, delta_reserved, reason, ref_id, created_at)
        -- append only; ADJUST | RESERVE | COMMIT | RELEASE | EXPIRE
 
-carts  -- Redis hash: { sku_id: {qty, price_snapshot} }, key = user_id hoặc guest_token
+carts  -- Redis HASH (KHÔNG phải bảng Postgres; retention = TTL 30 ngày, §8.3)
+  key   cart:u:<userId> | cart:g:<guestToken>    -- TTL 30d, refresh mỗi lần ghi
+  field <skuId>   value {"qty": 1..999, "addedAt": ISO-8601}
+  key   cart:guest:<guestToken>  value "1"        -- marker: token do SERVER cấp (không phải client bịa)
+  -- KHÔNG có price_snapshot (quyết định SL-2.1): giá hiển thị lấy từ catalog, tiền thật do
+  -- order-service tính lại từ payload lúc checkout ⇒ giỏ KHÔNG bao giờ là nguồn sự thật về tiền (TD-20)
 
 vouchers(id, code UNIQUE, type, value, max_discount, min_order, quota, used, locked, start_at, end_at)
   -- CHECK used + locked <= quota (bất biến chống bán quá quota), CHECK end_at > start_at
@@ -795,3 +800,4 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-07 | `SL-2.4`: thêm **`promotion-service`** (8086, DB `promotion`) — voucher `PERCENT` (cap `max_discount`) + `FIXED`, `lock`/`commit`/`release` theo cùng pattern conditional `UPDATE` của inventory; bất biến `used + locked <= quota` do CHECK canh; snapshot `discount` tại lúc lock; sweeper TTL trả lượt bị bỏ quên (`SKIP LOCKED`); cập nhật §5, §8.4 | bạn + AI |
 | 2026-11-07 | `SL-2.5`: thêm **`order-service`** (8087, DB `order`) — tạo đơn **idempotent** (`Idempotency-Key`: 201/200 replay/422/409), `order_items` **snapshot** giá/tên, state machine `PENDING_PAYMENT → CONFIRMED|CANCELLED|EXPIRED` + history; job dọn `idempotency_keys` (trả `TD-14`); bất biến tiền do CHECK ở DB canh; cập nhật §5, §8.4 | bạn + AI |
 | 2026-11-07 | `SL-2.7`: thêm **`payment-service`** (8088, DB `payment`) — payment intent idempotent (`Idempotency-Key`), **mock provider** (fail-closed ngoài local), webhook **idempotent** theo khoá tự nhiên (`provider_event_id` PK + `provider_txn_id` UNIQUE) + **HMAC-SHA256 trên raw body** & timestamp window; bất biến tiền do CHECK canh (`amount > 0`, `SUCCEEDED ⇔ paid_at`); mỗi đơn tối đa 1 intent sống (unique index có điều kiện). Cập nhật §5, §6.2, §8.4 | bạn + AI |
+| 2026-11-07 | `SL-2.1`: thêm **`cart-service`** (8083) — service **đầu tiên không có Postgres**: Redis HASH `cart:<owner>` (owner = `u:<userId>` | `g:<guestToken>`), TTL **30 ngày** refresh mỗi lần ghi; mọi phép ghi chạy **Lua** (read-modify-write nguyên tử, bất biến `qty 1..999` + `maxLines` kiểm trong script); **guest cart** với token do **server** cấp (`POST /v1/carts/guest`, marker `cart:guest:<token>`); **merge khi login** cộng dồn + cap + xoá giỏ guest trong cùng script ⇒ gọi lại không cộng lần 2; gateway để `/v1/carts/**` **public** và cart tự phân xử danh tính. **Cart không snapshot giá** (quyết định A, `TD-20`) ⇒ cập nhật §5, §8.4 | bạn + AI |

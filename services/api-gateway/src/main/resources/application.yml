@@ -49,6 +49,9 @@ shoplab:
       # nhưng chỉ tồn tại khi PAYMENT_MOCK_ENABLED=true (và guard chặn ngoài local).
       - /v1/webhooks/**
       - /mock-provider/**
+      # SL-2.1: khách CHƯA đăng nhập vẫn phải có giỏ ⇒ cả prefix phải qua được gateway. Authorization
+      # nằm ở cart-service: có JWT → giỏ user, không có → bắt buộc X-Cart-Token do server cấp.
+      - /v1/carts/**
       - /.well-known/**
       # SL-1.8: spec OpenAPI của chính gateway (chỉ bật ở local — xem springdoc.api-docs.enabled).
       - /v3/api-docs
@@ -105,6 +108,10 @@ shoplab:
         base-url: ${PAYMENT_SERVICE_URL:http://localhost:8088}
       - path-prefix: /mock-provider
         base-url: ${PAYMENT_SERVICE_URL:http://localhost:8088}
+      # SL-2.1: cart-service. Prefix này là PUBLIC (guest không có JWT) — cart tự phân xử danh tính
+      # (JWT hoặc X-Cart-Token do chính nó cấp).
+      - path-prefix: /v1/carts
+        base-url: ${CART_SERVICE_URL:http://localhost:8083}
       # JWKS công bố qua gateway để client chỉ cần biết MỘT địa chỉ.
       - path-prefix: /.well-known
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}

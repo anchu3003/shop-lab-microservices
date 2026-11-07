@@ -19,7 +19,8 @@
 chi tiết ở [`Backlog-phase-0.md`](Backlog-phase-0.md) và [`docs/phases/phase-1.md`](docs/phases/phase-1.md).
 Phase 2 (Core commerce flow) 🔵 **In Progress**: đã có `inventory-service` (8084 — reserve/commit/release chống oversell)
 `promotion-service` (8086 — voucher lock/commit/release), `order-service` (8087 — đơn hàng idempotent) và
-`payment-service` (8088 — payment intent + webhook idempotent); tiếp theo là `cart` → **saga** (`SL-2.6`).
+`payment-service` (8088 — payment intent + webhook idempotent) và `cart-service` (8083 — giỏ hàng Redis); tiếp theo
+là **saga checkout** (`SL-2.6`).
 Xem [Backlog.md](Backlog.md).
 
 ---
@@ -248,6 +249,7 @@ bash tools/reset-infra.sh
 | `8086` | `promotion-service` | Phase 2 (`SL-2.4`) — voucher `lock`/`commit`/`release`; DB `promotion` |
 | `8087` | `order-service` | Phase 2 (`SL-2.5`) — đơn hàng idempotent + state machine; DB `order` |
 | `8088` | `payment-service` | Phase 2 (`SL-2.7`) — payment intent + webhook provider idempotent; DB `payment` |
+| `8083` | `cart-service` | Phase 2 (`SL-2.1`) — giỏ hàng trên **Redis** (không có Postgres) |
 
 > `up -d` mặc định **KHÔNG** dựng `service-template` — service mẫu nằm trong profile `template` (`SL-1.13`). Bật khi cần:
 > `docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template`
@@ -518,6 +520,27 @@ Bất biến chống bán quá quota là **`used + locked <= quota`**, do CHECK 
 
 Sweeper (`SL-2.4`) trả lượt cho lock bị bỏ quên: mặc định 60 s/nhịp, batch 100, `FOR UPDATE SKIP LOCKED`. Chỉnh bằng
 `SHOPLAB_PROMOTION_SWEEP_INTERVAL_MS` · `_INITIAL_DELAY_MS` · `_BATCH_SIZE` · `PROMOTION_LOCK_TTL`.
+
+### cart-service — `SL-2.1`
+
+Giỏ hàng — service **duy nhất không có Postgres**: Redis là source of truth, TTL **30 ngày** là cơ chế dọn dữ liệu
+(`architecture.md` §8.3/§8.5 — mất giỏ chỉ gây khó chịu, không sai sổ sách).
+
+| Method + path | Auth | Ghi chú |
+|---|---|---|
+| `POST /v1/carts/guest` | **public** | cấp `{cartToken}` do **server** sinh (UUID, TTL 30d) — khách chưa đăng nhập vẫn có giỏ |
+| `GET /v1/carts` | JWT **hoặc** `X-Cart-Token` | giỏ rỗng vẫn **200** (trạng thái hợp lệ, không phải 404); `ttlSeconds` cho biết giỏ sắp bị dọn |
+| `PUT /v1/carts/items/{skuId}` | JWT **hoặc** `X-Cart-Token` | `{qty}` = số lượng **tuyệt đối** ⇒ idempotent; `qty` ngoài `1..999` → **422**; quá `maxLines` → **422** |
+| `DELETE /v1/carts/items/{skuId}` | JWT **hoặc** `X-Cart-Token` | xoá một dòng |
+| `DELETE /v1/carts` | JWT **hoặc** `X-Cart-Token` | xoá cả giỏ |
+| `POST /v1/carts/merge` | **JWT + `X-Cart-Token`** | cộng dồn qty vào giỏ user, cap 999, xoá giỏ guest + thu hồi token ⇒ gọi lại **không** cộng lần 2 |
+
+**Vì sao Lua**: một dòng giỏ là JSON nên `HINCRBY` không dùng được; đọc ở Java rồi ghi lại = **lost update** khi hai
+request cùng SKU. Script cũng giữ bất biến `qty 1..999` + `maxLines` ngay trong Redis (kiểm ngoài = TOCTOU).
+
+**Bảo mật**: gateway để `/v1/carts/**` public (guest không có JWT) ⇒ cart tự phân xử: có JWT → giỏ user; không có →
+**bắt buộc** `X-Cart-Token` do server cấp (token bịa/bị thu hồi → 401). Giỏ **không** lưu giá — tiền thật do
+`order-service` tính lại (`TD-20`).
 
 ### payment-service — `SL-2.7`
 
