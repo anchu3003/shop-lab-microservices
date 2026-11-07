@@ -55,7 +55,7 @@ class ReservationServiceTest {
           reservations,
           stock,
           ledger,
-          new InventoryProperties(WAREHOUSE, Duration.ofMinutes(15), 50),
+          new InventoryProperties(WAREHOUSE, Duration.ofMinutes(15), 50, 100),
           Clock.fixed(NOW, ZoneOffset.UTC));
 
   @Test
@@ -213,6 +213,50 @@ class ReservationServiceTest {
         .isInstanceOf(AppException.class)
         .hasMessageContaining("đã release");
     verifyNoInteractions(stock);
+  }
+
+  @Test
+  @DisplayName("expireOverdue: mỗi reservation quá hạn → EXPIRED + trả chỗ + ledger EXPIRE")
+  void expireOverdueShouldReleaseStock() {
+    ReservationRecord first = pendingReservation(-60);
+    ReservationRecord second = pendingReservation(-30);
+    when(reservations.findExpiredPending(NOW, 100)).thenReturn(List.of(first, second));
+    when(reservations.markStatus(
+            any(), eq(ReservationStatus.PENDING), eq(ReservationStatus.EXPIRED), eq(NOW)))
+        .thenReturn(1);
+    when(reservations.findItems(first.id()))
+        .thenReturn(List.of(new ReservationItemRecord(SKU_A, 2)));
+    when(reservations.findItems(second.id()))
+        .thenReturn(List.of(new ReservationItemRecord(SKU_B, 1)));
+    when(stock.release(SKU_A, WAREHOUSE, 2, NOW)).thenReturn(1);
+    when(stock.release(SKU_B, WAREHOUSE, 1, NOW)).thenReturn(1);
+
+    int expired = service.expireOverdue(NOW);
+
+    assertThat(expired).isEqualTo(2);
+    ArgumentCaptor<StockLedgerEntry> entries = ArgumentCaptor.forClass(StockLedgerEntry.class);
+    verify(ledger, times(2)).append(entries.capture());
+    assertThat(entries.getAllValues())
+        .allSatisfy(
+            entry -> {
+              assertThat(entry.reason()).isEqualTo(LedgerReason.EXPIRE);
+              assertThat(entry.deltaOnHand()).isZero();
+              assertThat(entry.deltaReserved()).isNegative();
+            });
+  }
+
+  @Test
+  @DisplayName("expireOverdue: markStatus trả 0 (request khác xử lý trước) → KHÔNG trả chỗ lần 2")
+  void expireOverdueShouldSkipAlreadyHandledReservation() {
+    ReservationRecord claimed = pendingReservation(-60);
+    when(reservations.findExpiredPending(NOW, 100)).thenReturn(List.of(claimed));
+    when(reservations.markStatus(
+            any(), eq(ReservationStatus.PENDING), eq(ReservationStatus.EXPIRED), eq(NOW)))
+        .thenReturn(0);
+
+    assertThat(service.expireOverdue(NOW)).isZero();
+    verify(stock, never()).release(any(), any(), anyInt(), any());
+    verify(ledger, never()).append(any());
   }
 
   @Test

@@ -9,9 +9,16 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +32,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -48,8 +56,20 @@ import tools.jackson.databind.ObjectMapper;
  */
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = {"shoplab.env=local", "shoplab.debug-endpoints=true"})
+    properties = {
+      "shoplab.env=local",
+      "shoplab.debug-endpoints=true",
+      // SL-2.3: sweeper chạy thật với nhịp ngắn để IT kiểm được đường scheduled.
+      "shoplab.inventory.sweep-interval-ms=300",
+      "shoplab.inventory.sweep-initial-delay-ms=200",
+      // 100 request song song cần đủ connection; mặc định 6 sẽ xếp hàng và làm test chậm/flaky.
+      "spring.datasource.hikari.maximum-pool-size=20"
+    })
 @Testcontainers
+// Đóng Spring context NGAY sau class (không cache) để scheduler của sweeper dừng trước khi
+// Testcontainers dừng Postgres — nếu không, nhịp quét kế tiếp sẽ chạy trên DB đã chết và log đầy
+// "Connection is closed" (đã gặp thật; không phải lỗi test nhưng làm nhiễu log CI).
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class InventoryServiceApplicationIT {
 
   private static final String ISSUER = "https://identity.shoplab.local";
@@ -334,11 +354,110 @@ class InventoryServiceApplicationIT {
   }
 
   // ==========================================================================
+  // SL-2.3: sweeper TTL + bằng chứng chống oversell dưới tải song song
+  // ==========================================================================
+
+  @Test
+  @DisplayName("100 request song song cùng SKU (tồn 10) ⇒ đúng 10×201 / 90×409, KHÔNG oversell")
+  void concurrentReserveNeverOversells() throws Exception {
+    UUID sku = UUID.randomUUID();
+    setStock(sku, 10);
+
+    int requests = 100;
+    ExecutorService pool = Executors.newFixedThreadPool(20);
+    CountDownLatch startTogether = new CountDownLatch(1);
+    List<Future<Integer>> futures = new ArrayList<>();
+    try {
+      for (int i = 0; i < requests; i++) {
+        UUID orderId = UUID.randomUUID();
+        futures.add(
+            pool.submit(
+                () -> {
+                  startTogether.await(); // tất cả cùng bắn một lúc
+                  return reserve(orderId, Map.of(sku, 1)).status();
+                }));
+      }
+      startTogether.countDown();
+
+      List<Integer> statuses = new ArrayList<>();
+      for (Future<Integer> future : futures) {
+        statuses.add(future.get(30, TimeUnit.SECONDS));
+      }
+
+      long created = statuses.stream().filter(status -> status == 201).count();
+      long rejected = statuses.stream().filter(status -> status == 409).count();
+      assertThat(created).as("số request được nhận phải bằng tồn kho").isEqualTo(10);
+      assertThat(rejected).as("phần còn lại phải bị từ chối 409").isEqualTo(90);
+    } finally {
+      pool.shutdownNow();
+    }
+
+    StockView stock = stockOf(sku);
+    assertThat(stock.onHand()).isEqualTo(10);
+    assertThat(stock.reserved()).isEqualTo(10);
+    assertThat(stock.available()).isZero();
+    // Ledger là bằng chứng thứ hai: đúng 10 lần giữ chỗ, không có lần "ma" nào.
+    assertThat(ledgerSum(sku)).isEqualTo(new int[] {10, 10});
+  }
+
+  @Test
+  @DisplayName("sweeper (job thật) expire reservation quá hạn: trả chỗ + ledger EXPIRE")
+  void sweeperReleasesExpiredReservations() throws Exception {
+    UUID sku = UUID.randomUUID();
+    setStock(sku, 5);
+    String reservationId =
+        field(reserve(UUID.randomUUID(), Map.of(sku, 2)).body(), "reservationId");
+    assertThat(stockOf(sku).reserved()).isEqualTo(2);
+
+    // Đẩy expires_at về quá khứ thay vì chờ 15 phút — sweeper chỉ quan tâm cột này.
+    jdbc.update(
+        "update reservations set expires_at = now() - interval '1 minute' where id = ?::uuid",
+        reservationId);
+
+    awaitUntil(() -> stockOf(sku).reserved() == 0, Duration.ofSeconds(15));
+
+    assertThat(statusOf(reservationId)).isEqualTo("EXPIRED");
+    assertThat(stockOf(sku).onHand()).isEqualTo(5);
+    assertThat(
+            jdbc.queryForObject(
+                "select count(*) from stock_ledger where ref_id = ?::uuid and reason = 'EXPIRE'",
+                Integer.class,
+                reservationId))
+        .isEqualTo(1);
+  }
+
+  @Test
+  @DisplayName("sweeper KHÔNG đụng reservation còn hạn (nhiều nhịp quét vẫn PENDING)")
+  void sweeperLeavesActiveReservationsAlone() throws Exception {
+    UUID sku = UUID.randomUUID();
+    setStock(sku, 5);
+    String reservationId =
+        field(reserve(UUID.randomUUID(), Map.of(sku, 3)).body(), "reservationId");
+
+    Thread.sleep(1_500); // ≥ 3 nhịp sweeper (interval 300ms) — nếu logic sai thì hàng đã bị trả
+
+    assertThat(statusOf(reservationId)).isEqualTo("PENDING");
+    assertThat(stockOf(sku).reserved()).isEqualTo(3);
+  }
+
+  // ==========================================================================
   // Helpers
   // ==========================================================================
 
   private String adminToken() {
     return MINTER.token(UUID.randomUUID(), "ADMIN");
+  }
+
+  /** Chờ tới khi điều kiện đúng (dùng cho job nền — không assert ngay sau 1 nhịp cố định). */
+  private void awaitUntil(BooleanSupplier condition, Duration timeout) throws InterruptedException {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    while (System.nanoTime() < deadline) {
+      if (condition.getAsBoolean()) {
+        return;
+      }
+      Thread.sleep(200);
+    }
+    assertThat(condition.getAsBoolean()).as("điều kiện chưa đạt sau %s", timeout).isTrue();
   }
 
   private String buyerToken() {

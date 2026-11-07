@@ -25,6 +25,18 @@ public interface ReservationRepository {
   List<ReservationItemRecord> findItems(UUID reservationId);
 
   /**
+   * Reservation {@code PENDING} đã quá hạn — nguồn cho sweeper (SL-2.3).
+   *
+   * <p>Câu SQL dùng {@code FOR UPDATE SKIP LOCKED}: instance này "nhận" các row nó lock được,
+   * instance khác chạy song song sẽ bỏ qua chúng ⇒ hai sweeper không bao giờ cùng xử lý một
+   * reservation (giải quyết {@code TD-15}).
+   *
+   * <p>{@code ORDER BY expires_at}: cái quá hạn lâu nhất được dọn trước, để giới hạn batch không
+   * làm reservation cũ bị "đói" vĩnh viễn khi lúc nào cũng có cái mới hơn.
+   */
+  List<ReservationRecord> findExpiredPending(Instant now, int limit);
+
+  /**
    * {@code UPDATE … WHERE id = :id AND status = :from} — trả về 1 nếu đổi được, 0 nếu trạng thái đã
    * khác (request khác vừa đổi trước).
    */

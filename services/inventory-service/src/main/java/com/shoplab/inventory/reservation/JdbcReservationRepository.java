@@ -78,6 +78,27 @@ public class JdbcReservationRepository implements ReservationRepository {
         .list();
   }
 
+  /**
+   * Reservation {@code PENDING} quá hạn, theo thứ tự quá hạn lâu nhất trước.
+   *
+   * <p>Dùng {@code FOR UPDATE SKIP LOCKED} + {@code LIMIT}: Postgres lock các row trả về và <b>bỏ
+   * qua</b> row đang bị instance khác lock. Nhờ vậy chạy N instance sweeper vẫn đúng, không cần
+   * advisory lock.
+   */
+  @Override
+  public List<ReservationRecord> findExpiredPending(Instant now, int limit) {
+    return jdbc.sql(
+            SELECT
+                + " where status = 'PENDING' and expires_at < :now"
+                + " order by expires_at"
+                + " limit :limit"
+                + " for update skip locked")
+        .param("now", Timestamp.from(now))
+        .param("limit", limit)
+        .query(this::mapReservation)
+        .list();
+  }
+
   @Override
   public int markStatus(UUID id, ReservationStatus from, ReservationStatus to, Instant now) {
     return jdbc.sql(
