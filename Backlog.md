@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.4` ✅ **Done** — promotion service đã lên `main`) |
-| **Ticket tiếp theo** | `SL-2.5` — `order-service` (idempotent + state machine + snapshot giá) · `SL-2.1` — `cart-service` (Redis) |
-| **Số ticket chi tiết hiện có** | 28 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 5) |
+| **Ticket đang làm** | — (`SL-2.5` ✅ **Done** — order service đã lên `main`) |
+| **Ticket tiếp theo** | `SL-2.6` — **Checkout Saga** (orchestration + compensating) · `SL-2.7` — `payment-service` |
+| **Số ticket chi tiết hiện có** | 29 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 6) |
 
 ---
 
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 5 / 13 |
+| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 6 / 13 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -209,7 +209,7 @@ $ md5sum docs/api/openapi.yaml
 | 3 | `SL-2.2` | `inventory-service` (8084, DB `inventory`): schema `stock`/`reservations`/`stock_ledger` + API `reserve`/`commit`/`release`; **atomic** chống oversell | M | ✅ Done |
 | 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M | ✅ Done |
 | 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | ✅ Done |
-| 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M | Todo |
+| 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M | ✅ Done |
 | 7 | `SL-2.6` | **Checkout Saga** (orchestration): cart → reserve → lock voucher → payment → confirm; **compensating** cho mọi nhánh fail; lưu saga state | L → tách 2 | Todo |
 | 8 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | Todo |
 | 9 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M | Todo |
@@ -946,6 +946,140 @@ $ bash tools/export-openapi.sh VALIDATE PASS · 23 path · 28 operation · 29 sc
 - **Đánh đổi cần nhớ**: `subtotal` hiện do order-service gửi (call nội bộ). Nếu endpoint lộ ra client thì phải tính lại
   server-side — ghi vào đây để không quên khi mở API cho bên ngoài.
 
+### SL-2.5 — `order-service`: tạo order idempotent + state machine + snapshot giá
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 2 — Core commerce flow |
+| **Phụ thuộc** | `SL-2.2`/`SL-2.4` (inventory reserve, promotion lock); **chặn** `SL-2.6` (saga gọi order) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Đơn hàng là bản ghi pháp lý của giao dịch: sai một con số là sai hoá đơn, và tạo trùng một đơn là trừ tiền/trừ kho hai lần.
+Checkout của user thật luôn có retry (mất mạng, bấm 2 lần, app tự gửi lại) ⇒ **idempotency là yêu cầu bắt buộc**, không phải
+"nice to have". Ticket này dựng `order-service` với 3 trọng tâm: **idempotency** (ADR-0006 D2), **snapshot** (D3) và
+**state machine** một chiều.
+
+**Mục tiêu**
+
+Service thứ 6 (`8087`, DB `order`): tạo đơn idempotent theo `Idempotency-Key`, lưu snapshot giá/tên SKU trong
+`order_items`, và chỉ cho phép `PENDING_PAYMENT → CONFIRMED | CANCELLED | EXPIRED` (mỗi lần chuyển đều có history).
+
+**In scope**
+
+- Service mới (pom · Dockerfile · yml · security · health · logback · JDBC) + migration `V1__create_order.sql`
+  (`orders`, `order_items`, `order_status_history`, `idempotency_keys` + CHECK bất biến tiền).
+- API: `POST /v1/orders` (bắt buộc `Idempotency-Key`) · `GET /v1/orders/{id}` · `GET /v1/orders` (phân trang) ·
+  `POST /v1/orders/{id}/confirm|cancel|expire`.
+- Ngữ nghĩa idempotency đủ 4 nhánh: 201 mới · 200 replay (header `Idempotent-Replayed`) · 422 key dùng lại · 409 đang chạy.
+- **Job dọn `idempotency_keys`** (COMPLETED > 24 h, IN_PROGRESS > 1 h) ⇒ **trả `TD-14`**.
+- `commons`: thêm `UNPROCESSABLE_ENTITY(422)` + map `fromHttpStatus`.
+- Hạ tầng: compose · `.env.example` · gateway route `/v1/orders` · CI matrix · Dockerfile 7 service · `export-openapi.sh`.
+
+**Out of scope**
+
+- **Saga** (gọi inventory/promotion/payment) → `SL-2.6`; **sweeper expire đơn** → `SL-2.9` (phải release stock+voucher kèm).
+- Không gọi `catalog` để lấy giá: `GET /v1/skus?ids=` chưa tồn tại (thêm là ticket riêng của catalog, §3.1) và `carts` đã
+  thiết kế lưu `price_snapshot`.
+
+**Acceptance Criteria**
+
+- [x] `POST /v1/orders` thiếu header → **400**; lần đầu → **201**; retry cùng key+payload → **200** + cùng `id` +
+      header `Idempotent-Replayed: true`; cùng key payload khác → **422**; row `IN_PROGRESS` → **409**.
+- [x] `order_items` giữ **snapshot** (`sku_code`, `title`, `unit_price`, `qty`, `line_total`); `line_total` và
+      `total = subtotal - discount` bị **CHECK ở DB** canh (thử UPDATE sai → bị chặn).
+- [x] `confirm` → CONFIRMED, **confirm lần 2 → 200** (không ghi history lần 2), `cancel` sau `confirm` → **409**.
+- [x] `cancel`/`expire` trên đơn PENDING → 200 + `order_status_history` có `reason`.
+- [x] Đơn của người khác → **404** (không lộ sự tồn tại); admin đọc được; list của buyer chỉ có đơn của mình.
+- [x] **30 request song song cùng `Idempotency-Key` ⇒ đúng 1 đơn** trong DB (không tạo trùng).
+- [x] Job dọn idempotency xoá row cũ (48 h) và giữ row mới; log `idempotency cleanup: đã xoá N row`.
+- [x] Unit + IT xanh; OpenAPI + README cập nhật; `e2e-smoke` 17/17.
+
+**Ghi chú kỹ thuật**
+
+- **Tiền do server tính** từ `unitPrice × qty`; client **không** gửi tổng (gửi tổng là mời gọi sửa 1 field để trả ít hơn).
+- **Ghi khoá trước, ngoài transaction** (đúng ADR "transaction riêng") rồi mới mở transaction tạo đơn — lý do ở Learning
+  note: `REQUIRES_NEW` lồng trong transaction + pool nhỏ = **deadlock pool** (đã gặp thật khi chạy 20 request song song).
+- **`complete()` nằm trong transaction của việc tạo đơn** ⇒ crash giữa chừng không để lại khoá COMPLETED trỏ tới đơn ma.
+- **So sánh payload bằng SHA-256** của body đã serialize: cùng key mà hash khác ⇒ 422 (client phải sửa request).
+- Quyền đọc đơn của người khác trả **404 chứ không 403**: không xác nhận cho người ngoài biết đơn có tồn tại.
+
+**Kết quả verify** *(chạy thật: Docker + Postgres 16)*
+
+**1) `mvn -B -ntp verify` toàn repo — BUILD SUCCESS (01:42)**
+
+```text
+[INFO] ShopLab :: Service Commons ......................... SUCCESS [  2.348 s]
+[INFO] ShopLab :: Identity Service ........................ SUCCESS [ 19.450 s]
+[INFO] ShopLab :: Catalog Service ......................... SUCCESS [ 16.748 s]
+[INFO] ShopLab :: Inventory Service ....................... SUCCESS [ 16.482 s]
+[INFO] ShopLab :: Promotion Service ....................... SUCCESS [ 16.117 s]
+[INFO] ShopLab :: Order Service ........................... SUCCESS [ 15.624 s]
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [  8.529 s]
+[INFO] BUILD SUCCESS   Total time: 01:42 min
+```
+
+`order` unit **43** (`OrderPricingTest` 6 · `IdempotencyServiceTest` 7 · `OrderServiceTest` 8 · config/health 22) · IT **10**.
+
+**2) Luồng thật qua gateway** (`bash /tmp/verify-order.sh`)
+
+```text
+1) tạo đơn: HTTP 201 · total=180000 · subtotal=200000 · status=PENDING_PAYMENT
+   DB order_items: SKU-X | Ao thun | 100000.00 x 2 = 200000.00
+   DB history: (null) -> PENDING_PAYMENT · idempotency: COMPLETED (201)
+2) retry cùng key+payload: HTTP 200 · id TRÙNG · số đơn có key này: 1
+3) cùng key payload khác → HTTP 422 UNPROCESSABLE_ENTITY
+4) thiếu header → HTTP 400
+5) confirm → 200 · status=CONFIRMED
+6) confirm lần 2 → 200 · history = 2 dòng (không ghi thêm)
+7) cancel đơn đã CONFIRMED → HTTP 409
+8) cancel đơn PENDING → 200 · reason trong history = "het tien" · expire → 200 · status=EXPIRED
+9) admin GET → 200 · không token → 401
+10) 20 request song song cùng key: 1×201 + 15×200 (replay) + 4×409 ⇒ số đơn trong DB: 1
+```
+
+**3) Job dọn idempotency trên container** (interval 3 s cho demo)
+
+```text
+1) tạo row tuổi 48h → sau ~3000ms: row đã bị xoá (cleanup chạy thật)
+2) log: "idempotency cleanup: đã xoá 2 row (COMPLETED > PT24H, IN_PROGRESS > PT1H)"
+```
+
+**4) Regression + contract**
+
+```text
+$ bash tools/e2e-smoke.sh       17 PASS / 0 FAIL
+$ bash tools/export-openapi.sh  VALIDATE PASS · 28 path · 34 operation · 34 schema
+```
+
+**Sự cố trong lúc verify (3 lỗi thật, đáng ghi)**
+
+- **Deadlock connection pool** (nặng nhất): `begin()` dùng `REQUIRES_NEW` **lồng trong** `@Transactional` của tạo đơn ⇒ mỗi
+  request cần 2 connection cùng lúc; pool 5 + 20 request song song ⇒ cả 5 thread giữ 1 và chờ 1 ⇒ `CannotCreateTransactionException`
+  (HTTP 500), dù logic đúng. Fix: tách `OrderWriter` (@Transactional) và gọi `begin()` **trước** khi mở transaction.
+- **OpenAPI trùng schema `Item`**: order-service và promotion-service đều có record lồng tên `Item` ⇒ script merge từ chối
+  (đúng!). Đổi thành `Line`.
+- **Test của tôi sai, không phải code**: mỗi `buyerToken()` sinh **user khác** ⇒ scope idempotency khác nhau (retry thành
+  đơn mới). Và seed có `discount = 0` nên `total = subtotal` vẫn đúng CHECK ⇒ phải lệch thật (`+100`). Cùng bài học:
+  **test sai cho kết quả "đỏ" trông giống bug production** — phải đọc kỹ thông điệp assertion.
+
+**Learning note**
+
+- **`REQUIRES_NEW` lồng trong transaction là bẫy pool**: nó cần connection **thứ hai** trong khi connection thứ nhất chưa
+  nhả. Với pool nhỏ, N thread đồng thời = deadlock toàn phần. Cách đúng: ghi khoá **trước** khi mở transaction (hoặc dùng
+  pool đủ lớn + timeout, nhưng đó là che bệnh).
+- **Idempotency phải khoá theo `(user, endpoint)`, không theo key đơn thuần**: key do client sinh, hai user có thể trùng
+  key; scope tách ra thì không đụng nhau.
+- **CHECK constraint ở DB là thứ duy nhất không quên**: `total = subtotal − discount`, `line_total = unit_price × qty` —
+  nếu chỉ tính trong code thì một script/migration sau này có thể tạo hoá đơn sai mà không ai biết.
+- **404 thay vì 403 cho tài nguyên của người khác**: 403 xác nhận "có tồn tại nhưng bạn không được xem" — với đơn hàng,
+  điều đó đã là rò rỉ thông tin.
+- **Snapshot là quyết định nghiệp vụ**, không phải kỹ thuật: đơn đã đặt phải giữ giá lúc đặt, kể cả khi catalog đổi giá.
+- **Job dọn phải có ngưỡng cho cả 2 loại row**: `COMPLETED` giữ 24 h (retry muộn vẫn dedupe), `IN_PROGRESS` quá 1 h coi là
+  mồ côi — không dọn thì client nhận 409 **vĩnh viễn** cho một key đã crash.
+
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
 
@@ -1134,6 +1268,11 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | SL-2.4 | **Cùng một pattern, lần thứ hai rẻ hơn nhiều**: lock/commit/release của voucher chỉ tốn ~1/2 thời gian so với inventory vì đã có khuôn (conditional `UPDATE`, compare-and-set status, `noRollbackFor` cho nhánh vừa-trả-vừa-ném, sweeper `SKIP LOCKED`). Đó là lợi ích thật của việc làm đúng ngay từ service đầu. |
 | 2026-11-07 | SL-2.4 | **Bất biến `used + locked <= quota` phải ở DB**: kiểm trong code thì một đường ghi mới (script/migration/service khác) là bán quá quota; CHECK constraint là thứ duy nhất không thể quên. |
 | 2026-11-07 | SL-2.4 | **Snapshot tiền tại lúc lock**: giảm giá đã hứa với client phải bất biến — commit dùng `discount` trong `voucher_locks`, không tính lại từ `vouchers.value` (admin sửa `value` giữa chừng sẽ làm hoá đơn sai). Đánh đổi cần nhớ: `subtotal` hiện do order-service gửi; nếu API lộ ra client thì phải tính lại server-side. |
+| 2026-11-07 | SL-2.5 | **`REQUIRES_NEW` lồng trong transaction là bẫy pool**: nó cần connection **thứ hai** trong khi connection thứ nhất chưa nhả ⇒ pool 5 + 20 request song song = deadlock (HTTP 500 dù logic đúng). Cách đúng: ghi khoá **trước** khi mở transaction (tách `OrderWriter`). |
+| 2026-11-07 | SL-2.5 | **Idempotency khoá theo `(user, endpoint)` chứ không theo key đơn thuần**: key do client sinh, hai user có thể trùng key; scope tách ra thì không đụng nhau (và test phải dùng **cùng user** mới kiểm được replay). |
+| 2026-11-07 | SL-2.5 | **CHECK constraint ở DB là thứ duy nhất không quên**: `total = subtotal − discount`, `line_total = unit_price × qty` — tính trong code thì script/migration sau này vẫn tạo được hoá đơn sai. |
+| 2026-11-07 | SL-2.5 | **404 thay vì 403 cho tài nguyên của người khác**: 403 xác nhận "có tồn tại nhưng bạn không được xem" — với đơn hàng đó đã là rò rỉ thông tin. |
+| 2026-11-07 | SL-2.5 | **Job dọn phải có ngưỡng cho cả 2 loại row**: `COMPLETED` giữ 24 h (retry muộn vẫn dedupe), `IN_PROGRESS` quá 1 h coi là mồ côi — không dọn thì client nhận 409 **vĩnh viễn** cho key đã crash. |
 
 ---
 
@@ -1158,7 +1297,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-11` | `page`/`size`/`sort` sai → 400 nhưng không trả `details` theo field | SL-1.6 | Khi client cần hiển thị lỗi theo field | thấp |
 | `TD-12` | Chưa có **soft delete** cho product; `DELETE` là hard delete + cascade SKU | SL-1.6 | **Chốt ở `SL-2.0` · code xong ở `SL-2.11`** (ARCHIVED + `deleted_at` + CHECK constraint) | ✅ đã trả (SL-2.11) |
 | `TD-13` | **Reuse detection revoke cả chuỗi** ⇒ client hợp lệ vẫn có thể bị logout toàn phiên: 2 tab cùng refresh gần như đồng thời, mất mạng sau khi server đã rotate, hoặc retry tự động gửi lại token cũ | SL-1.4 (rà soát 2026-11-06) | Khi có phản ánh "tự nhiên bị logout" **hoặc** khi làm client thật (Phase 2) → cân nhắc **grace window ~30s** (trả token mới nhất trong chuỗi thay vì revoke) + client single-flight refresh | ✅ đã trả (SL-1.18) |
-| `TD-14` | Bảng `idempotency_keys` không có job dọn row quá 24h ⇒ phình dần (1 row/request checkout) | SL-2.0 | Khi có scheduler chạy thật (sweeper reservation ở `SL-2.3`) ⇒ gộp 1 job dọn cho cả 2 bảng | trung bình |
+| `TD-14` | Bảng `idempotency_keys` không có job dọn row quá 24h ⇒ phình dần (1 row/request checkout) | SL-2.0 | **Đã trả ở `SL-2.5`**: `IdempotencySweeper` (COMPLETED > 24h, IN_PROGRESS > 1h, batch 200) | ✅ đã trả (SL-2.5) |
 | `TD-15` | Reservation sweeper là `@Scheduled` in-process ⇒ chạy trùng khi `inventory-service` > 1 instance | SL-2.0 | **Đã trả ở `SL-2.3`**: `FOR UPDATE SKIP LOCKED` + conditional `markStatus` ⇒ N instance vẫn không trả chỗ 2 lần | ✅ đã trả (SL-2.3) |
 | `TD-16` | Chưa có API **restore/unarchive** product đã xoá mềm; bán lại cùng product phải tạo mới | SL-2.0 | Khi seller ẩn nhầm cần khôi phục **hoặc** có UI quản trị product | thấp |
 
@@ -1232,3 +1371,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | `SL-2.2` → `Done`: thêm **`inventory-service`** (8084, DB `inventory`) — `reserve`/`commit`/`release` chống oversell bằng **conditional UPDATE** (ADR-0006 D1), reservation **TTL 15′** + lazy expire, idempotent theo `orderId`, `stock_ledger` append-only 2 cột delta. Migration `V1__create_inventory.sql` (4 bảng + CHECK bất biến). JDBC thay JPA (cần `rowsAffected`). Hạ tầng: compose + gateway route `/v1/stock` + CI matrix + 4 Dockerfile cũ. `commons` thêm `GONE(410)`. Verify: `mvn verify` **BUILD SUCCESS** (inventory **40 unit + 12 IT** postgres thật, toàn repo xanh) · container `healthy` · luồng curl qua gateway: 201/200 idempotent · 409 + details · commit 10→7 · commit#2 không trừ 2 lần · release sau commit 409 · quá TTL **410** + trả chỗ · ledger khớp `(7,0)`/`(1,0)` · 401/403 đúng · `e2e-smoke` 17/17 · OpenAPI 18 path/23 operation. Sinh `SL-2.12` để trả `TD-3`. |
 | 2026-11-07 | `SL-2.3` → `Done`: `inventory-service` thêm **sweeper TTL** (`@Scheduled` fixedDelay 60 s, batch 100, `FOR UPDATE SKIP LOCKED` + conditional `markStatus`) — reservation `PENDING` quá hạn tự `EXPIRED` + trả chỗ + ledger `EXPIRE`; trả `TD-15`. Thêm test **100 request HTTP song song** cùng SKU: **đúng 10×201 / 90×409**, `reserved=10`, `Σ delta_reserved=10`, bất biến `reserved<=on_hand` OK. Verify: `mvn verify` **BUILD SUCCESS** (inventory 44 unit + 15 IT) · container thật: sweeper dọn trong ~300 ms, log `đã expire 1 reservation` · `e2e-smoke` 17/17. |
 | 2026-11-07 | `SL-2.4` → `Done`: thêm **`promotion-service`** (8086, DB `promotion`) — voucher `PERCENT` (cap `max_discount`) + `FIXED`, `lock`/`commit`/`release` cùng pattern conditional `UPDATE` của inventory; `voucher_locks` 1 row/order + snapshot `discount`/`subtotal`; bất biến `used + locked <= quota` do CHECK canh; sweeper TTL (`SKIP LOCKED`) trả lượt bị bỏ quên. Hạ tầng: compose + gateway route `/v1/vouchers` + CI matrix + Dockerfile 6 service. Verify: `mvn verify` **BUILD SUCCESS** (promotion 48 unit + 13 IT) · container healthy · flow thật: lock 201 → retry 200 cùng id → commit (used=1) → release sau commit 409 → quá TTL 410 + trả lượt → sweeper tự trả trong ~1,5 s · **100 request song song: 10×201 / 90×409**, `used+locked<=quota` OK · `e2e-smoke` 17/17 · OpenAPI 23 path. |
+| 2026-11-07 | `SL-2.5` → `Done`: thêm **`order-service`** (8087, DB `order`) — tạo đơn **idempotent** (`Idempotency-Key`: 201 · 200 replay + header · 422 key dùng lại · 409 đang chạy · 400 thiếu header), `order_items` **snapshot** giá/tên, state machine `PENDING_PAYMENT → CONFIRMED|CANCELLED|EXPIRED` + history, bất biến tiền bằng CHECK ở DB; job dọn `idempotency_keys` (**trả `TD-14`**); `commons` thêm `422`. Verify: `mvn verify` **BUILD SUCCESS** (order 43 unit + 10 IT, toàn repo xanh) · flow thật: 201 → retry 200 cùng id → 422 → 400 · confirm 200 · confirm#2 không ghi history · cancel sau confirm 409 · cancel/expire 200 + reason · **20 request song song cùng key ⇒ 1 đơn** · job dọn xoá row 48h trong 3 s · `e2e-smoke` 17/17 · OpenAPI 28 path. **Sự cố thật**: deadlock pool do `REQUIRES_NEW` lồng transaction (đã fix bằng `OrderWriter`). |

@@ -390,6 +390,52 @@ services:
       - shoplab-net
 
   # ---------------------------------------------------------------------------
+  # order-service — đơn hàng (SL-2.5): tạo order idempotent + state machine + snapshot giá.
+  # Không gọi service khác (saga orchestration là SL-2.6).
+  # ---------------------------------------------------------------------------
+  order-service:
+    build:
+      context: ..
+      dockerfile: services/order-service/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-order-service:local
+    container_name: shoplab-order-service
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${ORDER_SERVICE_PORT:-8087}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SHOPLAB_DEBUG_ENDPOINTS: ${SHOPLAB_DEBUG_ENDPOINTS:-true}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB_ORDER: ${POSTGRES_DB_ORDER:-order}
+      POSTGRES_USER: ${POSTGRES_USER:-shoplab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
+      IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      ORDER_IDEMPOTENCY_RETENTION: ${ORDER_IDEMPOTENCY_RETENTION:-24h}
+      ORDER_IDEMPOTENCY_STALE_AFTER: ${ORDER_IDEMPOTENCY_STALE_AFTER:-1h}
+      ORDER_IDEMPOTENCY_SWEEP_BATCH: ${ORDER_IDEMPOTENCY_SWEEP_BATCH:-200}
+      SHOPLAB_ORDER_SWEEP_INTERVAL_MS: ${SHOPLAB_ORDER_SWEEP_INTERVAL_MS:-3600000}
+      SHOPLAB_ORDER_SWEEP_INITIAL_DELAY_MS: ${SHOPLAB_ORDER_SWEEP_INITIAL_DELAY_MS:-600000}
+    ports:
+      - "${ORDER_SERVICE_PORT:-8087}:${ORDER_SERVICE_PORT:-8087}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:$${SERVER_PORT}/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+    networks:
+      - shoplab-net
+
+  # ---------------------------------------------------------------------------
   # api-gateway — cửa vào duy nhất (SL-1.2): route /v1/** + verify JWT qua JWKS của identity.
   #
   # Không có DB: gateway không sở hữu dữ liệu nào (architecture.md §5) → readiness check TCP
@@ -423,6 +469,7 @@ services:
       CATALOG_SERVICE_URL: ${CATALOG_SERVICE_URL:-http://catalog-service:8082}
       INVENTORY_SERVICE_URL: ${INVENTORY_SERVICE_URL:-http://inventory-service:8084}
       PROMOTION_SERVICE_URL: ${PROMOTION_SERVICE_URL:-http://promotion-service:8086}
+      ORDER_SERVICE_URL: ${ORDER_SERVICE_URL:-http://order-service:8087}
       GATEWAY_CONNECT_TIMEOUT: ${GATEWAY_CONNECT_TIMEOUT:-2s}
       GATEWAY_READ_TIMEOUT: ${GATEWAY_READ_TIMEOUT:-5s}
     ports:

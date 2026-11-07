@@ -87,6 +87,9 @@ shoplab:
       # SL-2.4: promotion-service (voucher lock/commit/release + admin CRUD). Cần token.
       - path-prefix: /v1/vouchers
         base-url: ${PROMOTION_SERVICE_URL:http://localhost:8086}
+      # SL-2.5: order-service (tạo/xem đơn + chuyển trạng thái). Cần token.
+      - path-prefix: /v1/orders
+        base-url: ${ORDER_SERVICE_URL:http://localhost:8087}
       # JWKS công bố qua gateway để client chỉ cần biết MỘT địa chỉ.
       - path-prefix: /.well-known
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}

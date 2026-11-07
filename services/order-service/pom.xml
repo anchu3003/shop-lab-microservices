@@ -1,0 +1,215 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.shoplab</groupId>
+    <artifactId>shoplab-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <relativePath>../../pom.xml</relativePath>
+  </parent>
+
+  <artifactId>shoplab-order-service</artifactId>
+  <packaging>jar</packaging>
+
+  <name>ShopLab :: Order Service</name>
+  <description>
+    Service đơn hàng (SL-2.5): tạo order **idempotent** (Idempotency-Key), state machine
+    PENDING_PAYMENT → CONFIRMED | CANCELLED | EXPIRED, và `order_items` lưu **snapshot** giá/tên SKU
+    (hoá đơn bất biến, ADR-0006 D3). Database riêng (`order`) — database per service (AGENTS.md §6).
+  </description>
+
+  <!--
+    Ghi chú dependency (version do BOM `spring-boot-dependencies` quản lý — không khai version):
+    - `spring-security-oauth2-jose` KHÔNG khai tường minh: `starter-oauth2-resource-server` đã kéo
+      nó theo (NimbusJwtDecoder nằm trong đó). Identity phải khai vì nó KÝ token (cần encoder).
+    - Flyway cần starter + `flyway-database-postgresql` (từ Flyway 10 tách module DB).
+    - KHÔNG có `spring-security-crypto`: catalog không hash mật khẩu, không lưu credential.
+  -->
+
+  <dependencies>
+    <dependency>
+      <groupId>com.shoplab</groupId>
+      <artifactId>shoplab-service-commons</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+
+    <!--
+      JDBC chứ KHÔNG JPA (khác catalog): toàn bộ phần khó của service này là SQL có điều kiện
+      (`UPDATE ... WHERE on_hand - reserved >= :qty`) và cần biết `rowsAffected` để biết hết hàng.
+      JPA entity + dirty checking chỉ thêm tầng trung gian cho đúng loại truy vấn này.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
+
+    <!--
+      PHẢI dùng starter, không dùng `flyway-core` trần: Spring Boot 4 tách auto-configuration
+      thành module riêng ⇒ khai sai là Flyway im lặng không chạy (đã gặp thật ở SL-1.1).
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-flyway</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
+    <!--
+      Security chain đầy đủ: catalog TỰ verify JWT (defense in depth — không tin tuyệt đối vào
+      gateway). 401/403 trả ApiError thống nhất thay vì HTML mặc định của Spring.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-security</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
+    </dependency>
+
+    <!-- OpenAPI (SL-1.8): /v3/api-docs. Khung spec + bộ response lỗi chuẩn ở commons. -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-api</artifactId>
+    </dependency>
+
+    <!-- ===================== test ===================== -->
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- Testcontainers 2.x: artifact có tiền tố `testcontainers-` (không còn `postgresql` như 1.x). -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers-postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <executions>
+          <!-- Không kế thừa spring-boot-starter-parent → phải bind goal tường minh. -->
+          <execution>
+            <id>repackage</id>
+            <goals>
+              <goal>repackage</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>build-info</id>
+            <goals>
+              <goal>build-info</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!--
+        Failsafe: `classesDirectory` BẮT BUỘC khai tường minh — `spring-boot:repackage` (phase
+        package) thay jar bằng jar "fat", class nằm trong BOOT-INF/classes; failsafe mặc định lấy
+        classpath theo artifact đó ⇒ NoClassDefFoundError (bẫy đã gặp ở SL-1.1).
+      -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <configuration>
+          <classesDirectory>${project.build.outputDirectory}</classesDirectory>
+        </configuration>
+        <executions>
+          <execution>
+            <id>integration-tests</id>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>jacoco-prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>jacoco-report</id>
+            <phase>test</phase>
+            <goals>
+              <goal>report</goal>
+            </goals>
+          </execution>
+          <!--
+            Gate ≥ 80% LINE cho package "dễ sai và đắt nếu sai": config (fail-fast, security chain)
+            + health. Domain/web chưa ép ở Phase 1 để tránh gate hình thức.
+          -->
+          <execution>
+            <id>jacoco-check</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>check</goal>
+            </goals>
+            <configuration>
+              <includes>
+                <include>com/shoplab/order/config/*</include>
+                <include>com/shoplab/order/health/*</include>
+              </includes>
+              <rules>
+                <rule>
+                  <element>BUNDLE</element>
+                  <limits>
+                    <limit>
+                      <counter>LINE</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>0.80</minimum>
+                    </limit>
+                  </limits>
+                </rule>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

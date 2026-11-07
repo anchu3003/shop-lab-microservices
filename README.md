@@ -18,7 +18,8 @@
 **Trạng thái hiện tại**: Phase 0 ✅ **Done (8/8)** · Phase 1 ✅ **Done (tag `phase-1`)** —
 chi tiết ở [`Backlog-phase-0.md`](Backlog-phase-0.md) và [`docs/phases/phase-1.md`](docs/phases/phase-1.md).
 Phase 2 (Core commerce flow) 🔵 **In Progress**: đã có `inventory-service` (8084 — reserve/commit/release chống oversell)
-và `promotion-service` (8086 — voucher lock/commit/release); tiếp theo là `cart` / `order` / `payment`.
+`promotion-service` (8086 — voucher lock/commit/release) và `order-service` (8087 — đơn hàng idempotent); tiếp theo là
+`cart` / `payment` / saga.
 Xem [Backlog.md](Backlog.md).
 
 ---
@@ -245,6 +246,7 @@ bash tools/reset-infra.sh
 | `8080` / `8081` / `8082` | `api-gateway` / `identity-service` / `catalog-service` | Phase 1 |
 | `8084` | `inventory-service` | Phase 2 (`SL-2.2`) — `reserve`/`commit`/`release`; DB `inventory` |
 | `8086` | `promotion-service` | Phase 2 (`SL-2.4`) — voucher `lock`/`commit`/`release`; DB `promotion` |
+| `8087` | `order-service` | Phase 2 (`SL-2.5`) — đơn hàng idempotent + state machine; DB `order` |
 
 > `up -d` mặc định **KHÔNG** dựng `service-template` — service mẫu nằm trong profile `template` (`SL-1.13`). Bật khi cần:
 > `docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template`
@@ -515,6 +517,27 @@ Bất biến chống bán quá quota là **`used + locked <= quota`**, do CHECK 
 
 Sweeper (`SL-2.4`) trả lượt cho lock bị bỏ quên: mặc định 60 s/nhịp, batch 100, `FOR UPDATE SKIP LOCKED`. Chỉnh bằng
 `SHOPLAB_PROMOTION_SWEEP_INTERVAL_MS` · `_INITIAL_DELAY_MS` · `_BATCH_SIZE` · `PROMOTION_LOCK_TTL`.
+
+### order-service — `SL-2.5`
+
+Đơn hàng: tạo **idempotent** theo `Idempotency-Key`, `order_items` lưu **snapshot** giá/tên SKU (hoá đơn bất biến), và
+state machine một chiều `PENDING_PAYMENT → CONFIRMED | CANCELLED | EXPIRED` (mỗi lần chuyển đều ghi
+`order_status_history`). DB riêng `order` (`V1__create_order.sql`).
+
+**API** (đều cần token; `userId` lấy từ JWT, không nhận từ body)
+
+| Method + path | Quyền | Ghi chú |
+|---|---|---|
+| `POST /v1/orders` | đã đăng nhập | **bắt buộc** header `Idempotency-Key`; 201 mới · **200 + `Idempotent-Replayed: true`** khi retry cùng key+payload · **422** khi cùng key payload khác · **409** khi request trước chưa xong · **400** thiếu header |
+| `GET /v1/orders/{id}` | chủ đơn / admin | đơn của người khác → **404** (không lộ sự tồn tại) |
+| `GET /v1/orders?page=&size=` | đã đăng nhập | buyer: đơn của mình; admin: tất cả |
+| `POST /v1/orders/{id}/confirm` | chủ đơn / admin | PENDING → CONFIRMED (gọi lại → 200, không ghi history lần 2) |
+| `POST /v1/orders/{id}/cancel` | chủ đơn / admin | PENDING → CANCELLED (`{reason}` ghi vào history); đơn đã CONFIRMED → **409** |
+| `POST /v1/orders/{id}/expire` | chủ đơn / admin | PENDING → EXPIRED (saga/`SL-2.9` sẽ gọi kèm release stock+voucher) |
+
+**Bất biến tiền do DB canh**: `total = subtotal − discount`, `line_total = unit_price × qty` (CHECK) — không phụ thuộc
+code đúng. Job dọn `idempotency_keys` (COMPLETED > 24 h, IN_PROGRESS > 1 h) chạy mỗi giờ, chỉnh bằng
+`ORDER_IDEMPOTENCY_RETENTION` · `ORDER_IDEMPOTENCY_STALE_AFTER` · `SHOPLAB_ORDER_SWEEP_INTERVAL_MS`.
 
 ### api-gateway — `SL-1.2`
 

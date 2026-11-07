@@ -139,7 +139,9 @@ idempotency_keys(scope, key, request_hash, status, status_code, response_body,
   có job dọn). **Đánh đổi có ý thức**: thà "kẹt 1 key" còn hơn tạo 2 order.
 - `payment-service` webhook dùng **khoá tự nhiên của provider** (`provider_txn_id UNIQUE`) chứ không dùng
   `Idempotency-Key` của client — 2 cơ chế khác nhau vì nguồn gây trùng khác nhau.
-- Retention **24 h**; dọn row cũ = `TD-14`.
+- Retention **24 h**; dọn row cũ = `TD-14` (đã trả ở `SL-2.5`: job xoá `COMPLETED > 24h` + `IN_PROGRESS > 1h`).
+  *(Triển khai ở `SL-2.5`: ghi khoá **trước khi** mở transaction tạo đơn — nếu lồng `REQUIRES_NEW` trong transaction thì mỗi
+  request cần 2 connection và pool nhỏ bị deadlock; `complete()` nằm trong transaction của đơn để crash không tạo "đơn ma".)*
 
 ### D3 — Snapshot trong `order_items` (chọn A)
 

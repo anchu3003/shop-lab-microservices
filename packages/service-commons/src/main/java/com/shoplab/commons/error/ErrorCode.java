@@ -54,6 +54,13 @@ public enum ErrorCode {
   /** Xung đột trạng thái (tạo trùng, version lệch...). */
   CONFLICT(HttpStatus.CONFLICT, "Xung đột dữ liệu"),
 
+  /**
+   * Dữ liệu đúng cú pháp nhưng **không xử lý được** về mặt ngữ nghĩa — vd dùng lại
+   * `Idempotency-Key` cũ cho một payload khác (SL-2.5). Khác 409: 409 là "xung đột tạm thời, thử
+   * lại có ích"; 422 là "client phải sửa request".
+   */
+  UNPROCESSABLE_ENTITY(HttpStatus.UNPROCESSABLE_ENTITY, "Dữ liệu không xử lý được"),
+
   /** Lỗi không lường trước — KHÔNG trả chi tiết nội bộ ra ngoài. */
   INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Lỗi hệ thống");
 
@@ -98,6 +105,9 @@ public enum ErrorCode {
     }
     if (status == HttpStatus.GONE.value()) {
       return GONE;
+    }
+    if (status == HttpStatus.UNPROCESSABLE_ENTITY.value()) {
+      return UNPROCESSABLE_ENTITY;
     }
     // 502/503/504 đều là "phía sau có vấn đề, thử lại được" → cùng một mã cho client dễ xử lý.
     if (status == HttpStatus.BAD_GATEWAY.value()
