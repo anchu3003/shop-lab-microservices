@@ -1053,6 +1053,11 @@ components:
           type: string
         price:
           type: number
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - ARCHIVED
         version:
           type: integer
           format: int64
@@ -1081,6 +1086,11 @@ components:
           type: string
         price:
           type: number
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - ARCHIVED
         version:
           type: integer
           format: int64
@@ -1131,6 +1141,11 @@ components:
         stockHint:
           type: integer
           format: int32
+        status:
+          type: string
+          enum:
+          - ACTIVE
+          - ARCHIVED
         createdAt:
           type: string
           format: date-time

@@ -2,6 +2,8 @@ package com.shoplab.catalog.sku;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
@@ -19,6 +21,9 @@ import java.util.UUID;
  *       SKU: hai nguồn sự thật cho cùng một con số là cách chắc chắn nhất để chúng lệch nhau.
  *   <li>{@code stockHint} chỉ là gợi ý hiển thị. Tồn kho thật + reserve/commit thuộc
  *       inventory-service (Phase 2) — cố ý không dựng nguồn sự thật thứ hai ở đây.
+ *   <li>{@code status} = trạng thái sống/chết của SKU (SL-2.11): product bị xoá mềm ⇒ SKU chuyển
+ *       {@link SkuStatus#ARCHIVED} nhưng <b>row vẫn còn</b>, để Phase 2 tra ngược từ {@code
+ *       sku_id}.
  * </ul>
  */
 @Entity
@@ -41,6 +46,10 @@ public class Sku {
   @Column(name = "stock_hint")
   private Integer stockHint;
 
+  @Enumerated(EnumType.STRING)
+  @Column(name = "status", nullable = false, length = 16)
+  private SkuStatus status;
+
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
 
@@ -59,6 +68,7 @@ public class Sku {
     this.code = code;
     this.priceOverride = priceOverride;
     this.stockHint = stockHint;
+    this.status = SkuStatus.ACTIVE;
     this.createdAt = now;
   }
 
@@ -85,6 +95,10 @@ public class Sku {
 
   public Integer stockHint() {
     return stockHint;
+  }
+
+  public SkuStatus status() {
+    return status;
   }
 
   public Instant createdAt() {

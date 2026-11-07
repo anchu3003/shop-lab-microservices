@@ -11,6 +11,7 @@ public record ProductResponse(
     String name,
     String description,
     BigDecimal price,
+    ProductStatus status,
     long version,
     Instant createdAt,
     Instant updatedAt) {
@@ -22,6 +23,7 @@ public record ProductResponse(
         product.name(),
         product.description(),
         product.price(),
+        product.status(),
         product.version(),
         product.createdAt(),
         product.updatedAt());

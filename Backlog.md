@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.0` ✅ **Done** — mô hình checkout đã chốt; ticket kế tiếp chờ chọn) |
-| **Ticket tiếp theo** | `SL-2.11` — soft delete product (làm **trước** `SL-2.2`) · `SL-2.1` — `cart-service` (Redis) · `SL-2.2` — `inventory-service` |
-| **Số ticket chi tiết hiện có** | 24 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 1) |
+| **Ticket đang làm** | — (`SL-2.11` ✅ **Done** — soft delete product đã lên `main`) |
+| **Ticket tiếp theo** | `SL-2.2` — `inventory-service` (reserve/commit/release, chống oversell) · `SL-2.1` — `cart-service` (Redis) |
+| **Số ticket chi tiết hiện có** | 25 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 2) |
 
 ---
 
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 1 / 12 |
+| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 2 / 12 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -215,14 +215,14 @@ $ md5sum docs/api/openapi.yaml
 | 9 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M | Todo |
 | 10 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M | Todo |
 | 11 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S | Todo |
-| 12 | `SL-2.11` | *(phát sinh từ `SL-2.0`)* `catalog-service`: **soft delete** product — `status = ARCHIVED` + `deleted_at`, `DELETE` không xoá row, list/get ẩn product đã xoá, `reserve` từ chối SKU archived | S | Todo |
+| 12 | `SL-2.11` | *(phát sinh từ `SL-2.0`)* `catalog-service`: **soft delete** product — `status = ARCHIVED` + `deleted_at`, `DELETE` không xoá row, list/get ẩn product đã xoá, `reserve` từ chối SKU archived | S | ✅ Done |
 
 **Phụ thuộc & thứ tự** (cập nhật sau `SL-2.0`): `SL-2.0` ✅ chốt mô hình → **`SL-2.11`** (soft delete — `catalog` phải
 xong trước để inventory biết "SKU archived" nghĩa là gì) → `SL-2.2` + `SL-2.3` (inventory — chỗ dễ oversell nhất,
 làm sớm) song song được với `SL-2.1`/`SL-2.4` → `SL-2.7` (payment) → `SL-2.5`/`SL-2.6` (order + saga, phụ thuộc tất
 cả) → `SL-2.8`/`SL-2.9` → `SL-2.10`.
 
-**Debt sẽ trả trong phase này**: `TD-12` (soft delete product — **chốt ở `SL-2.0`**, code ở `SL-2.11`), `TD-4` (đưa
+**Debt sẽ trả trong phase này**: `TD-12` (soft delete product — **✅ đã trả ở `SL-2.11`**), `TD-4` (đưa
 smoke vào CI khi đã có compose nhiều service — cân nhắc ở `SL-2.8`), `TD-3` (handler 403 → `commons` khi có service
 thứ hai dùng `@PreAuthorize` — nhiều khả năng ở `SL-2.5`/`SL-2.7`).
 **Debt mới phát sinh ở `SL-2.0`**: `TD-14` (chưa có job dọn `idempotency_keys`), `TD-15` (sweeper reservation chạy
@@ -338,6 +338,174 @@ CI: PR **docs-only** ⇒ `paths-ignore` bỏ run (không tốn phút Actions); �
 - **ADR viết bằng số mới có tác dụng**: `Revisit` kiểu "khi cần" = lần sau tranh luận lại từ đầu. Viết "p99 reserve
   > 50 ms hoặc > 1.000 reserve/s trên 1 SKU" thì biết chính xác lúc nào phải mở lại.
 - **Viết ADR trước khi code là rẻ nhất**: 1 file ~252 dòng thay cho việc sửa migration + API + test ở 5 service.
+
+### SL-2.11 — `catalog-service`: soft delete product (thay hard delete + cascade SKU)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 2 — Core commerce flow *(phát sinh từ `SL-2.0`, ADR-0006 D5)* |
+| **Phụ thuộc** | `SL-2.0` (chốt D5); **chặn** `SL-2.2` (inventory cần biết "SKU archived") |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+`TD-12` (mức `cao`): `DELETE /v1/products/{id}` hiện là **hard delete**, và `sku.product_id` có
+`ON DELETE CASCADE` ⇒ xoá product là **xoá luôn mọi SKU**. Phase 2 bắt đầu tham chiếu `sku_id` từ
+`inventory.stock` / `stock_ledger` / `order_items` — nếu SKU biến mất thì mất khả năng reconcile tồn
+kho và audit "sản phẩm này từng bán chạy thế nào". ADR-0006 (D5) đã chốt: **soft delete ở product**,
+`sku_id` phải còn sống.
+
+**Mục tiêu**
+
+`DELETE` product = **archive** (không xoá row): product + SKU của nó chuyển `ARCHIVED`, `deleted_at`
+được ghi. API coi như product không còn tồn tại (list/get/ghi đều không thấy), nhưng dữ liệu vẫn ở
+DB để Phase 2 tham chiếu.
+
+**In scope**
+
+- Migration `V3__add_soft_delete.sql`: `product.status` + `product.deleted_at`, `sku.status`, CHECK
+  `status ∈ {ACTIVE, ARCHIVED}`, CHECK **nhất quán** `(status='ARCHIVED') = (deleted_at IS NOT NULL)`,
+  partial index cho list (`WHERE deleted_at IS NULL`).
+- Entity: `ProductStatus`/`SkuStatus` enum; `Product.archive(Instant)` (idempotent), `Sku.archive()`.
+- Repository: `findByIdAndDeletedAtIsNull` / `existsByIdAndDeletedAtIsNull`; `search` thêm
+  `p.deletedAt is null`; bulk `UPDATE sku SET status='ARCHIVED' WHERE product_id = :id` (1 query, không N+1).
+- Service: `ProductService.delete` → archive; `SkuService.create` chỉ nhận product **ACTIVE**.
+- DTO: `status` xuất hiện trong `ProductResponse`, `ProductDetailResponse`, `SkuResponse`.
+- Test: unit (archive không gọi `delete`, archive idempotent, 404 khi đã xoá, SKU vào product đã xoá → 404)
+  + IT (DELETE → 204 → GET 404 → list ẩn → **DB: row còn, `status=ARCHIVED`, `deleted_at` not null, SKU archived**).
+- Re-export `docs/api/openapi.yaml` (schema có `status` mới).
+
+**Out of scope**
+
+- **Không** thêm `GET /v1/skus/{id}` (endpoint chưa tồn tại; đường đọc SKU theo id để `SL-2.2` làm khi inventory cần).
+- **Không** có API restore/unarchive (giữ `TD-16`).
+- **Không** đụng `category` (không có soft delete cho category; xoá category vẫn bị DB chặn nếu còn product).
+- **Không** xoá cứng SKU hay dọn dữ liệu cũ.
+
+**Acceptance Criteria**
+
+- [x] `DELETE /v1/products/{id}` → **204**, row `product` **vẫn còn** với `status='ARCHIVED'` + `deleted_at` not null.
+- [x] SKU của product đó chuyển `status='ARCHIVED'` (còn row, không bị cascade xoá).
+- [x] `GET /v1/products/{id}` và `PUT /v1/products/{id}` trên product đã xoá → **404 NOT_FOUND**.
+- [x] `GET /v1/products` (list/search) **không** trả product đã xoá (kể cả khi filter `categoryId`/`q` khớp).
+- [x] `POST /v1/products/{id}/skus` vào product đã xoá → **404**; `DELETE` lần 2 → **404**.
+- [x] Response tạo/đọc product có `"status":"ACTIVE"`; DB chặn được trạng thái không nhất quán (CHECK constraint).
+- [x] Unit + IT xanh; `docs/api/openapi.yaml` cập nhật; không hard-code gì mới.
+
+**Ghi chú kỹ thuật**
+
+- Bất biến đặt ở **DB** (CHECK), không chỉ ở app: bug ở tầng service không được phép tạo ra row
+  `status='ACTIVE'` mà `deleted_at` có giá trị (hoặc ngược lại).
+- `archive()` **idempotent**: gọi lần 2 giữ nguyên `deleted_at` gốc ⇒ audit không bị ghi đè thời điểm xoá.
+- Archive SKU bằng **bulk update** thay vì load từng SKU: 1 product có thể có hàng chục SKU, và Phase 2
+  sẽ gọi đường này trong transaction checkout-adjacent — N+1 ở đây là không cần thiết.
+- `status` là `@Enumerated(STRING)` (không ordinal): đọc DB bằng mắt được, và thêm giá trị mới không
+  làm lệch dữ liệu cũ.
+- Trade-off đã chấp nhận: mọi query list phải nhớ `deleted_at is null` ⇒ có IT riêng canh chuyện này
+  (đúng loại bug im lặng: xoá xong vẫn thấy hàng).
+
+**Kết quả verify** *(chạy thật trên Docker + Postgres 16, không phải suy luận)*
+
+**1) Unit + IT + lint (local, Docker Desktop bật) — `mvn -B -ntp verify`**
+
+```text
+[INFO] ShopLab :: Service Commons ......................... SUCCESS [  2.588 s]
+[INFO] ShopLab :: Service Template ........................ SUCCESS [  5.657 s]
+[INFO] ShopLab :: Identity Service ........................ SUCCESS [ 19.869 s]
+[INFO] ShopLab :: Catalog Service ......................... SUCCESS [ 18.428 s]
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [  9.696 s]
+[INFO] BUILD SUCCESS    Total time: 57.695 s
+```
+
+| Module | Unit | IT (Testcontainers, Postgres thật) |
+|---|---|---|
+| commons | 42 | — |
+| service-template | 35 | — |
+| identity | 50 | 22 |
+| **catalog** | **66** (+6: `ProductTest` 3 · `ProductServiceTest` 7 · `SkuServiceTest` 5) | **21** (+3: `deleteArchivesProductInsteadOfRemoving` · `archivedProductIsInvisibleToWrites` · `databaseRejectsInconsistentSoftDeleteState`) |
+| gateway | 71 | — |
+
+`checkstyle:check` + `spotless:check`: 0 vi phạm (đã chạy `spotless:apply` 2 lần trong lúc làm — lần đầu fail vì
+comment quá dài 100 cột).
+
+**2) Migration thật trên container (Flyway tự chạy khi service start)**
+
+```text
+$ docker exec shoplab-postgres psql -U shoplab -d catalog \
+    -c "select installed_rank, version, script, success from flyway_schema_history"
+ 4 | 3 | V3__add_soft_delete.sql | t
+
+$ \d product
+ status      | character varying(16)    | not null | 'ACTIVE'::character varying
+ deleted_at  | timestamp with time zone |          |
+ "ix_product_active_created_at" btree (created_at) WHERE deleted_at IS NULL
+Check constraints:
+ ck_product_status                      CHECK (status IN ('ACTIVE','ARCHIVED'))
+ ck_product_deleted_at_matches_status   CHECK ((status = 'ARCHIVED') = (deleted_at IS NOT NULL))
+```
+
+**3) Luồng soft delete qua gateway trên stack thật** (`bash /tmp/verify-soft-delete.sh`)
+
+```text
+== 2) GET product trước khi xoá            status=ACTIVE skus=1
+== 3) DELETE product                       DELETE → HTTP 204
+== 4) GET product sau khi xoá              GET → HTTP 404
+   {"code":"NOT_FOUND","message":"Product không tồn tại: aa4de730-…","traceId":"86e16fd9-…"}
+== 5) list theo category                   totalElements=0, chứa product đã xoá: False
+== 6) DB: row còn, status ARCHIVED         ARCHIVED|t          ← deleted_at IS NOT NULL
+== 7) DB: SKU còn row, đã ARCHIVED         ARCHIVED|1  · số row sku còn lại: 1
+== 8) POST SKU vào product đã xoá          POST sku → HTTP 404
+== 9) DELETE lần 2                         DELETE#2 → HTTP 404 (body NOT_FOUND)
+```
+
+**4) DB là chốt chặn cuối — CHECK constraint từ chối cả 2 chiều sai**
+
+```text
+-- product đang ACTIVE, thử set deleted_at:
+ERROR:  new row for relation "product" violates check constraint "ck_product_deleted_at_matches_status"
+-- thử set status='ARCHIVED' mà không set deleted_at:
+ERROR:  new row for relation "product" violates check constraint "ck_product_deleted_at_matches_status"
+```
+
+**5) Regression e2e + contract**
+
+```text
+$ bash tools/e2e-smoke.sh
+== Kết quả: 17 PASS / 0 FAIL · 13 request · 982 ms        ← 17/17 mục của Phase 1 vẫn xanh
+$ bash tools/export-openapi.sh
+VALIDATE PASS · 14 path · 18 operation · 7 operation cần token · 18 schema
+ docs/api/openapi.yaml | 15 +++++++++++++++   (3 schema thêm `status: ACTIVE|ARCHIVED`)
+$ md5sum (export lần 1 vs lần 2) → giống nhau ⇒ export vẫn deterministic (bài học SL-1.19)
+```
+
+**Sự cố trong lúc verify (ghi lại vì là bài học thật)**
+
+- IT đầu tiên **fail**: `flywayMigratedCatalogSchema` assert `select count(*) from product where status <> 'ACTIVE'`
+  = 0, nhưng test khác (`deleteArchivesProductInsteadOfRemoving`) đã archive 1 product trước đó — **thứ tự test
+  không được đảm bảo**. Đã bỏ assertion aggregate toàn bảng, chỉ kiểm `DEFAULT 'ACTIVE'` của cột.
+- Step kiểm CHECK bằng tay lần đầu chạy trên **row đã ARCHIVED** (`set deleted_at` lần nữa vẫn hợp lệ) ⇒ tưởng
+  constraint không chặn. Làm lại trên product ACTIVE mới thấy DB chặn đúng — nhắc lại: **test âm phải đúng
+  trạng thái**.
+
+**Learning note**
+
+- **Soft delete là quyết định về *đọc*, không phải về *xoá***: phần khó không phải `UPDATE status` mà là mọi
+  đường đọc phải nhớ `deleted_at is null`. Cách chống quên hiệu quả nhất là **đặt tên method theo hành vi**
+  (`findByIdAndDeletedAtIsNull`) để chỗ nào bỏ sót là lộ ra ngay khi review.
+- **Bất biến nên nằm ở DB, không ở service**: CHECK `(status='ARCHIVED') = (deleted_at IS NOT NULL)` bắt được
+  cả 2 chiều sai (đã chứng minh bằng 2 lệnh UPDATE bị từ chối). Service có bug thì dữ liệu vẫn không thành
+  "nửa sống nửa chết".
+- **Archive con bằng bulk UPDATE, không load entity**: 1 câu SQL cho N SKU, và `flushAutomatically` bảo đảm
+  thay đổi của product được ghi trước — ít round-trip, không N+1.
+- **Idempotent ở tầng domain ≠ idempotent ở tầng API**: `archive()` giữ nguyên `deleted_at` khi gọi lại (audit
+  không bị ghi đè), nhưng API vẫn trả **404** ở lần xoá thứ 2 vì product đã bị `require()` lọc mất. Hai tầng
+  có mục đích khác nhau, đừng gộp.
+- **Test tích hợp không được assert aggregate toàn bảng** nếu dữ liệu do test khác tạo và thứ tự không đảm bảo
+  — chỉ assert trên dữ liệu chính test đó tạo ra (hoặc trên metadata như `information_schema`).
+- `DELETE` **không** còn là "xoá" ⇒ phải sửa cả README/OpenAPI, không chỉ code: người dùng API cần biết
+  product đã xoá vẫn **còn trong DB** (để hiểu vì sao restore cần ticket riêng — `TD-16`).
+
 
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
@@ -510,6 +678,11 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | SL-2.0 | **Idempotency guard phải "bền" hơn dữ liệu nó bảo vệ**: guard ở Redis trong khi order ở Postgres ⇒ restart/evict mất dedupe đúng lúc client retry. Retry nên **replay response cũ** (cùng `orderId`) chứ không trả lỗi; đổi lại phải trả giá 1 bảng + job dọn (`TD-14`). |
 | 2026-11-07 | SL-2.0 | **`order_items` snapshot không phải chuyện "chuẩn hoá hay không" mà là "hoá đơn có bất biến hay không"**: DB-per-service đã cấm FK xuyên service, nhưng kể cả được phép thì đọc live từ `catalog` vẫn làm đơn cũ đổi giá theo thời gian. |
 | 2026-11-07 | SL-2.0 | **Chốt ADR trước khi code là rẻ nhất**: 5 quyết định trong 1 file ~250 dòng thay cho việc sửa migration + API + test ở 5 service. Mục **Revisit viết bằng số** (RPS, số row, % fail) — nếu không thì lần sau lại tranh luận từ đầu. |
+| 2026-11-07 | SL-2.11 | **Soft delete là quyết định về *đọc*, không phải về *xoá***: khó nhất là mọi đường đọc phải nhớ `deleted_at is null`. Đặt tên method theo hành vi (`findByIdAndDeletedAtIsNull`) để chỗ bỏ sót lộ ra ngay khi review, thay vì `if` rải rác trong service. |
+| 2026-11-07 | SL-2.11 | **Bất biến nên nằm ở DB**: CHECK `(status='ARCHIVED') = (deleted_at IS NOT NULL)` từ chối cả 2 chiều sai — đã chứng minh bằng 2 lệnh `UPDATE` bị Postgres chặn. Service có bug thì dữ liệu vẫn không thành "nửa sống nửa chết". |
+| 2026-11-07 | SL-2.11 | **Idempotent ở domain ≠ idempotent ở API**: `archive()` gọi lại vẫn giữ `deleted_at` gốc (audit), nhưng API trả 404 ở lần xoá thứ 2 vì `require()` đã lọc product đã xoá. Hai tầng phục vụ 2 mục đích — đừng gộp thành một. |
+| 2026-11-07 | SL-2.11 | **IT không được assert aggregate toàn bảng**: `count(*) where status<>'ACTIVE'` = 0 fail vì test khác đã archive product trước đó (thứ tự test không đảm bảo). Chỉ assert trên dữ liệu chính test đó tạo, hoặc trên metadata (`information_schema`). |
+| 2026-11-07 | SL-2.11 | **Test âm phải đúng trạng thái**: thử CHECK constraint trên row *đã* ARCHIVED ⇒ `set deleted_at` lần nữa vẫn hợp lệ, tưởng constraint không chặn. Phải tạo product **ACTIVE** rồi mới thử. |
 
 ---
 
@@ -530,9 +703,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-7` | `q` dùng `LIKE '%…%'` (leading wildcard) ⇒ không dùng được btree, full scan | SL-1.6 | Phase 3/8 khi cần search thật (→ `tsvector`/trigram) | trung bình |
 | `TD-8` | Sort whitelist chỉ `price`, `createdAt` | SL-1.6 | Khi client cần và có index tương ứng | thấp |
 | `TD-9` | Verify fail-closed của `/v3/api-docs` đang làm **bằng tay**, chưa có test trong CI | SL-1.8 | Khi CI có bước compose (D6) | thấp |
-| `TD-10` | `ProductService.findById` không còn dùng ở main (chỉ test gọi) | SL-1.6 | Lần sửa `ProductService` tiếp theo | thấp |
+| `TD-10` | `ProductService.findById` không còn dùng ở main (chỉ test gọi) | SL-1.6 | Lần sửa `ProductService` tiếp theo → **đã trả ở `SL-2.11`** | ✅ đã trả (SL-2.11) |
 | `TD-11` | `page`/`size`/`sort` sai → 400 nhưng không trả `details` theo field | SL-1.6 | Khi client cần hiển thị lỗi theo field | thấp |
-| `TD-12` | Chưa có **soft delete** cho product; `DELETE` là hard delete + cascade SKU | SL-1.6 | **Đã chốt ở `SL-2.0`** (ADR-0006 chọn soft delete) → **code xong ở `SL-2.11`** | trung bình (chờ `SL-2.11`) |
+| `TD-12` | Chưa có **soft delete** cho product; `DELETE` là hard delete + cascade SKU | SL-1.6 | **Chốt ở `SL-2.0` · code xong ở `SL-2.11`** (ARCHIVED + `deleted_at` + CHECK constraint) | ✅ đã trả (SL-2.11) |
 | `TD-13` | **Reuse detection revoke cả chuỗi** ⇒ client hợp lệ vẫn có thể bị logout toàn phiên: 2 tab cùng refresh gần như đồng thời, mất mạng sau khi server đã rotate, hoặc retry tự động gửi lại token cũ | SL-1.4 (rà soát 2026-11-06) | Khi có phản ánh "tự nhiên bị logout" **hoặc** khi làm client thật (Phase 2) → cân nhắc **grace window ~30s** (trả token mới nhất trong chuỗi thay vì revoke) + client single-flight refresh | ✅ đã trả (SL-1.18) |
 | `TD-14` | Bảng `idempotency_keys` không có job dọn row quá 24h ⇒ phình dần (1 row/request checkout) | SL-2.0 | Khi có scheduler chạy thật (sweeper reservation ở `SL-2.3`) ⇒ gộp 1 job dọn cho cả 2 bảng | trung bình |
 | `TD-15` | Reservation sweeper là `@Scheduled` in-process ⇒ chạy trùng khi `inventory-service` > 1 instance | SL-2.0 | Khi `inventory-service` chạy ≥ 2 instance (→ `FOR UPDATE SKIP LOCKED` / advisory lock) | thấp |
@@ -604,6 +777,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | `SL-1.9` → `Done`: rule **commit docs-only → `[skip ci]`** (không tốn CI) + **auto-merge** `tools/merge-pr.sh` (verify → comment tóm tắt → squash → xoá nhánh). Verify thật: PR chỉ-docs **0 run**; commit docs trong PR có code **0 run mới**; script **từ chối đúng 4 case** (draft · không OPEN · chưa có CI xanh · thiếu comment tóm tắt); merge PR [#11](https://github.com/anchu3003/shop-lab-microservices/pull/11) bằng chính script.
 | 2026-11-05 | `SL-1.10` → `Done`: fix tác dụng phụ của `SL-1.9` — `gh pr merge --squash` ghép *title + subject các commit trong PR* nên `[skip ci]` của commit docs **lọt vào merge commit** ⇒ push `main` bị skip (mất kiểm chứng `main`). Fix: `tools/merge-pr.sh` truyền tường minh `--subject`/`--body` + lọc token skip; thêm cảnh báo vào rule + `docs/git-flow.md`. Verify: `a7d9482` có `1` token skip & **không** có run trên `main`; sau fix merge PR [#13](https://github.com/anchu3003/shop-lab-microservices/pull/13) → `skip-ci tokens: 0` + **có run `push` trên `main`**. |
 | 2026-11-07 | `SL-2.0` → `Done`: **ADR-0006** chốt mô hình checkout Phase 2 — (D1) chống oversell bằng **conditional `UPDATE`** trên `stock` (không Redis lock) · (D2) `idempotency_keys` ở Postgres, scope `userId:endpoint`, retry **replay response** · (D3) `order_items` **snapshot** giá/tên · (D4) **sync REST** Phase 2, async để Phase 3 · (D5) `TD-12` → soft delete product, sinh ticket **`SL-2.11`**. Cập nhật `architecture.md` §6.1/§8.4 + debt mới `TD-14`…`TD-16`. Docs-only, không đổi code. |
+| 2026-11-07 | `SL-2.11` → `Done`: `catalog-service` **soft delete** product (ADR-0006 D5, trả `TD-12` + `TD-10`). Migration `V3__add_soft_delete.sql` (`product.status`/`deleted_at`, `sku.status`, CHECK `ARCHIVED ⟺ deleted_at`, partial index) · `DELETE` = archive + bulk archive SKU (1 câu UPDATE) · mọi đường đọc/ghi lọc `deleted_at is null` (404) · `status` trả ra API + OpenAPI (3 schema). Verify thật: `mvn verify` **BUILD SUCCESS** (catalog 66 unit + **21 IT** trên Postgres Testcontainers; toàn repo xanh) · Flyway V3 trên container `success=t` · curl qua gateway: DELETE 204 → GET 404 → list 0 → DB `status=ARCHIVED` + `deleted_at` not null, SKU còn row và ARCHIVED · CHECK chặn cả 2 chiều sai · `e2e-smoke` 17/17 · OpenAPI export deterministic. |
+
 
 
 

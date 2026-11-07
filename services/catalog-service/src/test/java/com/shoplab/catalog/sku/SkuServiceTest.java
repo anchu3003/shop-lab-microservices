@@ -33,7 +33,7 @@ class SkuServiceTest {
   @DisplayName("tạo SKU: trim code, giữ priceOverride null nghĩa là dùng giá product")
   void createShouldNormalizeCode() {
     UUID productId = UUID.randomUUID();
-    when(products.existsById(productId)).thenReturn(true);
+    when(products.existsByIdAndDeletedAtIsNull(productId)).thenReturn(true);
     when(skus.existsByCode("AT-DO-M")).thenReturn(false);
     when(skus.save(any(Sku.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -42,14 +42,29 @@ class SkuServiceTest {
     assertThat(created.code()).isEqualTo("AT-DO-M");
     assertThat(created.priceOverride()).isNull();
     assertThat(created.stockHint()).isEqualTo(10);
+    assertThat(created.status()).isEqualTo(SkuStatus.ACTIVE);
     assertThat(created.createdAt()).isEqualTo(NOW);
+  }
+
+  @Test
+  @DisplayName("product đã xoá mềm (existsByIdAndDeletedAtIsNull = false) → 404, KHÔNG ghi SKU")
+  void createShouldRejectArchivedProduct() {
+    UUID productId = UUID.randomUUID();
+    // Soft delete: row vẫn ở DB nhưng deleted_at đã set ⇒ mọi đường API coi như không tồn tại.
+    when(products.existsByIdAndDeletedAtIsNull(productId)).thenReturn(false);
+
+    assertThatThrownBy(() -> service.create(productId, new CreateSkuRequest("X-1", null, null)))
+        .isInstanceOf(NotFoundException.class)
+        .hasMessageContaining("Product không tồn tại");
+
+    verify(skus, never()).save(any());
   }
 
   @Test
   @DisplayName("product không tồn tại → 404, KHÔNG ghi SKU")
   void createShouldRejectUnknownProduct() {
     UUID productId = UUID.randomUUID();
-    when(products.existsById(productId)).thenReturn(false);
+    when(products.existsByIdAndDeletedAtIsNull(productId)).thenReturn(false);
 
     assertThatThrownBy(() -> service.create(productId, new CreateSkuRequest("X", null, null)))
         .isInstanceOf(NotFoundException.class)
@@ -62,7 +77,7 @@ class SkuServiceTest {
   @DisplayName("mã SKU đã dùng → 409 DuplicateSkuException")
   void createShouldRejectDuplicateCode() {
     UUID productId = UUID.randomUUID();
-    when(products.existsById(productId)).thenReturn(true);
+    when(products.existsByIdAndDeletedAtIsNull(productId)).thenReturn(true);
     when(skus.existsByCode("TRUNG")).thenReturn(true);
 
     assertThatThrownBy(
