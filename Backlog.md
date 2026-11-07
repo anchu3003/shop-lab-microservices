@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | `SL-2.0` — **ADR-0006**: chốt mô hình checkout (reservation · idempotency · snapshot vs FK) |
-| **Ticket tiếp theo** | `SL-2.1` — `cart-service` (Redis) · `SL-2.2` — `inventory-service` (reserve/commit/release) |
-| **Số ticket chi tiết hiện có** | 23 (Phase 0: 8 — archive · Phase 1: 15) |
+| **Ticket đang làm** | — (`SL-2.0` ✅ **Done** — mô hình checkout đã chốt; ticket kế tiếp chờ chọn) |
+| **Ticket tiếp theo** | `SL-2.11` — soft delete product (làm **trước** `SL-2.2`) · `SL-2.1` — `cart-service` (Redis) · `SL-2.2` — `inventory-service` |
+| **Số ticket chi tiết hiện có** | 24 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 1) |
 
 ---
 
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | 🟡 Breakdown xong — chờ `SL-2.0` | 0 / 11 |
+| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 1 / 12 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -202,29 +202,142 @@ $ md5sum docs/api/openapi.yaml
 > payment → confirm) · có nhánh fail + compensating chạy đúng (có test) · **100 request đồng thời cùng 1 SKU
 > không oversell** (có số liệu) · OpenAPI + runbook cập nhật · tag `phase-2`.
 
-| # | Ticket | Nội dung | Ước lượng |
-|---|---|---|---|
-| 1 | `SL-2.0` | **ADR-0006** chốt mô hình checkout (reservation TTL · idempotency key · snapshot vs FK · sync Phase 2 / async Phase 3 · quyết định `TD-12` soft delete) | S |
-| 2 | `SL-2.1` | `cart-service` (8083, Redis): add/update/remove/get, TTL, **merge cart khi login** | M |
-| 3 | `SL-2.2` | `inventory-service` (8084, DB `inventory`): schema `stock`/`reservation`/`stock_ledger` + API `reserve`/`commit`/`release`; **atomic** chống oversell | M |
-| 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M |
-| 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M |
-| 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M |
-| 7 | `SL-2.6` | **Checkout Saga** (orchestration): cart → reserve → lock voucher → payment → confirm; **compensating** cho mọi nhánh fail; lưu saga state | L → tách 2 |
-| 8 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M |
-| 9 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M |
-| 10 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M |
-| 11 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S |
+| # | Ticket | Nội dung | Ước lượng | Trạng thái |
+|---|---|---|---|---|
+| 1 | `SL-2.0` | **ADR-0006** chốt mô hình checkout (reservation TTL · idempotency key · snapshot vs FK · sync Phase 2 / async Phase 3 · quyết định `TD-12` soft delete) | S | ✅ Done |
+| 2 | `SL-2.1` | `cart-service` (8083, Redis): add/update/remove/get, TTL, **merge cart khi login** | M | Todo |
+| 3 | `SL-2.2` | `inventory-service` (8084, DB `inventory`): schema `stock`/`reservations`/`stock_ledger` + API `reserve`/`commit`/`release`; **atomic** chống oversell | M | Todo |
+| 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M | Todo |
+| 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | Todo |
+| 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M | Todo |
+| 7 | `SL-2.6` | **Checkout Saga** (orchestration): cart → reserve → lock voucher → payment → confirm; **compensating** cho mọi nhánh fail; lưu saga state | L → tách 2 | Todo |
+| 8 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | Todo |
+| 9 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M | Todo |
+| 10 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M | Todo |
+| 11 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S | Todo |
+| 12 | `SL-2.11` | *(phát sinh từ `SL-2.0`)* `catalog-service`: **soft delete** product — `status = ARCHIVED` + `deleted_at`, `DELETE` không xoá row, list/get ẩn product đã xoá, `reserve` từ chối SKU archived | S | Todo |
 
-**Phụ thuộc & thứ tự**: `SL-2.0` chốt trước (mọi ticket sau bám theo) → `SL-2.2` + `SL-2.3` (inventory là chỗ dễ
-oversell nhất, làm sớm) song song được với `SL-2.1`/`SL-2.4` → `SL-2.7` (payment) → `SL-2.5`/`SL-2.6` (order +
-saga, phụ thuộc tất cả) → `SL-2.8`/`SL-2.9` → `SL-2.10`.
+**Phụ thuộc & thứ tự** (cập nhật sau `SL-2.0`): `SL-2.0` ✅ chốt mô hình → **`SL-2.11`** (soft delete — `catalog` phải
+xong trước để inventory biết "SKU archived" nghĩa là gì) → `SL-2.2` + `SL-2.3` (inventory — chỗ dễ oversell nhất,
+làm sớm) song song được với `SL-2.1`/`SL-2.4` → `SL-2.7` (payment) → `SL-2.5`/`SL-2.6` (order + saga, phụ thuộc tất
+cả) → `SL-2.8`/`SL-2.9` → `SL-2.10`.
 
-**Debt sẽ trả trong phase này**: `TD-12` (soft delete / snapshot khi order tham chiếu SKU — **chốt ở `SL-2.0`**),
-`TD-4` (đưa smoke vào CI khi đã có compose nhiều service — cân nhắc ở `SL-2.8`).
+**Debt sẽ trả trong phase này**: `TD-12` (soft delete product — **chốt ở `SL-2.0`**, code ở `SL-2.11`), `TD-4` (đưa
+smoke vào CI khi đã có compose nhiều service — cân nhắc ở `SL-2.8`), `TD-3` (handler 403 → `commons` khi có service
+thứ hai dùng `@PreAuthorize` — nhiều khả năng ở `SL-2.5`/`SL-2.7`).
+**Debt mới phát sinh ở `SL-2.0`**: `TD-14` (chưa có job dọn `idempotency_keys`), `TD-15` (sweeper reservation chạy
+trùng khi > 1 instance), `TD-16` (chưa có API restore product đã xoá mềm).
 
 > Mỗi ticket vẫn phải viết **đặc tả BA đầy đủ** (In/Out · AC verify được · ghi chú kỹ thuật) **ngay trước khi bắt
 > đầu** — bảng trên là phạm vi + thứ tự, không thay thế đặc tả (`AGENTS.md` §4, §5).
+### SL-2.0 — ADR-0006: chốt mô hình checkout Phase 2
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 2 — Core commerce flow |
+| **Phụ thuộc** | Phase 1 đã đóng (tag `phase-1`); **chặn** `SL-2.1` … `SL-2.11` |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Phase 2 dựng 5 service mới và luồng tiền đầu tiên. Khác Phase 1 (CRUD — sai thì sửa), ở đây **sai là hỏng dữ liệu**:
+bán quá tồn kho (oversell), trừ tiền 2 lần (double charge), hoặc hoá đơn **đổi số tiền hồi tố**. `architecture.md`
+§6.1 mới phác luồng `reserve → commit` mà **chưa chốt cơ chế**; `TD-12` (soft delete product) đang treo mức `cao` và
+chặn `SL-2.x`. Nếu 5 điểm dưới đây chốt sai thì `SL-2.2` … `SL-2.9` phải sửa lại từ gốc (migration + API + test):
+D1 chống oversell ở đâu · D2 `Idempotency-Key` lưu ở đâu · D3 `order_items` snapshot hay FK · D4 Phase 2 sync hay
+async · D5 soft delete product.
+
+**Mục tiêu**
+
+Có **1 tài liệu quyết định** để mọi ticket Phase 2 bám theo, và `architecture.md` **không lệch** với nó. Mỗi quyết
+định phải nêu được: chọn gì · vì sao · loại phương án nào và **tại sao loại** · khi nào xem lại **bằng con số**.
+
+**In scope**
+
+- `docs/adr/0006-checkout-model.md` — 5 mục (Context · Options · Decision · Consequences · Revisit), phủ **D1–D5**.
+- Cập nhật `architecture.md`: §6.1 (bảng cơ chế đã chốt) · §8.4 (DDL sketch khớp ADR) · header + Changelog.
+- Chốt `TD-12` (→ soft delete product, **code ở ticket riêng** `SL-2.11` vì là thay đổi code — `AGENTS.md` §3.1).
+- Sinh ticket `SL-2.11` trong bảng Phase 2 + ghi debt mới phát sinh (`TD-14` … `TD-16`).
+
+**Out of scope**
+
+- **Không** viết code service nào (thuộc `SL-2.1` … `SL-2.11`).
+- **Không** dựng broker/outbox (Phase 3) · **không** circuit breaker/retry nâng cao (Phase 5).
+- **Không** thiết kế refund/multi-warehouse thật (chỉ chừa chỗ trong schema).
+
+**Acceptance Criteria**
+
+- [x] ADR-0006 có đủ **5 mục** đúng thứ tự template, `Trạng thái = Accepted`.
+- [x] Có bảng **Ưu / Nhược / Khi nào dùng** cho **cả 5** quyết định, và nêu **lý do loại** phương án không chọn.
+- [x] Mục **Revisit** có điều kiện **định lượng** (p99 ms, RPS, số row, % fail), không viết "khi cần".
+- [x] `architecture.md` §6.1 có bảng cơ chế đã chốt + link tới ADR-0006; §8.4 DDL khớp tên bảng trong ADR
+      (`stock`, `reservations`, `stock_ledger`, `idempotency_keys`, `order_items` snapshot, `products.deleted_at`).
+- [x] `TD-12` có quyết định + điều kiện revisit mới; ticket code `SL-2.11` có trong bảng Phase 2.
+- [x] PR **docs-only** — không file code nào bị đổi (kiểm bằng `git diff --cached --name-only | grep -v '\.md$'`).
+
+**Ghi chú kỹ thuật** (tóm tắt — chi tiết + bảng trade-off ở ADR-0006)
+
+| # | Chốt | Lý do chính (1 câu) | Loại vì |
+|---|---|---|---|
+| D1 | `UPDATE stock SET reserved = reserved + :qty WHERE sku_id = :sku AND on_hand - reserved >= :qty`; `0` row ⇒ `409` | Điều kiện hết hàng nằm **trong** câu UPDATE ⇒ DB quyết định trong cùng row lock | Redis Lua (chưa có số đo, thêm nguồn sự thật thứ 2) · `SELECT FOR UPDATE` (giữ lock lâu, deadlock) · distributed lock (chỉ thêm failure mode) |
+| D2 | `idempotency_keys` PK `(scope, key)`, `scope = userId:endpoint`, có `request_hash` + lưu response | Guard phải **bền hơn** dữ liệu nó bảo vệ; retry phải replay **cùng** kết quả | Redis SETNX (mất dedupe khi restart) · client sinh `orderId` (không replay được body) · không dedupe (bấm 2 lần = 2 order) |
+| D3 | `order_items` **snapshot** `sku_code/title/unit_price/currency`, `sku_id` không FK | Hoá đơn phải **bất biến**; DB-per-service đã cấm FK xuyên service | read-model `skus` (Phase 2 không có broker để sync) · đọc live `catalog` (đơn cũ đổi giá) · FK cross-service (distributed monolith) |
+| D4 | Sync REST + timeout từng bước, compensating cho mọi nhánh; async để Phase 3 | Không thêm hạ tầng (§3.4); compensating là bài học chính của phase | broker sớm (đi trước roadmap, mất baseline) · sync không compensating (cháy hàng ảo) |
+| D5 | `products.status = ARCHIVED` + `deleted_at`; code ở `SL-2.11` | `stock_ledger`/`reservations` cần `sku_id` còn sống để reconcile tồn kho | hard delete (mất khả năng reconcile + audit) |
+
+Con số đã chốt kèm theo: reservation **TTL 15′** (sweeper 60 s + lazy expire ở `commit`) · idempotency retention **24 h**
+· timeout mỗi bước 300–800 ms · p99 checkout mục tiêu **~125 ms** (NFR 500 ms) · Phase 2 mặc định `warehouse_id='WH-1'`.
+
+**Kết quả verify** *(docs-only — chạy thật, dán output thật)*
+
+```text
+$ git diff --cached --stat
+ Backlog.md                      | 172 ++++++++++++++++++++++++++++++++------
+ architecture.md                 |  35 ++++++--
+ docs/adr/0006-checkout-model.md | 252 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 425 insertions(+), 34 deletions(-)
+
+$ git diff --cached --name-only | grep -v '\.md$'   # phải rỗng
+(không có)
+
+$ grep -n '^## ' docs/adr/0006-checkout-model.md    # 5 mục bắt buộc, đúng thứ tự
+11:## Context   38:## Options   88:## Decision   194:## Consequences   241:## Revisit
+
+$ grep -c '| Phương án | Ưu | Nhược | Khi nào dùng |' docs/adr/0006-checkout-model.md
+5            # đủ 5 bảng trade-off cho D1…D5
+
+$ sed -n '/^## Revisit/,$p' docs/adr/0006-checkout-model.md | grep '^| ' | grep -v '^|---' | wc -l
+8            # 1 header + 7 điều kiện, trong đó 5 điều kiện có ngưỡng số (>50 ms · >1.000 reserve/s · >10⁶ row · >200 req/s · >0,1 %)
+```
+
+Kiểm **tính toàn vẹn bảng markdown** (script `python3` đếm số cột của từng bảng, so với bản `main`):
+
+```text
+docs/adr/0006-checkout-model.md   → 0 cảnh báo
+architecture.md                   → 0 cảnh báo
+Backlog.md                        → 12 cảnh báo (bản `main` cũng 12 — toàn bộ là dòng learning log/changelog
+                                    có ký tự `|` bên trong inline code, có từ trước; ticket này không thêm cái nào)
+```
+
+Kiểm **tên bảng khớp giữa ADR ↔ `architecture.md` §8.4** (`stock`, `reservations`, `stock_ledger`, `idempotency_keys`,
+`order_items`, `voucher_locks`, `products.deleted_at`): 0 lệch. Link `docs/adr/0006-checkout-model.md` xuất hiện 3 lần
+trong `architecture.md`, 1 lần trong `Backlog.md` — file tồn tại (22.617 byte).
+
+CI: PR **docs-only** ⇒ `paths-ignore` bỏ run (không tốn phút Actions); đây là trường hợp hợp lệ theo
+`.clinerules/10-git-workflow.md`.
+
+**Learning note**
+
+- **"Kiểm tra rồi mới ghi" có khe hở theo thiết kế** — 2 bước `SELECT` xong mới `UPDATE` luôn có khoảng thời gian
+  để request khác lọt vào. Điều kiện phải nằm **trong** `UPDATE` để chính DB quyết định trong cùng lock.
+- **Idempotency guard ở nơi dễ mất hơn dữ liệu là vô nghĩa**: đặt key ở Redis trong khi order ở Postgres thì đúng
+  lúc retry (sau restart) lại mất dedupe. Đổi lại phải trả giá bằng 1 bảng + job dọn (`TD-14`).
+- **Snapshot không phải "làm biếng chuẩn hoá"** mà là quyết định nghiệp vụ: hoá đơn phải bất biến. Câu hỏi đúng là
+  "đơn cũ có được phép đổi số tiền không?" chứ không phải "có nên join không".
+- **ADR viết bằng số mới có tác dụng**: `Revisit` kiểu "khi cần" = lần sau tranh luận lại từ đầu. Viết "p99 reserve
+  > 50 ms hoặc > 1.000 reserve/s trên 1 SKU" thì biết chính xác lúc nào phải mở lại.
+- **Viết ADR trước khi code là rẻ nhất**: 1 file ~252 dòng thay cho việc sửa migration + API + test ở 5 service.
 
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
@@ -393,6 +506,10 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-06 | SL-1.5 | **Gateway `public-paths` theo PATH, không theo METHOD**: service có "GET public + POST cần token" trên cùng prefix thì gateway thả cả prefix và **service tự chặn** phần ghi. Chỉ chấp nhận được vì service tự verify JWT; nếu tin header gateway thì đó là lỗ hổng. |
 | 2026-11-06 | SL-1.5 | **Verify script là code**: bash heredoc + 3 lớp escaping làm token bị cắt → **17 FAIL giả**. FAIL hàng loạt cùng kiểu (401/None) ⇒ nghi script trước, sản phẩm sau. Python `urllib` cho 36 PASS. |
 | 2026-11-05 | process | **Đừng dùng backtick trong `--body` của `gh` khi gõ trực tiếp**: shell thực thi phần trong backtick (`tools/merge-pr.sh` → `Permission denied`, `null: command not found`) và **body PR bị hỏng**. Luôn dùng `--body-file` với heredoc (`<<'EOF'`). |
+| 2026-11-07 | SL-2.0 | **"Kiểm tra rồi mới ghi" luôn có khe hở** ⇒ chống oversell phải nhét điều kiện vào chính câu `UPDATE` (`WHERE on_hand - reserved >= :qty`) để DB quyết định trong cùng row lock. `SELECT ... FOR UPDATE` + `if` trong app vẫn đúng nhưng giữ lock lâu hơn, và deadlock nếu không sắp thứ tự `sku_id`. |
+| 2026-11-07 | SL-2.0 | **Idempotency guard phải "bền" hơn dữ liệu nó bảo vệ**: guard ở Redis trong khi order ở Postgres ⇒ restart/evict mất dedupe đúng lúc client retry. Retry nên **replay response cũ** (cùng `orderId`) chứ không trả lỗi; đổi lại phải trả giá 1 bảng + job dọn (`TD-14`). |
+| 2026-11-07 | SL-2.0 | **`order_items` snapshot không phải chuyện "chuẩn hoá hay không" mà là "hoá đơn có bất biến hay không"**: DB-per-service đã cấm FK xuyên service, nhưng kể cả được phép thì đọc live từ `catalog` vẫn làm đơn cũ đổi giá theo thời gian. |
+| 2026-11-07 | SL-2.0 | **Chốt ADR trước khi code là rẻ nhất**: 5 quyết định trong 1 file ~250 dòng thay cho việc sửa migration + API + test ở 5 service. Mục **Revisit viết bằng số** (RPS, số row, % fail) — nếu không thì lần sau lại tranh luận từ đầu. |
 
 ---
 
@@ -415,8 +532,11 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-9` | Verify fail-closed của `/v3/api-docs` đang làm **bằng tay**, chưa có test trong CI | SL-1.8 | Khi CI có bước compose (D6) | thấp |
 | `TD-10` | `ProductService.findById` không còn dùng ở main (chỉ test gọi) | SL-1.6 | Lần sửa `ProductService` tiếp theo | thấp |
 | `TD-11` | `page`/`size`/`sort` sai → 400 nhưng không trả `details` theo field | SL-1.6 | Khi client cần hiển thị lỗi theo field | thấp |
-| `TD-12` | Chưa có **soft delete** cho product; `DELETE` là hard delete + cascade SKU | SL-1.6 | Khi bắt đầu `SL-2.x` (order tham chiếu SKU) | cao |
+| `TD-12` | Chưa có **soft delete** cho product; `DELETE` là hard delete + cascade SKU | SL-1.6 | **Đã chốt ở `SL-2.0`** (ADR-0006 chọn soft delete) → **code xong ở `SL-2.11`** | trung bình (chờ `SL-2.11`) |
 | `TD-13` | **Reuse detection revoke cả chuỗi** ⇒ client hợp lệ vẫn có thể bị logout toàn phiên: 2 tab cùng refresh gần như đồng thời, mất mạng sau khi server đã rotate, hoặc retry tự động gửi lại token cũ | SL-1.4 (rà soát 2026-11-06) | Khi có phản ánh "tự nhiên bị logout" **hoặc** khi làm client thật (Phase 2) → cân nhắc **grace window ~30s** (trả token mới nhất trong chuỗi thay vì revoke) + client single-flight refresh | ✅ đã trả (SL-1.18) |
+| `TD-14` | Bảng `idempotency_keys` không có job dọn row quá 24h ⇒ phình dần (1 row/request checkout) | SL-2.0 | Khi có scheduler chạy thật (sweeper reservation ở `SL-2.3`) ⇒ gộp 1 job dọn cho cả 2 bảng | trung bình |
+| `TD-15` | Reservation sweeper là `@Scheduled` in-process ⇒ chạy trùng khi `inventory-service` > 1 instance | SL-2.0 | Khi `inventory-service` chạy ≥ 2 instance (→ `FOR UPDATE SKIP LOCKED` / advisory lock) | thấp |
+| `TD-16` | Chưa có API **restore/unarchive** product đã xoá mềm; bán lại cùng product phải tạo mới | SL-2.0 | Khi seller ẩn nhầm cần khôi phục **hoặc** có UI quản trị product | thấp |
 
 ## 8. Changelog
 
@@ -483,6 +603,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-05 | `SL-1.2` → `Done`: nhánh `feat/sl-1.2-api-gateway`. `api-gateway` (port 8080) — routing theo config (prefix dài nhất thắng) · verify **JWT RS256 qua JWKS** (cache 5m + nạp lại khi `kid` lạ, có chặn dội) · gắn/ghi đè `x-user-id`/`x-user-role` · propagate `x-correlation-id` · **401** token sai / **503** service đích chết. `service-commons` thêm `UNAVAILABLE` (503). `identity-service` thêm `GET /v1/users/me` (protected). Verify thật: container healthy · register/login qua gateway giống hệt gọi thẳng · 401/200/503 đúng · traceId **trùng** ở log 2 service. `mvn verify`: 37 + 39 + **16 IT** + **71 test gateway**; **CI xanh 3/3** (job `test` 1:49). PR [#10](https://github.com/anchu3003/shop-lab-microservices/pull/10). Đồng thời khôi phục 3 thay đổi doc của `SL-1.1` bị mất do push race lúc merge (xem Learning log). |
 | 2026-11-05 | `SL-1.9` → `Done`: rule **commit docs-only → `[skip ci]`** (không tốn CI) + **auto-merge** `tools/merge-pr.sh` (verify → comment tóm tắt → squash → xoá nhánh). Verify thật: PR chỉ-docs **0 run**; commit docs trong PR có code **0 run mới**; script **từ chối đúng 4 case** (draft · không OPEN · chưa có CI xanh · thiếu comment tóm tắt); merge PR [#11](https://github.com/anchu3003/shop-lab-microservices/pull/11) bằng chính script.
 | 2026-11-05 | `SL-1.10` → `Done`: fix tác dụng phụ của `SL-1.9` — `gh pr merge --squash` ghép *title + subject các commit trong PR* nên `[skip ci]` của commit docs **lọt vào merge commit** ⇒ push `main` bị skip (mất kiểm chứng `main`). Fix: `tools/merge-pr.sh` truyền tường minh `--subject`/`--body` + lọc token skip; thêm cảnh báo vào rule + `docs/git-flow.md`. Verify: `a7d9482` có `1` token skip & **không** có run trên `main`; sau fix merge PR [#13](https://github.com/anchu3003/shop-lab-microservices/pull/13) → `skip-ci tokens: 0` + **có run `push` trên `main`**. |
+| 2026-11-07 | `SL-2.0` → `Done`: **ADR-0006** chốt mô hình checkout Phase 2 — (D1) chống oversell bằng **conditional `UPDATE`** trên `stock` (không Redis lock) · (D2) `idempotency_keys` ở Postgres, scope `userId:endpoint`, retry **replay response** · (D3) `order_items` **snapshot** giá/tên · (D4) **sync REST** Phase 2, async để Phase 3 · (D5) `TD-12` → soft delete product, sinh ticket **`SL-2.11`**. Cập nhật `architecture.md` §6.1/§8.4 + debt mới `TD-14`…`TD-16`. Docs-only, không đổi code. |
+
 
 
 
