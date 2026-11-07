@@ -3,7 +3,7 @@ info:
   title: ShopLab API — Phase 1 + Phase 2 (inventory)
   version: v1
   description: 'API hiện có: identity (auth/RBAC) + catalog (product/SKU) + inventory (tồn kho) + promotion
-    (voucher) + order (đơn hàng).
+    (voucher) + order (đơn hàng) + payment (thanh toán).
 
 
     Sinh tự động bằng `bash tools/export-openapi.sh` — KHÔNG sửa file này bằng tay.
@@ -80,6 +80,62 @@ paths:
               schema:
                 type: object
                 additionalProperties: {}
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+  /mock-provider/pay/{providerIntentId}:
+    post:
+      tags:
+      - Mock provider (local only)
+      summary: Mô phỏng khách thanh toán (mock provider, local only)
+      description: Sinh provider_txn_id rồi đi qua đúng đường webhook (ký HMAC + dedupe).
+      operationId: pay
+      parameters:
+      - name: providerIntentId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: fail
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/PaymentWebhookResponse'
         '400':
           description: Input không hợp lệ (xem `details` theo từng field)
           content:
@@ -767,6 +823,165 @@ paths:
             '*/*':
               schema:
                 $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+  /v1/payment-intents:
+    get:
+      tags:
+      - Payment
+      operationId: listByOrder
+      parameters:
+      - name: orderId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaymentIntentResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+    post:
+      tags:
+      - Payment
+      operationId: create
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentIntentRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/PaymentIntentResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+  /v1/payment-intents/{id}:
+    get:
+      tags:
+      - Payment
+      operationId: get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/PaymentIntentResponse'
         '400':
           description: Input không hợp lệ (xem `details` theo từng field)
           content:
@@ -1675,6 +1890,68 @@ paths:
                 $ref: '#/components/schemas/ApiError'
       security:
       - bearerAuth: []
+  /v1/webhooks/payment:
+    post:
+      tags:
+      - Payment webhook
+      summary: Nhận webhook provider (idempotent theo event id)
+      description: Xác thực bằng HMAC-SHA256 trên raw body + timestamp; gửi lại cùng eventId ⇒ 200 với
+        duplicate=true và không đổi dữ liệu.
+      operationId: receive
+      parameters:
+      - name: X-Provider-Signature
+        in: header
+        required: false
+        schema:
+          type: string
+      - name: X-Provider-Timestamp
+        in: header
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: string
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/PaymentWebhookResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
   /version:
     get:
       tags:
@@ -1799,6 +2076,21 @@ components:
           pattern: '[A-Z]{3}'
       required:
       - items
+    CreatePaymentIntentRequest:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          minimum: 0.01
+        currency:
+          type: string
+          pattern: '[A-Za-z]{3}'
+      required:
+      - amount
+      - orderId
     CreateProductRequest:
       type: object
       properties:
@@ -2037,6 +2329,45 @@ components:
         totalPages:
           type: integer
           format: int32
+    PaymentIntentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        amount:
+          type: number
+        currency:
+          type: string
+        status:
+          type: string
+        paymentUrl:
+          type: string
+        providerTxnId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+    PaymentWebhookResponse:
+      type: object
+      properties:
+        eventId:
+          type: string
+        paymentId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        duplicate:
+          type: boolean
+        applied:
+          type: boolean
     ProductDetailResponse:
       type: object
       properties:

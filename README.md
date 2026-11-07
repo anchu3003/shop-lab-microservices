@@ -18,8 +18,8 @@
 **Trạng thái hiện tại**: Phase 0 ✅ **Done (8/8)** · Phase 1 ✅ **Done (tag `phase-1`)** —
 chi tiết ở [`Backlog-phase-0.md`](Backlog-phase-0.md) và [`docs/phases/phase-1.md`](docs/phases/phase-1.md).
 Phase 2 (Core commerce flow) 🔵 **In Progress**: đã có `inventory-service` (8084 — reserve/commit/release chống oversell)
-`promotion-service` (8086 — voucher lock/commit/release) và `order-service` (8087 — đơn hàng idempotent); tiếp theo là
-`cart` / `payment` / saga.
+`promotion-service` (8086 — voucher lock/commit/release), `order-service` (8087 — đơn hàng idempotent) và
+`payment-service` (8088 — payment intent + webhook idempotent); tiếp theo là `cart` → **saga** (`SL-2.6`).
 Xem [Backlog.md](Backlog.md).
 
 ---
@@ -247,6 +247,7 @@ bash tools/reset-infra.sh
 | `8084` | `inventory-service` | Phase 2 (`SL-2.2`) — `reserve`/`commit`/`release`; DB `inventory` |
 | `8086` | `promotion-service` | Phase 2 (`SL-2.4`) — voucher `lock`/`commit`/`release`; DB `promotion` |
 | `8087` | `order-service` | Phase 2 (`SL-2.5`) — đơn hàng idempotent + state machine; DB `order` |
+| `8088` | `payment-service` | Phase 2 (`SL-2.7`) — payment intent + webhook provider idempotent; DB `payment` |
 
 > `up -d` mặc định **KHÔNG** dựng `service-template` — service mẫu nằm trong profile `template` (`SL-1.13`). Bật khi cần:
 > `docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template`
@@ -517,6 +518,31 @@ Bất biến chống bán quá quota là **`used + locked <= quota`**, do CHECK 
 
 Sweeper (`SL-2.4`) trả lượt cho lock bị bỏ quên: mặc định 60 s/nhịp, batch 100, `FOR UPDATE SKIP LOCKED`. Chỉnh bằng
 `SHOPLAB_PROMOTION_SWEEP_INTERVAL_MS` · `_INITIAL_DELAY_MS` · `_BATCH_SIZE` · `PROMOTION_LOCK_TTL`.
+
+### payment-service — `SL-2.7`
+
+Thanh toán: tạo **payment intent** idempotent, mô phỏng cổng thanh toán bằng **mock provider** (Phase 2 chưa nối provider
+thật), và nhận **webhook** của provider theo cách idempotent. DB riêng `payment` (`V1__create_payment.sql`).
+
+**Vì sao có hai cơ chế idempotency** — hai nguồn gây trùng khác nhau:
+
+| Nguồn trùng | Cơ chế | Khoá |
+|---|---|---|
+| Client bấm "thanh toán" 2 lần | `idempotency_keys` | `(scope, Idempotency-Key)`, scope = `"<userId>:POST /v1/payment-intents"` |
+| Provider gọi webhook N lần | `payment_webhook_events` + `payments.provider_txn_id` | `provider_event_id` (PK) và `provider_txn_id` (UNIQUE) |
+
+**API**
+
+| Method + path | Auth | Ghi chú |
+|---|---|---|
+| `POST /v1/payment-intents` | JWT + **`Idempotency-Key`** | 201 · 200 replay (`Idempotent-Replayed`) · 422 key dùng lại · 409 request trước chưa xong · 400 thiếu header; mỗi đơn **tối đa 1 intent sống** (cùng tiền → trả intent cũ, khác tiền → 409) |
+| `GET /v1/payment-intents/{id}` | chủ intent / admin | người khác → **404** |
+| `GET /v1/payment-intents?orderId=` | JWT | buyer chỉ thấy intent của mình |
+| `POST /v1/webhooks/payment` | **public + HMAC** | `X-Provider-Signature` = HMAC-SHA256(`timestamp + "\n" + raw body`), `X-Provider-Timestamp` lệch > 5 phút → 401; trùng `eventId` → 200 `duplicate: true`, **không ghi lại** |
+| `POST /mock-provider/pay/{providerIntentId}[?fail=true]` | **public, chỉ local** | mô phỏng khách thanh toán; đi qua đúng đường webhook (ký + verify + dedupe). `PAYMENT_MOCK_ENABLED=true` ở `APP_ENV` khác local ⇒ **service không khởi động** |
+
+**Bất biến tiền do DB canh**: `amount > 0`, `status = SUCCEEDED ⇔ paid_at IS NOT NULL`, `provider_txn_id UNIQUE`.
+Env quan trọng: `PAYMENT_WEBHOOK_SECRET` (**bắt buộc**, không có default), `PAYMENT_INTENT_TTL` (15m), `PAYMENT_WEBHOOK_TOLERANCE` (5m), `PAYMENT_MOCK_ENABLED`, `PAYMENT_MOCK_LATENCY`.
 
 ### order-service — `SL-2.5`
 

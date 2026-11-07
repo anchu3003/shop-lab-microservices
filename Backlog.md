@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.5` ✅ **Done** — order service đã lên `main`) |
-| **Ticket tiếp theo** | `SL-2.6` — **Checkout Saga** (orchestration + compensating) · `SL-2.7` — `payment-service` |
-| **Số ticket chi tiết hiện có** | 29 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 6) |
+| **Ticket đang làm** | — (`SL-2.7` ✅ **Done** — payment service đã lên `main`) |
+| **Ticket tiếp theo** | `SL-2.1` — `cart-service` (Redis) — **cần xong trước** `SL-2.6` · `SL-2.6` — **Checkout Saga** |
+| **Số ticket chi tiết hiện có** | 30 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 7) |
 
 ---
 
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 6 / 13 |
+| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 7 / 13 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -211,7 +211,7 @@ $ md5sum docs/api/openapi.yaml
 | 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | ✅ Done |
 | 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M | ✅ Done |
 | 7 | `SL-2.6` | **Checkout Saga** (orchestration): cart → reserve → lock voucher → payment → confirm; **compensating** cho mọi nhánh fail; lưu saga state | L → tách 2 | Todo |
-| 8 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | Todo |
+| 8 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | ✅ Done |
 | 9 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M | Todo |
 | 10 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M | Todo |
 | 11 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S | Todo |
@@ -1080,6 +1080,162 @@ $ bash tools/export-openapi.sh  VALIDATE PASS · 28 path · 34 operation · 34 s
 - **Job dọn phải có ngưỡng cho cả 2 loại row**: `COMPLETED` giữ 24 h (retry muộn vẫn dedupe), `IN_PROGRESS` quá 1 h coi là
   mồ côi — không dọn thì client nhận 409 **vĩnh viễn** cho một key đã crash.
 
+### SL-2.7 — `payment-service`: payment intent + mock provider + webhook idempotent
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done |
+| **Phase** | 2 — Core commerce flow |
+| **Phụ thuộc** | Chốt ở `SL-2.0` ([ADR-0006](docs/adr/0006-checkout-model.md) D2/D4); **chặn** `SL-2.6` (saga cần tạo payment-intent) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Đây là chỗ **tiền thật** đi qua. Hai nguồn gây trùng khác nhau, nên phải chặn bằng hai cơ chế khác nhau:
+
+1. **Client** bấm "thanh toán" 2 lần ⇒ `Idempotency-Key` (như `SL-2.5`).
+2. **Provider** gọi webhook N lần cho cùng một giao dịch (retry, timeout mạng) ⇒ khoá **tự nhiên của provider**
+   (`provider_txn_id`, `event_id`), `architecture.md` §6.2. Đây là lần đầu service nhận traffic **không có JWT**.
+
+**Mục tiêu**
+
+Service thứ 7 (`8088`, DB `payment`): tạo payment-intent idempotent, mô phỏng provider bằng **mock** (Phase 2 chưa nối
+provider thật), và nhận webhook **idempotent** — gửi lại 1 lần hay 20 lần song song thì tiền chỉ được ghi nhận 1 lần.
+
+**In scope**
+
+- Service mới (pom · Dockerfile · yml · security · health · JDBC) + `V1__create_payment.sql`
+  (`payments`, `payment_webhook_events`, `idempotency_keys`).
+- `POST /v1/payment-intents` (buyer + **bắt buộc** `Idempotency-Key`) · `GET /v1/payment-intents/{id}` ·
+  `GET /v1/payment-intents?orderId=`. Mỗi đơn tối đa **1 intent sống** (unique index có điều kiện).
+- `POST /v1/webhooks/payment` — **public**, xác thực **HMAC-SHA256** (`X-Provider-Signature` + `X-Provider-Timestamp`,
+  cửa sổ 5 phút), idempotent theo `provider_event_id` + `provider_txn_id UNIQUE`.
+- **Mock provider** (`PAYMENT_MOCK_ENABLED`, fail-closed ngoài `local`): `POST /mock-provider/pay/{providerIntentId}`
+  (+ `?fail=true` mô phỏng thẻ bị từ chối) — sinh `provider_txn_id` rồi đi qua **đúng** đường webhook.
+- Hạ tầng: compose · `.env.example` · gateway route `/v1/payments` + `/v1/payment-intents` + public `/v1/webhooks/**` ·
+  CI matrix · Dockerfile 7 service · `tools/export-openapi.sh`.
+
+**Out of scope**
+
+- **Không** gọi `order-service` để confirm đơn: Phase 2 chưa có broker, việc chuyển `CONFIRMED` thuộc saga `SL-2.6`
+  (nó giữ token user). Hệ quả đã ghi nhận: `TD-17`.
+- **Refund / `transactions`**: bảng trong `architecture.md` §8.4 để Phase 6, chưa có ticket ⇒ `TD-17`.
+- **Cancel intent** + sweeper hết hạn intent: thuộc `SL-2.6`/`SL-2.9` (compensating).
+- Broker/outbox `payment.succeeded` → Phase 3.
+
+**Acceptance Criteria**
+
+- [x] `POST /v1/payment-intents`: thiếu header → **400** · lần đầu → **201** · retry cùng key → **200** + cùng `id` +
+      `Idempotent-Replayed: true` · cùng key payload khác → **422** · row `IN_PROGRESS` → **409**.
+- [x] Đơn đã có intent sống, tạo intent thứ hai **cùng** amount ⇒ trả lại intent cũ (không tạo row mới); **khác** amount
+      ⇒ **409**.
+- [x] `GET /v1/payment-intents/{id}`: intent của người khác → **404**; admin xem được.
+- [x] Webhook `succeeded` → payment `SUCCEEDED` + `provider_txn_id` + `paid_at`; `failed` → `FAILED` (không có `paid_at`).
+- [x] **Webhook gửi lại 5 lần cùng `event_id` ⇒ `payment_webhook_events` = 1 row, payment không đổi, trả 200 (`duplicate: true`)**.
+- [x] **20 webhook song song cùng `event_id` ⇒ 1 row** (kể cả trường hợp `event_id` khác nhưng cùng `provider_txn_id`).
+- [x] Chữ ký sai → **401**; timestamp lệch > 5 phút → **401**; `amount` lệch intent → **409** (trạng thái không đổi).
+- [x] `mock-pay` → payment `SUCCEEDED`; `?fail=true` → `FAILED`; gọi lại `mock-pay` khi đã terminal ⇒ 200, không đổi dữ liệu.
+- [x] DB canh bất biến: `amount > 0`, `status = SUCCEEDED ⇔ paid_at IS NOT NULL` (thử UPDATE sai → bị chặn).
+- [x] Unit + IT xanh; `e2e-smoke` 17/17; OpenAPI export pass.
+
+**Ghi chú kỹ thuật**
+
+- **Hai cơ chế idempotency, không trộn**: client ⇒ `idempotency_keys` (scope `"<userId>:POST /v1/payment-intents"`);
+  provider ⇒ `payment_webhook_events.provider_event_id` (PK) + `payments.provider_txn_id` (UNIQUE). Provider **không**
+  gửi `Idempotency-Key` của client — nó không biết key đó.
+- **Webhook phải verify trên raw body** (không phải JSON đã parse): HMAC tính trên byte gốc, parse lại rồi ký thì không
+  khớp. Controller nhận `String` thô, verify, rồi mới parse.
+- **Dedupe insert và apply nằm CÙNG transaction**: event id lạ mà trỏ tới intent không tồn tại ⇒ rollback ⇒ row dedupe
+  cũng biến mất (provider retry lại được), không tạo "đã nhận nhưng chưa xử lý".
+- **Mock provider đi qua đúng đường webhook** (không gọi thẳng repository) để test/verify chứng minh cả chữ ký + dedupe.
+- Fail-closed: `PAYMENT_MOCK_ENABLED=true` ở `APP_ENV != local` ⇒ **chết lúc boot**, không để endpoint giả tiền lọt lên prod.
+
+**Kết quả verify** *(chạy thật: Docker + Postgres 16)*
+
+**1) `mvn -B -ntp verify` toàn repo — BUILD SUCCESS (02:01)**
+
+```text
+[INFO] ShopLab :: Service Commons ......................... SUCCESS [  2.350 s]
+[INFO] ShopLab :: Identity Service ........................ SUCCESS [ 20.527 s]
+[INFO] ShopLab :: Catalog Service ......................... SUCCESS [ 18.403 s]
+[INFO] ShopLab :: Inventory Service ....................... SUCCESS [ 16.685 s]
+[INFO] ShopLab :: Promotion Service ....................... SUCCESS [ 16.672 s]
+[INFO] ShopLab :: Order Service ........................... SUCCESS [ 15.932 s]
+[INFO] ShopLab :: Payment Service ......................... SUCCESS [ 14.300 s]
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [  8.716 s]
+[INFO] BUILD SUCCESS   Total time: 02:01 min
+```
+
+`payment` unit **59** (`PaymentServiceTest` 5 · `PaymentWriterTest` 3 · `PaymentWebhookServiceTest` 7 ·
+`WebhookSignatureVerifierTest` 5 · `MockProviderServiceTest` 3 · `PaymentPropertiesTest` 5 · `RequiredEnvTest` 2 ·
+config/health/idempotency 29) · IT **12** · jacoco `config/*`+`health/*` **88.6 %** LINE (gate 80 %).
+
+**2) Luồng thật qua gateway** (`bash /tmp/verify-payment.sh`)
+
+```text
+ 1) tạo intent (buyer)                  HTTP 201 · status=REQUIRES_PAYMENT · amount=180000 VND
+                                       paymentUrl=…/mock-provider/pay/pi_mock_d51d0c48…
+ 2) retry cùng key+payload              HTTP 200 · id TRÙNG · Idempotent-Replayed: true
+ 3) cùng key payload khác               HTTP 422
+ 4) thiếu header Idempotency-Key        HTTP 400
+ 5) cùng đơn, KHÁC số tiền              HTTP 409   (một đơn một intent sống)
+ 6) GET bằng user khác → 404 · admin → 200 · không token → 401
+ 7) mock-pay (public, qua gateway)      HTTP 200 → GET intent: SUCCEEDED + providerTxnId=txn_mock_d420ea40…
+ 8) mock-pay lần 2 (đã terminal)        HTTP 200 · không đổi dữ liệu (eventId=null)
+ 9) webhook gửi lại 5 lần cùng event    cả 5 → HTTP 200; lần 1 `duplicate=false`, lần 2..5 `duplicate=true`
+10) 20 webhook SONG SONG cùng event     {200: 20}  → DB: 1 row cho event đó
+11) chữ ký sai → 401 · timestamp cũ 30 phút → 401   (không ghi gì)
+12) webhook sai số tiền (1.00 vs 120000) HTTP 409 · payment vẫn REQUIRES_PAYMENT
+13) mock-pay?fail=true                 HTTP 200 → status=FAILED, paid_at NULL
+```
+
+**3) Bằng chứng DB** (`psql -d payment`)
+
+```text
+ provider_event_id  | count     -- 5 lần gửi lại + 20 request song song
+ evt_manual_7c72f055 |     1
+ evt_race_e3d6e3d0   |     1
+
+      status      |            provider_txn_id               | has_paid_at
+ FAILED           | txn_mock_6d038030-…                      | f
+ REQUIRES_PAYMENT | (null)                                   | f   ← webhook sai tiền/chữ ký không đổi gì
+ SUCCEEDED        | txn_mock_d420ea40-…                      | t   ← bất biến SUCCEEDED ⇔ paid_at
+```
+
+**4) Regression + contract**
+
+```text
+$ bash tools/e2e-smoke.sh        17 PASS / 0 FAIL · 13 request · 621 ms
+$ bash tools/export-openapi.sh   VALIDATE PASS · 32 path · 39 operation · 37 schema  (trước: 28/34/34)
+```
+
+**Sự cố trong lúc build/verify (2 lỗi thật)**
+
+- **`Types.TIMESTAMP_WITH_TIMEZONE` + `java.sql.Timestamp`** ⇒ `PSQLException: Cannot cast an instance of
+  java.sql.Timestamp to type Types.TIMESTAMP_WITH_TIMEZONE` ⇒ webhook/mock-pay trả 500. Chỉ IT (Postgres thật) bắt được;
+  đổi sang `Types.TIMESTAMP` (TIMESTAMPTZ vẫn nhận `setTimestamp` đúng offset).
+- **Checkstyle `MethodLength` 80 + jacoco gate 80 %**: `apply()` dài 84 dòng ⇒ tách `validate` / `requirePayment` /
+  `recordEvent` / `transition`; coverage 76 % ⇒ **không** kê test rỗng mà viết test cho đúng phần thiếu
+  (`PaymentProperties` các nhánh fail-closed, `RequiredEnv`, 401 không token) ⇒ 88,6 %.
+
+**Learning note**
+
+- **Hai nguồn trùng ⇒ hai cơ chế, không trộn**: client bấm 2 lần dùng `Idempotency-Key`; provider retry dùng khoá
+  **tự nhiên của nó** (`provider_event_id` + `provider_txn_id`). Provider không biết key của client — dùng chung một
+  khoá là bắt client chịu trách nhiệm cho lỗi của provider.
+- **Ký HMAC trên raw body, và timestamp phải nằm trong chuỗi được ký**: parse JSON rồi serialize lại thay đổi thứ tự
+  key/khoảng trắng ⇒ chữ ký không bao giờ khớp; timestamp ngoài chuỗi ký thì kẻ tấn công giữ body + chữ ký cũ bắn lại
+  mãi mãi. So sánh phải constant-time (`MessageDigest.isEqual`).
+- **Chốt chặn phải ở DB, không chỉ ở code**: `provider_txn_id UNIQUE` và unique index có điều kiện
+  `(order_id) WHERE status IN (...)` diễn đạt bất biến nghiệp vụ bằng ràng buộc — 20 request song song vẫn đúng vì
+  DB phân xử, không phải vì code chạy tuần tự.
+- **Mock phải đi qua đúng đường thật**: nếu mock tự set `status = SUCCEEDED` thì test xanh mà production gãy ở đúng
+  chỗ khó thấy nhất (chữ ký, dedupe, compare-and-set). Mock đi qua webhook ⇒ verify chứng minh luôn cả 3 thứ đó.
+- **Cờ "chỉ dùng ở local" phải fail-closed lúc boot** (`MockProviderGuard`) và secret bắt buộc không default
+  (`PAYMENT_WEBHOOK_SECRET`) — mock provider cho không hàng, secret rỗng cho ai cũng ký. Cả hai đều là lỗi không thể
+  phát hiện bằng test chức năng.
+- **`.env` phải bổ sung biến REQUIRED của compose** (`${VAR:?}`) trước khi `up` — nếu không compose dừng cả stack vì một
+  service mới, dễ hiểu nhầm là lỗi image.
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
 
@@ -1273,6 +1429,12 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | SL-2.5 | **CHECK constraint ở DB là thứ duy nhất không quên**: `total = subtotal − discount`, `line_total = unit_price × qty` — tính trong code thì script/migration sau này vẫn tạo được hoá đơn sai. |
 | 2026-11-07 | SL-2.5 | **404 thay vì 403 cho tài nguyên của người khác**: 403 xác nhận "có tồn tại nhưng bạn không được xem" — với đơn hàng đó đã là rò rỉ thông tin. |
 | 2026-11-07 | SL-2.5 | **Job dọn phải có ngưỡng cho cả 2 loại row**: `COMPLETED` giữ 24 h (retry muộn vẫn dedupe), `IN_PROGRESS` quá 1 h coi là mồ côi — không dọn thì client nhận 409 **vĩnh viễn** cho key đã crash. |
+| 2026-11-07 | SL-2.7 | **Hai nguồn trùng ⇒ hai cơ chế idempotency, không trộn**: client bấm 2 lần dùng `Idempotency-Key`; provider retry dùng khoá **tự nhiên của nó** (`provider_event_id` + `provider_txn_id`). Provider không biết key của client — bắt nó dùng key của client là bắt nó chịu lỗi của mình. |
+| 2026-11-07 | SL-2.7 | **Ký HMAC trên raw body + timestamp nằm trong chuỗi ký**: parse JSON rồi serialize lại là đổi thứ tự key/khoảng trắng ⇒ chữ ký không bao giờ khớp; thiếu timestamp trong chuỗi ký thì body + chữ ký cũ bắn lại được mãi. So sánh phải constant-time. |
+| 2026-11-07 | SL-2.7 | **Bất biến nghiệp vụ nên là ràng buộc DB**: `provider_txn_id UNIQUE` + unique index có điều kiện `(order_id) WHERE status IN (…)` ("một đơn một intent sống") ⇒ 20 request song song vẫn đúng vì DB phân xử, không nhờ code chạy tuần tự. |
+| 2026-11-07 | SL-2.7 | **Mock phải đi qua đúng đường thật**: mock tự set `SUCCEEDED` thì test xanh mà production gãy ở chỗ khó thấy nhất (chữ ký, dedupe, compare-and-set). Cho mock đi qua webhook ⇒ một lần verify chứng minh cả ba. |
+| 2026-11-07 | SL-2.7 | **Cờ "chỉ local" + secret bắt buộc phải fail-closed lúc boot**: mock provider cho không hàng, secret rỗng cho ai cũng ký — cả hai là lỗi mà test chức năng không bao giờ phát hiện. |
+| 2026-11-07 | SL-2.7 | **`Types.TIMESTAMP_WITH_TIMEZONE` + `java.sql.Timestamp` bị PSQLException**: chỉ IT với Postgres thật bắt được (unit test mock repo thì không). Lỗi kiểu này là lý do IT bắt buộc cho mọi service có I/O. |
 
 ---
 
@@ -1300,6 +1462,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-14` | Bảng `idempotency_keys` không có job dọn row quá 24h ⇒ phình dần (1 row/request checkout) | SL-2.0 | **Đã trả ở `SL-2.5`**: `IdempotencySweeper` (COMPLETED > 24h, IN_PROGRESS > 1h, batch 200) | ✅ đã trả (SL-2.5) |
 | `TD-15` | Reservation sweeper là `@Scheduled` in-process ⇒ chạy trùng khi `inventory-service` > 1 instance | SL-2.0 | **Đã trả ở `SL-2.3`**: `FOR UPDATE SKIP LOCKED` + conditional `markStatus` ⇒ N instance vẫn không trả chỗ 2 lần | ✅ đã trả (SL-2.3) |
 | `TD-16` | Chưa có API **restore/unarchive** product đã xoá mềm; bán lại cùng product phải tạo mới | SL-2.0 | Khi seller ẩn nhầm cần khôi phục **hoặc** có UI quản trị product | thấp |
+| `TD-17` | Webhook `payment.succeeded` **không** cập nhật order (Phase 2 chưa có broker) ⇒ nếu saga không chạy, tiền đã thu mà đơn vẫn `PENDING_PAYMENT`; chưa có `refund`/`transactions` để hoàn tiền ca này | SL-2.7 | Khi làm `SL-2.6`/`SL-2.9` (test compensating thấy ca này) **hoặc** khi Phase 3 có event `payment.succeeded` | cao |
+| `TD-18` | Webhook dùng **một** HMAC secret tĩnh, không key id/rotation; không lưu raw body (chỉ sha256) nên điều tra tranh chấp phải xin lại provider | SL-2.7 | Khi nối provider thật (Stripe/VNPay) — họ có key id + rotation riêng | thấp |
+| `TD-19` | Idempotency store (`idempotency_keys` + `IdempotencyService`) **copy lần 2** (order, payment) chưa có module chung ở `packages/` | SL-2.7 | Khi có service thứ 3 cần idempotency (dự kiến không có ở Phase 2 ⇒ quyết ở `SL-2.12` hoặc Phase 3) | thấp |
 
 ## 8. Changelog
 
@@ -1372,3 +1537,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | `SL-2.3` → `Done`: `inventory-service` thêm **sweeper TTL** (`@Scheduled` fixedDelay 60 s, batch 100, `FOR UPDATE SKIP LOCKED` + conditional `markStatus`) — reservation `PENDING` quá hạn tự `EXPIRED` + trả chỗ + ledger `EXPIRE`; trả `TD-15`. Thêm test **100 request HTTP song song** cùng SKU: **đúng 10×201 / 90×409**, `reserved=10`, `Σ delta_reserved=10`, bất biến `reserved<=on_hand` OK. Verify: `mvn verify` **BUILD SUCCESS** (inventory 44 unit + 15 IT) · container thật: sweeper dọn trong ~300 ms, log `đã expire 1 reservation` · `e2e-smoke` 17/17. |
 | 2026-11-07 | `SL-2.4` → `Done`: thêm **`promotion-service`** (8086, DB `promotion`) — voucher `PERCENT` (cap `max_discount`) + `FIXED`, `lock`/`commit`/`release` cùng pattern conditional `UPDATE` của inventory; `voucher_locks` 1 row/order + snapshot `discount`/`subtotal`; bất biến `used + locked <= quota` do CHECK canh; sweeper TTL (`SKIP LOCKED`) trả lượt bị bỏ quên. Hạ tầng: compose + gateway route `/v1/vouchers` + CI matrix + Dockerfile 6 service. Verify: `mvn verify` **BUILD SUCCESS** (promotion 48 unit + 13 IT) · container healthy · flow thật: lock 201 → retry 200 cùng id → commit (used=1) → release sau commit 409 → quá TTL 410 + trả lượt → sweeper tự trả trong ~1,5 s · **100 request song song: 10×201 / 90×409**, `used+locked<=quota` OK · `e2e-smoke` 17/17 · OpenAPI 23 path. |
 | 2026-11-07 | `SL-2.5` → `Done`: thêm **`order-service`** (8087, DB `order`) — tạo đơn **idempotent** (`Idempotency-Key`: 201 · 200 replay + header · 422 key dùng lại · 409 đang chạy · 400 thiếu header), `order_items` **snapshot** giá/tên, state machine `PENDING_PAYMENT → CONFIRMED|CANCELLED|EXPIRED` + history, bất biến tiền bằng CHECK ở DB; job dọn `idempotency_keys` (**trả `TD-14`**); `commons` thêm `422`. Verify: `mvn verify` **BUILD SUCCESS** (order 43 unit + 10 IT, toàn repo xanh) · flow thật: 201 → retry 200 cùng id → 422 → 400 · confirm 200 · confirm#2 không ghi history · cancel sau confirm 409 · cancel/expire 200 + reason · **20 request song song cùng key ⇒ 1 đơn** · job dọn xoá row 48h trong 3 s · `e2e-smoke` 17/17 · OpenAPI 28 path. **Sự cố thật**: deadlock pool do `REQUIRES_NEW` lồng transaction (đã fix bằng `OrderWriter`). |
+| 2026-11-07 | `SL-2.7` → `Done`: thêm **`payment-service`** (8088, DB `payment`) — payment intent **idempotent** (`Idempotency-Key`: 201/200 replay/422/409/400, mỗi đơn 1 intent sống), **mock provider** (fail-closed ngoài local), webhook **idempotent** theo khoá tự nhiên (`provider_event_id` PK + `provider_txn_id` UNIQUE) + **HMAC-SHA256 trên raw body** & timestamp window (chống replay), bất biến tiền bằng CHECK (`amount > 0`, `SUCCEEDED ⇔ paid_at`); gateway public-path `/v1/webhooks/**` + `/mock-provider/**`. Verify: `mvn verify` **BUILD SUCCESS** (payment 59 unit + 12 IT, toàn repo xanh, jacoco 88.6 %) · flow thật: 201 → retry 200 cùng id → 422 → 400 → 409 khác tiền · mock-pay → SUCCEEDED · **webhook gửi lại 5 lần + 20 request song song ⇒ 1 event row** · chữ ký sai/timestamp cũ 401 · sai tiền 409 không đổi trạng thái · `?fail=true` → FAILED · `e2e-smoke` 17/17 · OpenAPI 32 path/39 operation. **Sự cố**: `Types.TIMESTAMP_WITH_TIMEZONE` + `Timestamp` ⇒ 500 (chỉ IT bắt được); checkstyle `MethodLength` + jacoco gate ⇒ tách method + viết test cho phần fail-closed. Debt mới: `TD-17`…`TD-19`. |
