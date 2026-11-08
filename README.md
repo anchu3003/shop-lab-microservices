@@ -142,6 +142,12 @@ dùng `-DskipITs` và biết rõ là đã bỏ qua.
 
 ## CI (GitHub Actions) — `SL-0.5` (dựng) + `SL-1.0` (tối ưu chi phí)
 
+> ⚠️ **Đang TẮT tạm thời** (`SL-3.10`, 2026-11-08): `gh variable get CI_ENABLED` → `false`, để tăng tốc merge
+> Phase 3 (~5–6 phút/PR). Hệ quả: PR **không có check nào**; merge bằng
+> `bash tools/merge-pr.sh <PR> --summary-file f --skip-ci-check`; verify chuyển sang **local**
+> (`mvn -B -ntp verify` + 3 script e2e) và **phải dán vào ticket**. Bật lại: `gh variable delete CI_ENABLED`.
+> Theo dõi ở [`Backlog.md` §7](Backlog.md) → `TD-28`.
+
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy khi **push lên `main`** và khi **mở/cập nhật PR vào `main`**
 (PR ở dạng **draft bị bỏ qua** cho tới khi bấm *Ready for review*). Không có CI thì "code chạy máy tôi" sẽ âm thầm phá
 build khi số service tăng lên ở Phase 1+.
