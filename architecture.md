@@ -234,7 +234,7 @@ cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutt
 | `order-service` | Vòng đời order (**idempotent** theo `Idempotency-Key`), snapshot giá; orchestrator Saga (SL-2.6) | `orders`, `order_items`, `order_status_history`, `idempotency_keys`, `outbox` | PostgreSQL | REST + event | 2 |
 | `payment-service` | Payment intent (**idempotent**), nhận webhook provider (**idempotent** theo khoá tự nhiên), mock provider cho Phase 2; refund để Phase 6 | `payments`, `payment_webhook_events`, `idempotency_keys` (`transactions`/`refunds`/`outbox` chưa có) | PostgreSQL | REST + webhook | 2 |
 | `notification-service` | Email / SMS / Push theo template | `notification_logs`, `templates` | PostgreSQL | **async consumer** | 3 |
-| `search-service` | Index & query sản phẩm (full-text, filter, sort) | search index (không phải source of truth) | OpenSearch | REST + consumer | 3 |
+| `search-service` | Index & query sản phẩm (full-text, filter, sort) | search index (không phải source of truth) | **PostgreSQL FTS** (Phase 3) → OpenSearch (Phase 8) | REST + consumer | 3 |
 | `review-service` | Review, rating, moderation | `reviews`, `ratings` | PostgreSQL | REST + event | 8 |
 | `shipping-service` | Tạo vận đơn, tracking status | `shipments`, `tracking_events` | PostgreSQL | REST + event | 8 |
 | `analytics-service` | Tổng hợp số liệu bán hàng / funnel | `fact_*`, `dim_*` | ClickHouse (hoặc Postgres) | **CDC / consumer** | 8 |
@@ -466,7 +466,7 @@ Luồng "đọc" bình thường (cache) khác hẳn luồng "tranh mua":
 |---|---|---|
 | PostgreSQL | Source of truth, dữ liệu cần transaction & constraint | cache, session, counter throughput cao |
 | Redis | Cache, distributed lock, rate limit counter, cart (TTL), idempotency key, hot counter | source of truth (trừ cart vì chấp nhận mất) |
-| OpenSearch | Full-text search, filter/sort linh hoạt | transaction, source of truth |
+| OpenSearch | Full-text search, filter/sort linh hoạt (**Phase 8** — Phase 3 dùng PostgreSQL FTS trong DB `search`) | transaction, source of truth |
 | Object Store (MinIO/S3) | Ảnh sản phẩm, file export | dữ liệu có query |
 | Message Broker | Event, task queue, retry, DLQ | lưu trữ dài hạn |
 
@@ -686,6 +686,11 @@ phạm vi + điều kiện revisit: [`docs/adr/0004-service-commons-shared-libra
 **Quyết định:** Phase 3 dùng **RabbitMQ** (học concept nhanh), Phase 8 thêm **Kafka** cho luồng
 event streaming / CDC → analytics. Việc so sánh 2 broker chính là một bài học trade-off.
 
+**Contract event** (envelope · đặt tên · topology · outbox relay · DLQ) chốt ở **ADR-0007** (`SL-3.0`);
+envelope dùng chung cho mọi service nên nó nằm ở `service-commons` (`SL-3.2`), không ở từng service.
+**`search-service` dùng PostgreSQL FTS ở Phase 3** (DB riêng `search`), OpenSearch để Phase 8 — đổi storage
+mà **không đổi event contract** là mục tiêu của cách chia này.
+
 ### 11.3. API Gateway
 
 | Phương án | Ưu | Nhược |
@@ -722,7 +727,7 @@ trong `Backlog.md` — phase xa chỉ để ở mức epic.
 | **0** | Foundation | Repo skeleton, convention, local infra, service template, CI | Repo/team convention, 12-factor config, Docker Compose | `docker compose up` chạy được toàn bộ infra; service template có `/health`; CI xanh |
 | **1** | Walking skeleton | `api-gateway` + `identity-service` + `catalog-service`, auth JWT, CRUD product | Service boundary, sync communication, API versioning, gateway pattern | Register → login → lấy token → gọi API product qua gateway, chạy end-to-end  ✅ **Done 2026-11-06** (tag `phase-1`) |
 | **2** | Core commerce flow | `cart`, `inventory` (reserve/commit/release), `order` (Saga), `payment` (mock + idempotency) | Database per service, Saga, idempotency, distributed lock, compensating action | Checkout thành công + checkout fail đều đúng trạng thái; không oversell khi bắn 100 request đồng thời ✅ **Done 2026-11-08** (tag `phase-2` · [`docs/phases/phase-2.md`](docs/phases/phase-2.md) · runbook [`docs/runbook-phase-2.md`](docs/runbook-phase-2.md)) |
-| **3** | Async & event-driven | Broker, outbox, event contract, `notification`, `search` index | Async messaging, outbox, DLQ, retry, eventual consistency | Order confirmed → email gửi async; search index cập nhật sau khi product đổi |
+| **3** | Async & event-driven | **RabbitMQ** + outbox (polling relay) + event contract (**ADR-0007**, `SL-3.0`) · `notification-service` (consumer + retry + DLQ) · `search-service` (index từ event + reconcile, **Postgres FTS** ở phase này) | Async messaging, transactional outbox, at-least-once + consumer idempotent, DLQ, eventual consistency | Order confirmed → email gửi async; index search cập nhật sau khi product đổi; message lỗi vào DLQ; `payment.succeeded` tự confirm đơn (trả `TD-17`) |
 | **4** | Scale & performance | Cache-aside, rate limit, read replica, partition, load test k6, flash sale | Caching, cache stampede, rate limiting, replica lag, partitioning | Báo cáo load test có before/after (p99, throughput); flash sale 500k req/60s không oversell |
 | **5** | Resilience | Timeout, retry+backoff+jitter, circuit breaker, bulkhead, backpressure, degradation, chaos test | Failure mode, resilience pattern, degradation strategy | Kill 1 dependency → hệ vẫn phục vụ luồng critical; có báo cáo chaos test |
 | **6** | Observability & SRE | OTel tracing, Prometheus/Grafana, log tập trung, SLO/SLI, alert, runbook | Observability, SLO, error budget, on-call thinking | Trace 1 request xuyên 5 service; dashboard + alert theo SLO; có runbook cho 3 sự cố |

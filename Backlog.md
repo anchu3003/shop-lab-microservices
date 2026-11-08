@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.10` ✅ **Done** — runbook Phase 2 + DoD: archive · tag `phase-2` · release) |
-| **Ticket tiếp theo** | **Breakdown Phase 3** (`SL-3.0`…): broker + outbox + envelope + DLQ — epic outline ở §5 |
-| **Số ticket chi tiết hiện có** | 40 (Phase 0: 8 — archive · Phase 1: 19 — archive · Phase 2: 15 — archive) |
+| **Ticket đang làm** | — (Phase 2 ✅ **Done** — tag `phase-2`; Phase 3 breakdown xong, chờ bắt đầu) |
+| **Ticket tiếp theo** | `SL-3.0` — **ADR-0007**: contract event (envelope · naming · outbox relay · DLQ) |
+| **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
 
@@ -19,7 +19,7 @@
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
-| 3 | Async & event-driven | ⚪ Todo (epic) | — |
+| 3 | Async & event-driven | 🟡 Đang làm — breakdown xong 10 ticket | 0 / 10 |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
@@ -237,15 +237,594 @@ $ md5sum docs/api/openapi.yaml
 **Debt còn mở từ phase**: `TD-17` (webhook không cập nhật order — **cao**) · `TD-21`/`TD-22` (chưa rate limit) ·
 `TD-23` (IT inventory flaky) · `TD-25` (sweeper saga không có token user) · `TD-27` (E2E fail-branch flaky) — xem §7.
 
-### Phase 3 — Async & event-driven
-Mục tiêu: phần không critical chạy async, event không bị mất.
+### Phase 3 — Async & event-driven (breakdown `SL-3.x`)
 
-- `SL-3.x` Dựng message broker trong compose + convention đặt tên event
-- `SL-3.x` **Transactional outbox** ở `order-service` và `payment-service` + relay
-- `SL-3.x` Event envelope chuẩn + versioning + dedupe theo `eventId`
-- `SL-3.x` `notification-service`: consumer gửi email/SMS (mock), retry + **DLQ**
-- `SL-3.x` `search-service`: index product từ event, reconcile job khi index lệch
-- `SL-3.x` Báo cáo: so sánh trước/sau khi chuyển sang async (latency checkout)
+> **Mục tiêu**: phần **không critical** chạy async, và **event không bị mất** khi có sự cố — trọng tâm là
+> *transactional outbox + at-least-once + consumer idempotent + DLQ*, không phải "dùng được Kafka".
+> **Điều kiện hoàn thành**: `order.confirmed` phát ra **từ outbox** → `notification-service` gửi email (mock)
+> async · `payment.succeeded` tự confirm đơn (**trả `TD-17`**) · index search cập nhật sau khi product đổi ·
+> message lỗi vào **DLQ** (không chặn queue) · có báo cáo số liệu async · runbook + tag `phase-3`.
+
+| # | Ticket | Nội dung | Ước lượng | Trạng thái |
+|---|---|---|---|---|
+| 1 | `SL-3.0` | **ADR-0007** — contract event: envelope · đặt tên · **outbox relay** (polling) · **DLQ policy** · dedupe | S | Todo |
+| 2 | `SL-3.1` | **RabbitMQ**: topology (exchange/queue/DLQ) + healthcheck + `tools/rabbit-topology.sh` | S | Todo |
+| 3 | `SL-3.2` | `service-commons`: `EventEnvelope` + publisher (confirm) + consumer base (retry → DLQ) + dedupe `processed_events` | M | Todo |
+| 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | Todo |
+| 5 | `SL-3.4` | **`notification-service`** (8089): consumer `order.confirmed` → email mock + retry + **DLQ** + `tools/dlq.sh` | M | Todo |
+| 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`**) | M | Todo |
+| 7 | `SL-3.6` | `catalog-service` outbox product event + **`search-service`** (8090, Postgres **FTS**) index + reconcile + `GET /v1/search` | M | Todo |
+| 8 | `SL-3.7` | E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml` | S | Todo |
+| 9 | `SL-3.8` | **Báo cáo async**: latency checkout · độ trễ confirm→email · throughput relay · DLQ = 0 dưới tải | S | Todo |
+| 10 | `SL-3.9` | `docs/runbook-phase-3.md` + **DoD Phase 3** (archive · tag `phase-3` · release) | S | Todo |
+
+**Quyết định đã chốt khi breakdown** *(2026-11-08)*:
+
+- **Broker = RabbitMQ** (đã chốt ở `architecture.md` §11.2): routing + DLQ có sẵn, học concept nhanh; **Kafka để Phase 8**
+  (event streaming/CDC) — so sánh 2 broker là bài học trade-off, không làm sớm.
+- **`search-service` dùng Postgres FTS ở Phase 3** (DB riêng `search`, `tsvector` + `unaccent`), **OpenSearch để Phase 8**.
+  Lý do: docs cũ mâu thuẫn (§5 ghi OpenSearch Phase 3, §7/§12 ghi Phase 8); Phase 3 cần học **event-driven index +
+  reconcile**, thứ đó không phụ thuộc engine. Đổi storage ở Phase 8 mà **không đổi event contract** ⇒ đã sửa `architecture.md`.
+- **Outbox relay = polling** (`@Scheduled` 1 s, batch 100, `FOR UPDATE SKIP LOCKED`) chứ không dùng CDC/Debezium:
+  thêm 1 hạ tầng nữa là over-engineer ở quy mô này. Revisit khi throughput > 500 msg/s hoặc relay trễ p99 > 5 s.
+- **At-least-once, không hứa exactly-once**: mọi consumer **bắt buộc** idempotent theo `eventId` (`processed_events`).
+- **DLQ không auto-replay**: chỉ vào khi retry cạn; replay bằng `tools/dlq.sh` (có người quyết định).
+
+**Phụ thuộc & thứ tự**: `SL-3.0` (chốt contract) → `SL-3.1` (broker) → `SL-3.2` (commons: envelope/publisher/consumer) →
+`SL-3.3` (outbox ở order) → `SL-3.4` (consumer đầu tiên: notification — vertical slice đầu tiên chạy end-to-end) →
+`SL-3.5` (payment event + auto-confirm, trả `TD-17`) → `SL-3.6` (catalog outbox + search index) → `SL-3.7` (E2E) →
+`SL-3.8` (báo cáo) → `SL-3.9` (DoD). `SL-3.2` và `SL-3.6` (phần catalog outbox) có thể làm song song sau `SL-3.3`.
+
+**Debt sẽ trả trong phase này**: `TD-17` (**cao** — webhook không cập nhật order ⇒ `SL-3.5`).
+**Debt mới dự kiến**: outbox/search table chưa có job dọn (ghi `TD` khi làm), `TD-23`/`TD-27` (flaky) vẫn mở.
+
+> Mỗi ticket vẫn phải viết **đặc tả BA đầy đủ** (In/Out · AC verify được · ghi chú kỹ thuật) **ngay trước khi bắt đầu**
+> — bảng trên là phạm vi + thứ tự, không thay thế đặc tả (`AGENTS.md` §4, §5).
+
+### SL-3.0 — ADR-0007: contract event (envelope · naming · outbox relay · DLQ)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | `SL-2.10` (Phase 2 đóng); chặn **mọi** ticket `SL-3.x` |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Phase 2 gọi sync 5 dependency: nhanh, dễ debug, nhưng **sai một cái là cả checkout fail** và không có cách nào để phần
+"không critical" (email, index search) chạy sau. Phase 3 thêm broker — nhưng nếu mỗi service tự đặt tên event, tự chọn
+kiểu payload thì 3 tháng sau không ai đọc được message trong DLQ. Contract phải chốt **trước** dòng code đầu tiên
+(`AGENTS.md` §3.3).
+
+**Mục tiêu**
+
+`docs/adr/0007-event-contract.md` chốt 5 quyết định: **envelope**, **đặt tên**, **topology**, **relay outbox**, **DLQ**.
+
+**In scope**
+
+- Envelope JSON: `eventId` (uuid) · `eventType` (string, có `.vN`) · `version` (int) · `occurredAt` (ISO-8601 UTC) ·
+  `producer` (tên service) · `traceId` · `payload` (object). **Không** đặt field nghiệp vụ ở tầng envelope.
+- Đặt tên: routing key `<aggregate>.<event>.v<major>` (vd `order.confirmed.v1`) trên exchange **topic**
+  `shoplab.events`; queue theo **consumer** (`q.notification`, `q.order`, `q.search`) + `<queue>.dlq`; exchange chết `shoplab.dlx`.
+- Ngữ nghĩa giao: **at-least-once** + consumer idempotent theo `eventId`; **không** hứa exactly-once/ordering toàn cục
+  (ordering chỉ trong 1 queue + 1 consumer).
+- Relay outbox: polling `@Scheduled` (mặc định 1 s, batch 100, `FOR UPDATE SKIP LOCKED`) + **publisher confirm** rồi mới
+  đánh `SENT`. Nêu rõ vì sao **không** CDC/Debezium ở phase này và **điều kiện revisit**.
+- DLQ: retry trong consumer 3 lần (backoff 200 ms/1 s/3 s) → `nack(requeue=false)` vào `<queue>.dlq`; **không auto-replay**;
+  replay bằng tay (`tools/dlq.sh`). Ghi rõ ai được replay và cần kiểm gì trước khi replay.
+- Versioning: **không** sửa payload `.v1`; thay đổi không tương thích ⇒ phát `.v2` song song, consumer hỗ trợ cả hai rồi
+  mới bỏ `.v1`. Bảng 5 event khởi điểm: `order.confirmed.v1` · `order.cancelled.v1` · `payment.succeeded.v1` ·
+  `product.updated.v1` · `product.archived.v1` (kèm producer/consumer/payload field).
+
+**Out of scope**
+
+- Không viết code broker/publisher/consumer (đó là `SL-3.1`/`SL-3.2`).
+- Không bàn Kafka (đã chốt ở §11.2 — Phase 8), không bàn schema registry (không cần với 5 event).
+- Không thiết kế event cho shipping/review (Phase 8).
+
+**Acceptance Criteria**
+
+- [ ] `docs/adr/0007-event-contract.md` có đủ Context · Options · Decision · Consequences · **Revisit** (đúng skill `shoplab-adr`).
+- [ ] Có **bảng 5 event** với: routing key · producer · consumer · payload field · khi nào phát.
+- [ ] Có câu trả lời tường minh cho: *vì sao polling relay, không CDC* · *vì sao at-least-once* · *DLQ replay do ai*.
+- [ ] Mỗi quyết định có **điều kiện revisit verify được** (số liệu/ngưỡng), không phải "khi cần".
+- [ ] `architecture.md` §9.4 (API & contract) + §11.2 link tới ADR-0007.
+
+**Ghi chú kỹ thuật**
+
+- ADR này **cố ý ngắn** (không quá ~150 dòng): nó chốt *hợp đồng*, không dạy lại lý thuyết messaging.
+- Ghi rõ **cái đã bỏ**: exactly-once (đắt, cần transactional broker), schema registry, outbox CDC — kèm điều kiện revisit.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-3.1 — RabbitMQ: topology + healthcheck + công cụ kiểm tra
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | `SL-3.0` (tên exchange/queue chốt ở ADR-0007); chặn `SL-3.2`+ |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+`rabbitmq` nằm trong compose **từ Phase 0** nhưng chưa một dòng code nào publish/consume — tức là chưa ai chứng minh nó
+thật sự chạy được, chưa có healthcheck thật, và chưa có topology. Đây là "hạ tầng trang trí", đúng thứ `AGENTS.md` §3.4
+muốn tránh nếu kéo sang phase sau.
+
+**Mục tiêu**
+
+Broker chạy được, có topology khai báo bằng code, và có **một lệnh** để xem exchange/queue/DLQ/consumer.
+
+**In scope**
+
+- Compose: user/password lấy từ `.env` (`RABBITMQ_DEFAULT_USER/PASS`), healthcheck `rabbitmq-diagnostics -q ping`,
+  publish port 5672 + management **15672** (chỉ local), volume dữ liệu (queue durable sống qua restart).
+- Topology khai báo bằng code trong `service-commons` (`Declarables`): exchange topic `shoplab.events`, exchange
+  `shoplab.dlx`, 3 queue consumer + 3 `.dlq`, binding theo routing key (danh sách từ ADR-0007).
+- `tools/rabbit-topology.sh`: in exchange/queue (ready, unacked, consumer count) qua management API, **không** cần UI.
+- README: mục "Broker" — mở UI `localhost:15672`, lệnh xem queue, ý nghĩa `ready`/`unacked`.
+
+**Out of scope**
+
+- Không viết publisher/consumer nghiệp vụ (`SL-3.2`+). Không sharding/cluster broker (single node là đủ để học).
+- Không đổi `.env.example` của service nào (chỉ thêm biến broker).
+
+**Acceptance Criteria**
+
+- [ ] `docker compose ps` → `shoplab-rabbitmq` **healthy**; `docker restart` xong queue + binding **vẫn còn**.
+- [ ] `bash tools/rabbit-topology.sh` in ra: 1 exchange `shoplab.events` · 1 `shoplab.dlx` · 3 queue + 3 DLQ · binding đúng routing key.
+- [ ] Publish 1 message test (không có consumer) → `ready = 1`; consume bằng UI/script → `ready = 0`, `ack` thành công.
+- [ ] Message vào queue khi **không** có consumer vẫn còn sau `docker restart` broker (durable + persistent).
+- [ ] `mvn verify` không đổi (chưa có code nghiệp vụ); `e2e-smoke`/`e2e-checkout` không regress.
+
+**Ghi chú kỹ thuật**
+
+- **Khai topology bằng code** (không dùng `definitions.json`) để nó luôn khớp tên trong ADR-0007 và không phải import tay
+  khi dựng máy mới.
+- `unacked` là chỉ số hay bị bỏ qua: nó là **consumer đang giữ message** (đang retry) — DLQ chỉ tăng khi message bị
+  `nack` hẳn.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-3.2 — `service-commons`: envelope + publisher + consumer base + dedupe
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | `SL-3.0` (contract) · `SL-3.1` (topology); chặn `SL-3.3`·`SL-3.4`·`SL-3.5`·`SL-3.6` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Nếu mỗi service tự gọi `rabbitTemplate.convertAndSend(...)` thì sẽ lặp lại đúng 3 lỗi: quên `traceId` (log không nối được),
+quên dedupe (xử lý 2 lần khi message redeliver), và retry vô hạn (queue treo). Cùng bài học `SL-2.12`: hành vi **của toàn hệ**
+thì phải nằm ở `service-commons`, không copy 6 lần.
+
+**Mục tiêu**
+
+Service mới chỉ cần khai dependency là có: publish đúng envelope, consume có retry → DLQ, dedupe theo `eventId`.
+
+**In scope**
+
+- `commons/events/EventEnvelope` (record) + `EventEnvelopeCodec` (JSON, `occurredAt` ISO-8601, **reject** `version` không hỗ trợ).
+- `EventPublisher`: publish lên `shoplab.events` với `routingKey = eventType`; bật **publisher confirm**
+  (`spring.rabbitmq.publisher-confirm-type=correlated`), message `persistent`, `traceId` lấy từ MDC nếu caller không truyền.
+- `EventConsumer` (base class + dispatcher): parse envelope → `MDC.put(traceId)` → **dedupe** → gọi handler → `ack`;
+  lỗi ⇒ retry **3 lần** (200 ms / 1 s / 3 s) ⇒ `nack(requeue=false)` ⇒ DLQ; mọi nhánh log đều có `eventId`.
+- `ProcessedEventStore` (interface) + `JdbcProcessedEventStore` (`insert into processed_events(event_id, consumer, event_type)
+  on conflict do nothing` ⇒ `0 row` = đã xử lý): kèm **SQL mẫu** trong javadoc, **không** ship Flyway migration
+  (mỗi service tự thêm vào DB của mình).
+- `EventAutoConfiguration`: `@ConditionalOnClass(RabbitTemplate)` + `@ConditionalOnProperty(shoplab.events.enabled)` ⇒
+  service **không** dùng event (template, gateway) không bị ảnh hưởng.
+- Unit test: codec (round-trip · version lạ) · dedupe (handler chỉ chạy 1 lần với cùng `eventId`) · retry → DLQ (mock `Channel`) ·
+  auto-config back-off (`FilteredClassLoader`).
+
+**Out of scope**
+
+- Không có event nghiệp vụ nào trong commons (chỉ hạ tầng). Không schema registry. Không bàn ordering/partition key.
+- Không làm outbox ở đây — outbox ghi vào DB của **từng service** (`SL-3.3`/`SL-3.5`/`SL-3.6`).
+
+**Acceptance Criteria**
+
+- [ ] Publish 1 event từ test ⇒ message có đủ 7 field envelope; `traceId` khớp MDC của caller.
+- [ ] Consumer nhận **cùng `eventId` 2 lần** ⇒ handler chạy **1 lần**, lần 2 `ack` luôn (không vào DLQ).
+- [ ] Handler ném exception ⇒ retry 3 lần rồi **1 message** ở `<queue>.dlq`, `<queue>` rỗng, `unacked = 0`.
+- [ ] Service **không** khai `spring-boot-starter-amqp` vẫn boot bình thường (test `FilteredClassLoader` + `service-template` xanh).
+- [ ] `commons` unit test xanh **không cần broker thật** (mock `RabbitTemplate`/`Channel`); `mvn -B -ntp verify` toàn repo xanh.
+
+**Ghi chú kỹ thuật**
+
+- **Dedupe ở DB của consumer, không ở Redis**: Redis có thể mất dữ liệu (cart chấp nhận được, dedupe thì không), và dedupe
+  phải nằm cùng transaction với việc xử lý. Bảng `processed_events` phình dần ⇒ ghi `TD` về job dọn.
+- **Retry trong consumer** (blocking, giữ `unacked`) khác **retry ở transport** (RabbitMQ không tự retry): chọn retry trong
+  consumer để còn log/inspect được — trade-off đã biết là consumer giữ thread ~4,2 s.
+- `@ConditionalOnClass` phải ở **cấp class auto-config** (bài học `SL-2.12`: đặt trên `@Bean` method ⇒ `NoClassDefFoundError`).
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-3.3 — `order-service`: transactional outbox + relay ⇒ `order.confirmed.v1`
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | `SL-3.2` (envelope/publisher); chặn `SL-3.4`/`SL-3.7`/`SL-3.8` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Đây là bài toán gốc của outbox: `order` chuyển `CONFIRMED` (commit DB) rồi mới publish — nếu process chết **giữa** hai bước
+thì đơn đã confirmed mà **không ai biết** để gửi email. Ngược lại publish trước rồi ghi DB thì có thể phát event cho đơn
+không tồn tại. Phase 2 giải quyết bằng cách **không** phát event; Phase 3 phải phát mà **không mất, không bịa**.
+
+**Mục tiêu**
+
+Mọi thay đổi state quan trọng của đơn ghi **outbox trong cùng transaction**, relay lo việc publish → `order.confirmed.v1` /
+`order.cancelled.v1` tới được consumer **ít nhất một lần**.
+
+**In scope**
+
+- Migration `V4__create_outbox.sql`: `outbox(id, aggregate_type, aggregate_id, event_type, payload jsonb, status
+  PENDING/SENT, attempts, last_error, created_at, sent_at)` + index `(status, created_at)` + CHECK status.
+- Ghi outbox **trong cùng `@Transactional`** ở `CheckoutFinishService` (confirm) và luồng cancel.
+- `OutboxRelay` (`@Scheduled`, env `SHOPLAB_OUTBOX_INTERVAL_MS`, `…BATCH_SIZE`): `FOR UPDATE SKIP LOCKED` → publish +
+  **chờ confirm** → `SENT`; lỗi ⇒ `attempts++`, `last_error`, **giữ `PENDING`** (không mất event).
+- Payload `order.confirmed.v1`: `{orderId, userId, total, currency, itemCount, confirmedAt}` (đủ để consumer hiểu, **không**
+  copy toàn bộ đơn — payload lớn là nợ của tương lai).
+- Test: unit (relay gửi + đánh SENT; lỗi ⇒ giữ PENDING, attempts tăng) · IT (confirm ⇒ đúng **1** row outbox; broker chết
+  ⇒ order vẫn `CONFIRMED`, row `PENDING`; broker sống lại ⇒ `SENT`) · IT hai relay chạy song song ⇒ không gửi trùng.
+
+**Out of scope**
+
+- Không làm notification (`SL-3.4`), không làm event của payment (`SL-3.5`), không dọn row `SENT` (job retention ⇒ ghi `TD`).
+- Không đổi payload/state machine của order (Phase 2 đã chốt).
+
+**Acceptance Criteria**
+
+- [ ] `POST /v1/checkout/{id}/confirm` thành công ⇒ **1 row** `outbox` `PENDING` cùng transaction, sau ≤ 2 s thành `SENT`
+      và có message `order.confirmed.v1` trên `q.notification` (kiểm bằng `tools/rabbit-topology.sh` / psql).
+- [ ] `docker stop shoplab-rabbitmq` rồi confirm ⇒ order **vẫn `CONFIRMED`** (không 503), row giữ `PENDING`,
+      `attempts > 0`; `docker start` ⇒ message được gửi, row `SENT`.
+- [ ] Cancel ⇒ `order.cancelled.v1` phát ra tương tự; confirm#2 (idempotent) ⇒ **không** sinh row outbox thứ hai.
+- [ ] Chạy 2 instance relay (hoặc 2 vòng song song trong IT) ⇒ mỗi row chỉ publish **1 lần**, không message trùng.
+- [ ] `mvn -B -ntp verify` xanh; `e2e-checkout` 27/27 + `e2e-checkout-fail` 41/41 không regress.
+
+**Ghi chú kỹ thuật**
+
+- **Outbox là bảng, không phải queue**: publish phải là *hệ quả* của transaction đã commit, không phải một phần của nó.
+- **Giữ `PENDING` khi lỗi** (không `FAILED`): event chưa gửi thì vẫn còn nghĩa vụ gửi; `attempts` + `last_error` đủ để biết
+  cái nào đang kẹt.
+- `FOR UPDATE SKIP LOCKED` (đúng khuôn `SL-2.3`): nhiều instance relay không giẫm nhau, không cần leader election.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-3.4 — `notification-service` (8089): consumer `order.confirmed` + retry + DLQ
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | `SL-3.2` (consumer base) · `SL-3.3` (event thật để consume); chặn `SL-3.7`/`SL-3.8` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Đây là **vertical slice đầu tiên** của phase 3: một event đi từ outbox của `order` tới một service hoàn toàn mới. Nó là
+chỗ để chứng minh "async thật sự chạy" — và cũng là chỗ để chứng minh **retry + DLQ** hoạt động, thứ mà nếu không test
+thì chỉ là cấu hình.
+
+**Mục tiêu**
+
+`order.confirmed` ⇒ một email (mock) được "gửi" **async**, idempotent, lỗi thì retry rồi vào DLQ — **không** chặn queue.
+
+**In scope**
+
+- Service mới: `notification-service` (port **8089**), DB **`notification`** riêng, Flyway (`templates`, `notification_logs`,
+  `processed_events`), Dockerfile + compose + CI matrix + gateway route `/v1/notifications`, OpenAPI tự sinh.
+- Consumer `q.notification` bind `order.confirmed.v1` + `order.cancelled.v1` → render template → ghi `notification_logs`
+  (`SENT`, `sent_at`) → log "đã gửi" (mock provider, không SMTP).
+- Idempotent theo `eventId`; handler lỗi cố ý qua env `SHOPLAB_NOTIFICATION_FAIL_MODE` (chỉ local) để test retry/DLQ.
+- `tools/dlq.sh`: liệt kê message trong `<queue>.dlq` và **move** 1 message về queue chính (replay có kiểm soát).
+- `GET /v1/notifications/me` (buyer) — xem log của chính mình (verify được bằng mắt, không cần psql).
+
+**Out of scope**
+
+- Không SMTP/SMS thật, không template engine (placeholder `{{name}}` là đủ), không notification cho event khác.
+- Không retry vô hạn, không dead-letter **process** riêng (replay bằng tay qua `tools/dlq.sh`).
+
+**Acceptance Criteria**
+
+- [ ] Confirm đơn ⇒ trong ≤ **2 s** có row `notification_logs` `SENT` + `GET /v1/notifications/me` thấy nó; log có `eventId`.
+- [ ] Publish lại **cùng `eventId`** ⇒ vẫn **1** row (dedupe), không gửi lần 2.
+- [ ] Bật `SHOPLAB_NOTIFICATION_FAIL_MODE=true` ⇒ retry **3 lần** rồi message sang `q.notification.dlq`, queue chính
+      `ready = 0`, `unacked = 0` (không treo).
+- [ ] `bash tools/dlq.sh move q.notification` (sau khi tắt fail-mode) ⇒ message được xử lý, `notification_logs` +1, DLQ rỗng.
+- [ ] Checkout vẫn xanh khi `notification-service` **chết** (async đúng nghĩa): confirm **200**, không 503.
+
+**Ghi chú kỹ thuật**
+
+- **Idempotent trước, retry sau**: nếu dedupe sai thì retry sẽ thành gửi email trùng — dedupe là điều kiện của retry.
+- Env bơm lỗi **chỉ local** (`@ConditionalOnProperty(app.env=local)`) — bài học `SL-2.9`: hook debug không được tồn tại
+  ở production.
+- Port 8089 (8085 đã là Adminer).
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-3.5 — `payment.succeeded` ⇒ `order-service` auto-confirm (trả `TD-17`)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | `SL-3.2` · `SL-3.3` (khuôn outbox) · `SL-3.4` (khuôn consumer); chặn `SL-3.7`/`SL-3.8` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+`TD-17` (**mức `cao`**) — hệ quả của quyết định ở `SL-2.7`: webhook `payment.succeeded` **không** cập nhật order (Phase 2 chưa
+có broker, chỉ saga giữ token user mới confirm được). Ca thật: khách trả tiền xong, webhook tới, nhưng **không** gọi
+`/confirm` (đóng tab, mất mạng) ⇒ tiền đã thu mà đơn treo `PENDING_PAYMENT` đến khi sweeper `EXPIRED` ⇒ **hàng bị trả lại
+dù tiền đã vào**. Phase 3 là lúc trả món nợ này đúng như điều kiện revisit đã ghi.
+
+**Mục tiêu**
+
+`payment-service` phát `payment.succeeded.v1` **từ outbox**; `order-service` consume và **tự confirm** đơn ⇒ hai đường
+(webhook → event, và client gọi `/confirm`) đều dẫn tới **một** trạng thái, idempotent, không commit 2 lần.
+
+**In scope**
+
+- `payment-service`: migration outbox (`V?__create_outbox.sql`), ghi outbox **trong cùng transaction** khi webhook chuyển
+  intent sang `SUCCEEDED`; relay riêng (cùng khuôn `SL-3.3`); payload `{paymentIntentId, orderId, amount, currency, succeededAt}`.
+- `order-service`: consumer `q.order` bind `payment.succeeded.v1` → nếu saga `COMPLETED_START` + order `PENDING_PAYMENT` ⇒
+  dùng lại `CheckoutFinishService` để commit stock + voucher ⇒ `CONFIRMED` (step audit `PAYMENT_EVENT_CONFIRM`).
+- Ca không confirm được (order đã `EXPIRED`/`CANCELLED`): **ack + log WARN** có `paymentIntentId` (không ném lại vào DLQ
+  vô ích) và ghi `TD` phần **refund** (chưa có `refunds`/`transactions`).
+- Giữ `POST /v1/checkout/{id}/confirm` (client chủ động) — không đổi API surface.
+
+**Out of scope**
+
+- Không làm refund/hoàn tiền (Phase 6). Không bỏ endpoint `confirm`. Không đổi luồng saga start.
+
+**Acceptance Criteria**
+
+- [ ] Mock-pay **không** gọi `/confirm` ⇒ ≤ **2 s** sau: order `CONFIRMED`, `saga = CONFIRMED`, `stock.on_hand` giảm đúng,
+      voucher `COMMITTED`, `checkout_saga_steps` có `PAYMENT_EVENT_CONFIRM:OK`.
+- [ ] Gọi `/confirm` **sau** khi event đã confirm ⇒ **200** (idempotent), `stock`/voucher **không** bị trừ 2 lần.
+- [ ] Webhook lặp (cùng `provider_event_id`) ⇒ **không** sinh message `payment.succeeded.v2`, outbox vẫn 1 row.
+- [ ] `payment.succeeded` cho đơn đã `EXPIRED` ⇒ `ack`, log WARN, state **không** đổi, DLQ rỗng.
+- [ ] Broker chết lúc webhook ⇒ payment `SUCCEEDED` vẫn ghi DB + outbox `PENDING`; broker sống lại ⇒ event đi, order tự confirm.
+- [ ] `TD-17` → `✅ đã trả (SL-3.5)` (phần refund tách `TD` mới); `e2e-checkout`/`e2e-checkout-fail` không regress.
+
+**Ghi chú kỹ thuật**
+
+- **Hai đường confirm** là chấp nhận có chủ ý (client chủ động + hệ tự chốt) ⇒ **mọi** nhánh phải đi qua cùng một hàm
+  compare-and-set trên `orders` (đã có từ `SL-2.6b`), nếu không sẽ commit 2 lần.
+- Event này là **hệ quả của webhook**, không phải thay thế webhook: idempotency của webhook (`provider_event_id`) vẫn là
+  chốt chặn thứ nhất; dedupe consumer (`eventId`) là chốt thứ hai.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-3.6 — `catalog` outbox + `search-service` (8090) Postgres FTS + reconcile
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven *(quyết định storage: Postgres FTS — xem ghi chú ở đầu phase)* |
+| **Phụ thuộc** | `SL-3.2` (consumer/publisher) · `SL-3.3` (khuôn outbox); chặn `SL-3.7`/`SL-3.8` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+`catalog` hiện là nguồn sự thật về product, nhưng tìm kiếm (`LIKE '%q%'`, `TD-7`) là full scan — không lên được khi dữ
+liệu lớn. Bài học của phase 3 **không** phải "cài OpenSearch" mà là **index lệch thì phải phát hiện và sửa được**: event
+cập nhật index + **reconcile job** khi lệch. Engine đổi ở Phase 8 mà contract event giữ nguyên.
+
+**Mục tiêu**
+
+Product đổi ⇒ index của `search-service` cập nhật ≤ 2 s; index lệch ⇒ **một lệnh** dựng lại được; tìm tiếng Việt có dấu /
+không dấu đều ra.
+
+**In scope**
+
+- `catalog-service`: outbox + relay (cùng khuôn `SL-3.3`) phát `product.updated.v1` (created/updated gộp) và
+  `product.archived.v1` khi soft delete (`SL-2.11`).
+- `search-service` (port **8090**), DB **`search`**: bảng `search_product(product_id PK, name, description, category_id,
+  min_price, status, updated_at, search_vector tsvector)` + GIN index + extension `unaccent`; consumer `q.search` upsert/archive.
+- `GET /v1/search?q=&categoryId=&minPrice=&maxPrice=&page=&size=` — chỉ trả product `ACTIVE`, body `ApiError` chuẩn, phân
+  trang offset (ghi `TD` về keyset nếu cần, đồng bộ `TD-6`).
+- **Reconcile**: `POST /v1/admin/search/reindex` (ADMIN) đọc catalog theo batch (`GET /v1/products?size=…&page=…`) và upsert;
+  trả `{scanned, upserted, archived}`. Kèm `@Scheduled` so số row (log WARN khi lệch > 1%).
+- Dockerfile + compose + CI matrix + gateway route `/v1/search` (public) + `/v1/admin/search/**` (ADMIN).
+
+**Out of scope**
+
+- **OpenSearch/Elasticsearch (Phase 8)** · relevance tuning, synonym, facet, highlight · search SKU (chỉ product).
+- Không sửa `catalog` để phục vụ search (vẫn là nguồn sự thật, không biết gì về index).
+
+**Acceptance Criteria**
+
+- [ ] Tạo/sửa product ⇒ ≤ **2 s** `GET /v1/search?q=<tên>` thấy product với `minPrice` đúng.
+- [ ] Soft delete product ⇒ ≤ 2 s search **không** còn; row index chuyển `ARCHIVED` (không xoá cứng).
+- [ ] `q=dien thoai` khớp `"Điện thoại"` (unaccent) và `q=dien%` không làm lỗi (escape wildcard).
+- [ ] Xoá tay 5 row index rồi `POST /v1/admin/search/reindex` ⇒ `upserted ≥ 5`, search trả lại đủ; gọi 2 lần liên tiếp
+      ⇒ **idempotent** (không nhân bản row).
+- [ ] Broker chết ⇒ catalog **vẫn** tạo/sửa product bình thường (chỉ index trễ); reconcile vẫn dựng lại được index.
+- [ ] `product.archived` phát từ **outbox** (không phải gọi thẳng search) — kiểm bằng `outbox` row + message.
+
+**Ghi chú kỹ thuật**
+
+- **Đổi engine không đổi contract** là mục tiêu của phase này: payload event + reconcile là thứ giữ cho việc "lên
+  OpenSearch" ở Phase 8 thành việc **thay storage**, không phải viết lại tích hợp.
+- `unaccent` + `tsvector` cho tiếng Việt: dùng `unaccent(simple)` thay vì `vietnamese` config (Postgres không có sẵn) và
+  ghi rõ giới hạn (không xử lý từ đồng nghĩa) — trung thực về chất lượng search.
+- Reconcile là **đường lùi bắt buộc** của mọi index: index sai mà không reconcile được thì không được coi là "event-driven xong".
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-3.7 — E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml`
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | `SL-3.3`·`SL-3.4`·`SL-3.5`·`SL-3.6` (cần đủ 4 luồng để assert); chặn `SL-3.9` |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Async không nhìn thấy được bằng một `curl` duy nhất: API trả `200` **trước khi** việc thật xảy ra. Test phải **chờ có điều
+kiện** (poll tới timeout) và assert **state cuối** — nếu không sẽ có test "xanh" vì... chưa kịp chạy.
+
+**Mục tiêu**
+
+Một lệnh chạy được **4 luồng async** trên stack thật: event → email · event → auto-confirm · event → index search ·
+message lỗi → DLQ → replay.
+
+**In scope**
+
+- `tools/e2e-async.sh` (bash + `python3`, cùng khuôn `e2e-checkout.sh`): các bước `A1…A12`:
+  confirm ⇒ `notification_logs`; mock-pay **không** confirm ⇒ order tự `CONFIRMED`; sửa product ⇒ search thấy; archive ⇒
+  search mất; bật fail-mode ⇒ DLQ có message; `tools/dlq.sh move` ⇒ xử lý lại; queue `ready = 0` sau khi sạch.
+- Mỗi bước `PASS/FAIL` + gợi ý lệnh kiểm tra; exit code `1` khi có FAIL; **cleanup trap** reset fail-mode (bài học `SL-2.9`).
+- `.github/workflows/e2e.yml`: thêm bước chạy script (sau 2 script hiện có); README mục "E2E async".
+
+**Out of scope**
+
+- Không thay thế 3 script cũ (smoke/checkout/fail vẫn là chuẩn riêng). Không đo hiệu năng (đó là `SL-3.8`).
+
+**Acceptance Criteria**
+
+- [ ] `bash tools/e2e-async.sh` ⇒ **≥ 12 PASS / 0 FAIL**, chạy **2 lần liên tiếp** đều xanh (không phụ thuộc state cũ).
+- [ ] Mọi assert async đều **poll có timeout** (≤ 5 s) chứ không `sleep` mù; FAIL in `ready`/`unacked`/`dlq` tại thời điểm fail.
+- [ ] Script tự dọn state (fail-mode off, DLQ rỗng) kể cả khi chết giữa đường (`trap`).
+- [ ] `e2e.yml` có bước mới; YAML parse được (`python3 yaml.safe_load`).
+- [ ] 3 script cũ vẫn xanh (không regress).
+
+**Ghi chú kỹ thuật**
+
+- **Poll, không sleep**: async + máy chậm ⇒ `sleep 1` là flaky; poll state với timeout là cách duy nhất ổn định.
+- DLQ test **phải** dùng fail-mode có guard (local/E2E only) — không có đường nào để bơm lỗi ở production.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-3.8 — Báo cáo before/after async (số liệu đo thật)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | `SL-3.3`…`SL-3.7` (phải có luồng async chạy được mới đo) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+"Chuyển sang async cho nhanh hơn" là câu nói không kiểm chứng được. Ở hệ này, **email vốn không nằm trên đường checkout**
+⇒ async không làm checkout nhanh hơn; cái async mang lại là **decoupling** (notification chết không làm checkout fail) và
+**độ trễ có kiểm soát**. Báo cáo phải nói đúng như vậy, bằng số đo — không bịa "before/after" của một thứ chưa từng chạy sync.
+
+**Mục tiêu**
+
+`docs/reports/async-phase-3.md` trả lời bằng số: async **được gì**, **mất gì**, **giới hạn ở đâu**.
+
+**In scope**
+
+- Đo `latency checkout` (p50/p95, n = 50 request tuần tự + 20 đồng thời) **trước/sau** khi bật notification (để chứng minh
+  không đổi, hoặc đổi bao nhiêu).
+- Đo **độ trễ event**: từ `confirm` → `notification_logs.sent_at` (p50/p95) và từ webhook → order `CONFIRMED`.
+- Đo **throughput relay**: số message/s gửi được khi bơm 500 sự kiện (báo rõ bottleneck: relay batch hay broker).
+- Đo **DLQ = 0** trong 5 phút chạy 100 checkout + 100 cập nhật product (không mất message, không message trùng).
+- Đo ca **degradation**: `docker stop notification-service` ⇒ checkout p95 **không** đổi (bằng chứng của decoupling) và
+  message tồn trong queue rồi được xử lý khi bật lại.
+
+**Out of scope**
+
+- Không load test ở mức flash sale (Phase 4 — k6). Không tối ưu throughput (Phase 4).
+- Không so sánh broker (Kafka ở Phase 8).
+
+**Acceptance Criteria**
+
+- [ ] Báo cáo có **bảng số liệu** với: chỉ số · before · after · cách đo · điều kiện (máy, số request, commit).
+- [ ] Có **kết luận trung thực**: cái gì async **không** cải thiện (latency checkout) và vì sao vẫn nên làm (decoupling).
+- [ ] Có phần **giới hạn**: `unacked` khi retry giữ thread, relay polling trễ ≤ interval, `processed_events` phình.
+- [ ] Số liệu trong báo cáo **khớp** với output đã dán trong ticket (không chép tay từ trí nhớ).
+
+**Ghi chú kỹ thuật**
+
+- Đo bằng `curl -w '%{time_total}'` (không cần k6 ở phase này) + `psql` cho độ trễ event; ghi rõ **n** và cách tính p95.
+- Nếu số liệu xấu (relay trễ, DLQ > 0) thì **ghi nguyên** — mục đích là biết hệ thật sự ở đâu, không phải báo cáo đẹp.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-3.9 — `docs/runbook-phase-3.md` + DoD Phase 3 (archive · tag `phase-3` · release)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | **mọi** ticket `SL-3.x` trước đó `Done` |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Debug async khác debug sync ở một điểm cốt tử: **lỗi không nằm trong response HTTP**. Người trực phải biết nhìn
+`ready`/`unacked`/DLQ/outbox `PENDING`, biết message nào đã đi và message nào còn kẹt. Không có runbook thì mỗi lần
+"email không tới" là một cuộc điều tra từ đầu.
+
+**Mục tiêu**
+
+1. `docs/runbook-phase-3.md` đủ để người khác debug luồng async **mà không cần đọc code**.
+2. Đóng Phase 3 theo DoD (`AGENTS.md` §5, ADR-0005): archive · snapshot doc · tag `phase-3` · release.
+
+**In scope**
+
+- Runbook: sơ đồ event (producer → exchange → queue → consumer → DB) · bảng tra nhanh (queue/DLQ/outbox/log theo service) ·
+  lệnh kiểm tra từng tầng (`tools/rabbit-topology.sh`, `psql` outbox + `processed_events` + `notification_logs`, search index) ·
+  bảng **≥ 6 lỗi** (email không tới · DLQ tăng · order không auto-confirm · index lệch · relay không chạy · message trùng) ·
+  **§5 một ví dụ debug thật** dán nguyên văn.
+- Archive `SL-3.x` → `Backlog-phase-3.md`; `docs/phases/phase-3.md`; cập nhật `docs/phases/README.md` + bảng archive +
+  `architecture.md` §12; tag annotated `phase-3` + GitHub Release (sau merge).
+
+**Out of scope**
+
+- Không sửa code service; không mở `maint/phase-3`; không làm alert/dashboard (Phase 6).
+
+**Acceptance Criteria**
+
+- [ ] Runbook có đủ mục như trên; **mỗi lệnh chạy được thật** trên stack compose.
+- [ ] §5 dán output debug thật của **một** ca async fail (DLQ hoặc relay kẹt), không viết tay.
+- [ ] `Backlog-phase-3.md` đủ ticket + header; `Backlog.md` không còn `### SL-3.x`; `docs/phases/phase-3.md` có số liệu của `SL-3.8`.
+- [ ] `docker compose down -v` → `up -d --build` ⇒ 14 container healthy (thêm notification + search), 4 script E2E xanh.
+- [ ] Tag `phase-3` + Release; `architecture.md` §12 đánh dấu Phase 3 ✅ Done.
+
+**Ghi chú kỹ thuật**
+
+- Bảng lỗi ưu tiên **triệu chứng người trực thấy** ("email không tới", "DLQ tăng") thay vì tên exception.
+- Số liệu snapshot lấy từ báo cáo `SL-3.8` — **một** nguồn, không chép lại nhiều nơi.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
 
 ### Phase 4 — Scale & performance
 Mục tiêu: có số liệu chứng minh mỗi pattern giúp gì.
@@ -568,5 +1147,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | `SL-2.12` → `Done` (**trả `TD-3`**): **403 handler về `service-commons`** — thêm `web/AccessDeniedApiExceptionHandler` (bản duy nhất) + `web/AccessDeniedAutoConfiguration` (`@AutoConfiguration @ConditionalOnClass(AccessDeniedException) @ConditionalOnWebApplication(SERVLET)` + `@ConditionalOnMissingBean`) đăng ký trong `AutoConfiguration.imports`; `service-commons/pom.xml` thêm `spring-security-core` **`optional`** (cùng khuôn `webmvc`/`springdoc`); **xoá 6 bản copy** ở `catalog`/`inventory`/`cart`/`order`/`payment`/`promotion` (~296 dòng trùng). Test mới: `AccessDeniedApiExceptionHandlerTest` (403 + `code`/`path`/`traceId` + không lộ message nội bộ + **canary `@Order`**) và `AccessDeniedAutoConfigurationTest` (`WebApplicationContextRunner` + `FilteredClassLoader` chứng minh guard: không có security ⇒ im lặng bỏ qua). **Bug thật bắt được khi verify**: lần `verify` đầu đỏ 2 IT catalog (`expected 403 but was 500`) — `ExceptionHandlerExceptionResolver` lấy advice **đầu tiên khớp**, nên catch-all `@ExceptionHandler(Exception.class)` của `GlobalExceptionHandler` bắt `AuthorizationDeniedException` trước khi tới advice cụ thể (thứ tự bean đảo khi chuyển từ `@Component` sang auto-config) ⇒ fix bằng `@Order(Ordered.HIGHEST_PRECEDENCE)`. Verify: **655 test (537 unit + 118 IT) · 0 fail** · `mvn verify` BUILD SUCCESS 11 module · `grep -rl 'class AccessDeniedApiExceptionHandler'` = **1 file**, `services/**` = **0** · stack thật (rebuild `catalog`+`inventory`): buyer `POST /v1/categories` **403** `FORBIDDEN` + log `com.shoplab.commons.web.AccessDeniedApiExceptionHandler`, buyer `PUT /v1/stock` **403**, seller **201** / admin **200** (không chặn oan) · `e2e-smoke` 17/17 · `e2e-checkout` 27/27 · `e2e-checkout-fail` 41/41 (flaky 38/3 ở lần đầu sau rebuild → `TD-27`). |
 
 | 2026-11-08 | **`SL-2.10` → `Done` · ĐÓNG PHASE 2** (15/15): **runbook** [`docs/runbook-phase-2.md`](docs/runbook-phase-2.md) — sơ đồ luồng saga (6 bước + ai dọn khi bỏ ngang) · bảng port/health/DB/log + **env knob** (`SAGA_READ_TIMEOUT` 800ms · TTL reservation/lock 15′ · `SAGA_PAYMENT_WINDOW` · 3 sweeper 60 s) · 20+ lệnh kiểm tra copy-paste (kể cả `psql` đọc `stock`/`reservations`/`stock_ledger`/`vouchers`/`checkout_sagas` + Redis `cart:u:*`) · **7 lỗi** thường gặp · **§5 output debug thật** (tắt `payment-service` ⇒ 503 + `reserved` về 0 + `RESERVE`/`RELEASE` khớp ledger + `saga FAILED_PAYMENT/DOWNSTREAM_UNAVAILABLE_PAYMENT`; khôi phục ⇒ 201) + bẫy **health check Docker trễ 1 nhịp**. **DoD phase**: archive **15 ticket** → [`Backlog-phase-2.md`](Backlog-phase-2.md) (viết bổ sung `SL-2.6b` vì ticket đó Done mà **không có đặc tả** — dựng lại từ commit `5da0cc6`, có ghi nguồn) · [`docs/phases/phase-2.md`](docs/phases/phase-2.md) (số liệu đo thật) · `docs/phases/README.md` + bảng archive (§3) + `architecture.md` §12 đã update. Verify: **`down -v` → `up -d --build` ⇒ 12/12 container healthy** trên volume rỗng (Flyway + seed 5/20/24 tự chạy) · `e2e-smoke` **17/17** · `e2e-checkout` **27/27** · `e2e-checkout-fail` **41/41** · `mvn -B -ntp verify` **BUILD SUCCESS · 655 test (537 unit + 118 IT) · 0 fail** · OpenAPI **41 path / 50 operation / 35 token / 46 schema**. Tag annotated **`phase-2`** + GitHub Release trên merge commit. |
+
+| 2026-11-08 | **Breakdown Phase 3** → **10 ticket** chi tiết: `SL-3.0` (ADR-0007 contract event: envelope · naming · outbox relay polling · DLQ) · `SL-3.1` (RabbitMQ topology + `tools/rabbit-topology.sh`) · `SL-3.2` (commons: `EventEnvelope` + publisher confirm + consumer base retry→DLQ + dedupe `processed_events`) · `SL-3.3` (order **outbox** + relay ⇒ `order.confirmed.v1`/`order.cancelled.v1`) · `SL-3.4` (**`notification-service`** 8089: consumer + email mock + DLQ + `tools/dlq.sh`) · `SL-3.5` (`payment.succeeded.v1` ⇒ **auto-confirm** ở order, **trả `TD-17`**) · `SL-3.6` (catalog outbox + **`search-service`** 8090 **Postgres FTS** + reconcile + `GET /v1/search`) · `SL-3.7` (E2E async) · `SL-3.8` (báo cáo before/after async) · `SL-3.9` (runbook + DoD phase 3). **5 quyết định chốt khi breakdown**: broker = **RabbitMQ** (Kafka Phase 8) · `search-service` = **Postgres FTS** ở Phase 3, **OpenSearch Phase 8** (sửa mâu thuẫn §5 vs §7/§12 trong `architecture.md`) · outbox relay = **polling** (`FOR UPDATE SKIP LOCKED`, không CDC) · **at-least-once** + consumer idempotent theo `eventId` (không hứa exactly-once) · **DLQ không auto-replay**. |
 
 | 2026-11-08 | `SL-2.8` → `Done`: **E2E checkout** — `tools/e2e-checkout.sh` (27 check: tiền · saga · idempotency · mock-pay · confirm · order · tồn kho) + workflow **`e2e.yml`** (compose 10 thành phần + 2 script; `workflow_dispatch` + `schedule` hằng tuần, **không** chạy mỗi PR vì ≈30 phút/run) ⇒ **trả `TD-4`**; verify OpenAPI **41 path/50 operation** + matrix `build-image` **9 service** (đã có, chỉ kiểm). Verify: `e2e-checkout` **27 PASS / 0 FAIL** (931 ms) · `e2e-smoke` 17/17 · `e2e.yml` parse OK · `compose config` OK. **Sự cố**: fail giả do Python đổi số tiền thành float ⇒ `parse_float=str`; CI `build-image` flaky do Maven Central hiccup (rerun xanh) ⇒ `TD-26`. |
