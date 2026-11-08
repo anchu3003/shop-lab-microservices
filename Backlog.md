@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (Phase 2 ✅ **Done** — tag `phase-2`; Phase 3 breakdown xong, chờ bắt đầu) |
-| **Ticket tiếp theo** | `SL-3.0` — **ADR-0007**: contract event (envelope · naming · outbox relay · DLQ) |
+| **Ticket đang làm** | — (`SL-3.0` ✅ **Done** — ADR-0007 contract event) |
+| **Ticket tiếp theo** | `SL-3.1` — RabbitMQ: topology (exchange/queue/DLQ) + `tools/rabbit-topology.sh` |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -19,7 +19,7 @@
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
-| 3 | Async & event-driven | 🟡 Đang làm — breakdown xong 10 ticket | 0 / 10 |
+| 3 | Async & event-driven | 🟡 Đang làm (breakdown xong 10 ticket) | 1 / 10 |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
@@ -247,7 +247,7 @@ $ md5sum docs/api/openapi.yaml
 
 | # | Ticket | Nội dung | Ước lượng | Trạng thái |
 |---|---|---|---|---|
-| 1 | `SL-3.0` | **ADR-0007** — contract event: envelope · đặt tên · **outbox relay** (polling) · **DLQ policy** · dedupe | S | Todo |
+| 1 | `SL-3.0` | **ADR-0007** — contract event: envelope · đặt tên · **outbox relay** (polling) · **DLQ policy** · dedupe | S | ✅ Done |
 | 2 | `SL-3.1` | **RabbitMQ**: topology (exchange/queue/DLQ) + healthcheck + `tools/rabbit-topology.sh` | S | Todo |
 | 3 | `SL-3.2` | `service-commons`: `EventEnvelope` + publisher (confirm) + consumer base (retry → DLQ) + dedupe `processed_events` | M | Todo |
 | 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | Todo |
@@ -285,7 +285,7 @@ $ md5sum docs/api/openapi.yaml
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done (2026-11-08) |
 | **Phase** | 3 — Async & event-driven |
 | **Phụ thuộc** | `SL-2.10` (Phase 2 đóng); chặn **mọi** ticket `SL-3.x` |
 | **Ước lượng** | S |
@@ -325,20 +325,68 @@ kiểu payload thì 3 tháng sau không ai đọc được message trong DLQ. Co
 
 **Acceptance Criteria**
 
-- [ ] `docs/adr/0007-event-contract.md` có đủ Context · Options · Decision · Consequences · **Revisit** (đúng skill `shoplab-adr`).
-- [ ] Có **bảng 5 event** với: routing key · producer · consumer · payload field · khi nào phát.
-- [ ] Có câu trả lời tường minh cho: *vì sao polling relay, không CDC* · *vì sao at-least-once* · *DLQ replay do ai*.
-- [ ] Mỗi quyết định có **điều kiện revisit verify được** (số liệu/ngưỡng), không phải "khi cần".
-- [ ] `architecture.md` §9.4 (API & contract) + §11.2 link tới ADR-0007.
+- [x] `docs/adr/0007-event-contract.md` có đủ Context · Options · Decision · Consequences · **Revisit** (đúng skill `shoplab-adr`).
+- [x] Có **bảng 5 event** với: routing key · producer · consumer · payload field · khi nào phát.
+- [x] Có câu trả lời tường minh cho: *vì sao polling relay, không CDC* · *vì sao at-least-once* · *DLQ replay do ai*.
+- [x] Mỗi quyết định có **điều kiện revisit verify được** (số liệu/ngưỡng), không phải "khi cần".
+- [x] `architecture.md` §9.4 (API & contract) + §11.2 link tới ADR-0007.
 
 **Ghi chú kỹ thuật**
 
 - ADR này **cố ý ngắn** (không quá ~150 dòng): nó chốt *hợp đồng*, không dạy lại lý thuyết messaging.
 - Ghi rõ **cái đã bỏ**: exactly-once (đắt, cần transactional broker), schema registry, outbox CDC — kèm điều kiện revisit.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-08 — ticket docs-only, không có code)*
 
-**Learning note** *(điền khi Done)*
+```console
+$ ls docs/adr/
+0001-tech-stack.md  0002-dev-environment.md  0003-spring-boot-version-and-module-layout.md
+0004-service-commons-shared-library.md  0005-phase-snapshot-and-release.md
+0006-checkout-model.md  0007-event-contract.md          ← mới
+
+$ grep -n '^## ' docs/adr/0007-event-contract.md
+11:## Context   43:## Options   89:## Decision   147:## Consequences   174:## Revisit
+$ wc -l docs/adr/0007-event-contract.md
+185 docs/adr/0007-event-contract.md                      (trong ngưỡng "~150 dòng" của ticket, +35 cho bảng event/topology)
+
+# 5 quyết định đều có bảng Options (≥ 3 phương án, có phương án bị loại) + Revisit định lượng:
+$ grep -c '^### [0-9]\. (D' docs/adr/0007-event-contract.md
+5
+$ grep -c '| **A\.' docs/adr/0007-event-contract.md     # mỗi D có phương án A (được chọn)
+5
+```
+
+**Nội dung đã chốt** (đối chiếu AC):
+
+| AC | Bằng chứng trong ADR |
+|---|---|
+| Bảng 5 event | § Decision → bảng `Routing key · Producer · Consumer · Payload · Phát khi` (5 dòng) |
+| Vì sao polling relay | § Options D4 (4 phương án, loại CDC + publish-in-transaction + `LISTEN/NOTIFY` vì lý do cụ thể) |
+| Vì sao at-least-once | § Options D3 (loại exactly-once vì broker không tham gia transaction DB; loại at-most-once vì mất message) |
+| DLQ replay do ai | § Decision D5 (không auto-replay + 3 điều phải kiểm trước khi replay) + § Options D5 (loại auto-replay) |
+| Revisit định lượng | § Revisit: relay p95 > 5 s **hoặc** > 30% CPU **hoặc** > 500 msg/s · schema registry khi > 20 event / ≥ 2 sự cố · DLQ > 50 msg/tuần |
+| `architecture.md` link | §9.4 (bỏ "schema registry từ Phase 3") + §11.2 + header `DRAFT v0.5` + Changelog §8 |
+
+**Sự cố trong lúc làm (2 lỗi do chính mình, đã sửa)**
+
+- Chèn section bằng `insert_line` vào **giữa** bảng Options D3 ⇒ dòng `At-most-once` bị đẩy xuống cuối file. Phát hiện
+  bằng `grep -n '^## '` thấy `## Decision` nằm trước nội dung bảng. Sửa bằng script di chuyển dòng về đúng chỗ.
+- Lọt **1 từ tiếng Trung** (chữ Hán của "bên thứ ba") trong ô so sánh CloudEvents — `grep` theo ký tự Hán mới thấy. Đã đổi thành
+  "bên thứ ba".
+
+**Learning note**
+
+- **ADR là chỗ *loại* phương án, không phải chỗ khoe phương án đã chọn**: 4/5 hạng mục có ≥ 1 phương án ghi rõ
+  "❌ Không dùng" + lý do (publish-trong-transaction: broker không tham gia transaction DB ⇒ hoặc mất event hoặc bịa
+  event). Nếu chỉ viết "chọn A vì A tốt" thì 3 tháng sau sẽ có người đề xuất lại đúng phương án đã loại.
+- **Quyết định nào cũng phải kéo theo một *điều kiện bỏ* định lượng được**: `Revisit` ở đây toàn số (p95 > 5 s, > 30% CPU,
+  > 500 msg/s, > 20 event, > 50 msg DLQ/tuần). Không có con số thì "khi cần" = không bao giờ.
+- **Chốt contract trước khi code là rẻ nhất**: ADR này ~185 dòng nhưng nó khoá 6 ticket phía sau (`SL-3.1`…`SL-3.6`);
+  đổi tên routing key hay bỏ outbox sau khi có code = migration message + sửa 3 service + sửa E2E.
+- **Doc cũ có thể mâu thuẫn với chính nó**: §9.4 ghi "schema registry từ Phase 3" trong khi quyết định là **không** dùng
+  ⇒ phải sửa §9.4 ngay trong ticket này, không để "lát nữa" (bài học `SL-2.10`: doc cũng mục như code).
+- **Công cụ soạn doc cũng cần verify**: 2 lỗi (chèn sai vị trí, lọt chữ Trung) đều **không** bị lint/CI bắt — chỉ
+  `grep -n '^## '` và đọc lại mới thấy. Với PR docs-only (không có CI) thì bước tự đọc lại là **bắt buộc**.
 
 ### SL-3.1 — RabbitMQ: topology + healthcheck + công cụ kiểm tra
 
@@ -1031,6 +1079,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 ---
 
+| 2026-11-08 | SL-3.0 | **ADR là chỗ *loại* phương án, không phải chỗ khoe phương án đã chọn**: 4/5 hạng mục có phương án ghi rõ “❌ Không dùng” kèm lý do (publish-trong-transaction: broker **không** tham gia transaction DB ⇒ hoặc mất event, hoặc bịa event). Mỗi quyết định phải kéo theo một **điều kiện bỏ định lượng được** (p95 > 5 s · > 30% CPU · > 500 msg/s · > 20 event · > 50 msg DLQ/tuần) — không có số thì “khi cần” = không bao giờ. Chốt contract trước khi code là rẻ nhất: ~185 dòng ADR khoá 6 ticket phía sau; đổi routing key hay bỏ outbox sau khi có code = migrate message + sửa 3 service + sửa E2E. Và: **doc cũ có thể mâu thuẫn với chính nó** (§9.4 ghi “schema registry từ Phase 3” trong khi quyết định là không dùng) ⇒ sửa ngay trong ticket, không để “lát nữa”. Cuối cùng: soạn doc cũng cần verify — 2 lỗi (chèn section vào giữa bảng, lọt 1 từ tiếng Trung) **không** bị lint/CI bắt, chỉ `grep -n '^## '` + đọc lại mới thấy ⇒ PR docs-only không có CI thì bước tự đọc lại là **bắt buộc**. |
+
 ## 7. Technical debt register
 
 > Quy tắc ghi nhận: [`.clinerules/20-tech-debt.md`](.clinerules/20-tech-debt.md). Mỗi món nợ **phải có
@@ -1151,3 +1201,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | **Breakdown Phase 3** → **10 ticket** chi tiết: `SL-3.0` (ADR-0007 contract event: envelope · naming · outbox relay polling · DLQ) · `SL-3.1` (RabbitMQ topology + `tools/rabbit-topology.sh`) · `SL-3.2` (commons: `EventEnvelope` + publisher confirm + consumer base retry→DLQ + dedupe `processed_events`) · `SL-3.3` (order **outbox** + relay ⇒ `order.confirmed.v1`/`order.cancelled.v1`) · `SL-3.4` (**`notification-service`** 8089: consumer + email mock + DLQ + `tools/dlq.sh`) · `SL-3.5` (`payment.succeeded.v1` ⇒ **auto-confirm** ở order, **trả `TD-17`**) · `SL-3.6` (catalog outbox + **`search-service`** 8090 **Postgres FTS** + reconcile + `GET /v1/search`) · `SL-3.7` (E2E async) · `SL-3.8` (báo cáo before/after async) · `SL-3.9` (runbook + DoD phase 3). **5 quyết định chốt khi breakdown**: broker = **RabbitMQ** (Kafka Phase 8) · `search-service` = **Postgres FTS** ở Phase 3, **OpenSearch Phase 8** (sửa mâu thuẫn §5 vs §7/§12 trong `architecture.md`) · outbox relay = **polling** (`FOR UPDATE SKIP LOCKED`, không CDC) · **at-least-once** + consumer idempotent theo `eventId` (không hứa exactly-once) · **DLQ không auto-replay**. |
 
 | 2026-11-08 | `SL-2.8` → `Done`: **E2E checkout** — `tools/e2e-checkout.sh` (27 check: tiền · saga · idempotency · mock-pay · confirm · order · tồn kho) + workflow **`e2e.yml`** (compose 10 thành phần + 2 script; `workflow_dispatch` + `schedule` hằng tuần, **không** chạy mỗi PR vì ≈30 phút/run) ⇒ **trả `TD-4`**; verify OpenAPI **41 path/50 operation** + matrix `build-image` **9 service** (đã có, chỉ kiểm). Verify: `e2e-checkout` **27 PASS / 0 FAIL** (931 ms) · `e2e-smoke` 17/17 · `e2e.yml` parse OK · `compose config` OK. **Sự cố**: fail giả do Python đổi số tiền thành float ⇒ `parse_float=str`; CI `build-image` flaky do Maven Central hiccup (rerun xanh) ⇒ `TD-26`. |
+| 2026-11-08 | `SL-3.0` → `Done`: **ADR-0007 — contract event Phase 3** (`docs/adr/0007-event-contract.md`, 185 dòng): chốt **5 quyết định** — (D1) envelope JSON 7 field (`eventId · eventType · version · occurredAt · producer · traceId · payload`, không field nghiệp vụ) · (D2) exchange topic `shoplab.events` + `shoplab.dlx`, queue **theo consumer** (`q.notification`/`q.order`/`q.search`) + `<queue>.dlq`, routing key `<aggregate>.<event>.v<N>` · (D3) **at-least-once** + consumer **bắt buộc** dedupe `eventId` (`processed_events` PK `(event_id, consumer)`) · (D4) outbox **polling relay** (`@Scheduled` 1 s, batch 100, `FOR UPDATE SKIP LOCKED`, `SENT` chỉ sau publisher confirm, lỗi giữ `PENDING`) · (D5) retry 3 lần trong consumer (200 ms/1 s/3 s) → DLQ, **không auto-replay**, replay tay qua `tools/dlq.sh` có 3 điều kiện kiểm trước. Kèm **bảng 5 event** (`order.confirmed.v1` · `order.cancelled.v1` · `payment.succeeded.v1` · `product.updated.v1` · `product.archived.v1`) + chính sách versioning (không sửa `.v1`, phát `.v2` song song). Mỗi hạng mục có bảng Options ≥ 3 phương án **có loại** + Revisit định lượng. Update `architecture.md`: **§9.4** (bỏ “schema registry từ Phase 3” → version trong envelope + link ADR), §11.2 (link ADR-0007), header `DRAFT v0.5`, Changelog. Verify: ADR 5 mục đúng template · 5/5 hạng mục có bảng trade-off · link check 0 broken. Không code. |
