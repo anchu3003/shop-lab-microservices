@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.9` ✅ **Done** — E2E nhánh fail + hook bơm lỗi ở payment) |
-| **Ticket tiếp theo** | `SL-2.10` — `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) · `SL-2.12` — 403 handler → `commons` |
-| **Số ticket chi tiết hiện có** | 33 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 10) |
+| **Ticket đang làm** | — (`SL-2.12` ✅ **Done** — 403 handler về `service-commons`, trả `TD-3`) |
+| **Ticket tiếp theo** | `SL-2.10` — `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) |
+| **Số ticket chi tiết hiện có** | 40 (Phase 0: 8 — archive · Phase 1: 19 — archive · Phase 2: 13) |
 
 ---
 
@@ -18,7 +18,7 @@
 |---|---|---|---|
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
-| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 8 / 13 |
+| 2 | Core commerce flow | 🟡 Đang làm — mô hình đã chốt ([ADR-0006](docs/adr/0006-checkout-model.md)) | 14 / 15 |
 | 3 | Async & event-driven | ⚪ Todo (epic) | — |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
@@ -217,7 +217,7 @@ $ md5sum docs/api/openapi.yaml
 | 11 | `SL-2.9` | **E2E nhánh fail**: hết hàng · provider từ chối · payment 5xx · **timeout thật** · dependency chết · retry sau fail — assert `reserved`/`locked`/`order.status`; thêm hook bơm lỗi (guarded) ở payment | M | ✅ Done |
 | 12 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S | Todo |
 | 13 | `SL-2.11` | *(phát sinh từ `SL-2.0`)* `catalog-service`: **soft delete** product — `status = ARCHIVED` + `deleted_at`, `DELETE` không xoá row, list/get ẩn product đã xoá, `reserve` từ chối SKU archived | S | ✅ Done |
-| 14 | `SL-2.12` | *(phát sinh từ `SL-2.2`)* `service-commons`: chuyển `AccessDeniedApiExceptionHandler` (403 cho `@PreAuthorize`) vào commons — xoá 2 bản copy ở catalog/inventory (**trả `TD-3`**) | S | Todo |
+| 14 | `SL-2.12` | *(phát sinh từ `SL-2.2`)* `service-commons`: chuyển `AccessDeniedApiExceptionHandler` (403 cho `@PreAuthorize`) vào commons — xoá **6 bản copy** ở catalog/inventory/cart/order/payment/promotion (**trả `TD-3`**) | S | ✅ Done |
 | 15 | `SL-2.13` | *(phát sinh từ `SL-2.6`, chốt phương án **B**)* `catalog-service`: `GET /v1/skus?ids=` — **batch** giá/tên SKU cho saga + cart (**điều kiện tiên quyết của `SL-2.6a`**) | S | ✅ Done |
 
 **Phụ thuộc & thứ tự** (cập nhật sau `SL-2.1`): `SL-2.0` ✅ chốt mô hình → **`SL-2.11`** (soft delete — `catalog` phải
@@ -226,8 +226,8 @@ làm sớm) song song được với `SL-2.1`/`SL-2.4` → `SL-2.7` (payment) �
 điều kiện của saga) → `SL-2.6a` → `SL-2.6b` → `SL-2.8`/`SL-2.9` → `SL-2.10`.
 
 **Debt sẽ trả trong phase này**: `TD-12` (soft delete product — **✅ đã trả ở `SL-2.11`**), `TD-4` (đưa
-smoke vào CI khi đã có compose nhiều service — cân nhắc ở `SL-2.8`), `TD-3` (handler 403 → `commons` khi có service
-thứ hai dùng `@PreAuthorize` — nhiều khả năng ở `SL-2.5`/`SL-2.7`).
+smoke vào CI khi đã có compose nhiều service — **✅ đã trả ở `SL-2.8`**), `TD-3` (handler 403 → `commons` khi có service
+thứ hai dùng `@PreAuthorize` — **✅ đã trả ở `SL-2.12`**).
 **Debt mới phát sinh ở `SL-2.0`**: `TD-14` (chưa có job dọn `idempotency_keys`), `TD-15` (sweeper reservation chạy
 trùng khi > 1 instance), `TD-16` (chưa có API restore product đã xoá mềm).
 
@@ -2014,6 +2014,157 @@ $ python3 yaml.safe_load(e2e.yml)  steps: 9 (thêm bước chạy script fail)
   Đây là loại bug làm test "xanh/đỏ sai" — nguy hiểm hơn bug trong sản phẩm vì nó làm mất niềm tin vào bộ test.
 - **`cleanup` trap là bắt buộc khi test bơm lỗi**: không reset thì một lần script chết sẽ làm **mọi** checkout sau đó timeout —
   triệu chứng hoàn toàn không liên quan tới nguyên nhân.
+### SL-2.12 — `service-commons`: 403 handler vào commons (trả `TD-3`)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done (2026-11-08) |
+| **Phase** | 2 — Core commerce flow *(phát sinh từ `SL-2.2`)* |
+| **Phụ thuộc** | `SL-2.2`/`SL-2.4`/`SL-2.5`/`SL-2.7` (đã copy handler 4 lần) · `SL-2.1`; **chặn** `SL-2.10` (DoD phase cần mọi ticket xong) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+`TD-3` ghi từ Phase 1: handler map `AccessDeniedException` → 403 nằm **trong** `catalog-service`, service nào dùng
+`@PreAuthorize` cũng phải copy. Đến hết Phase 2 thì con số không còn là 2 mà là **6**: `catalog` · `inventory` · `cart` ·
+`order` · `payment` · `promotion` — 6 file **giống nhau từng byte** (javadoc vẫn ghi "ứng viên chuyển vào commons khi
+service thứ tư cần"). Đây đúng là loại nợ mà `AGENTS.md` §6 cấm: hành vi **của toàn hệ** (mã lỗi 403) lại nằm ở 6 chỗ.
+
+**Mục tiêu**
+
+Một bản duy nhất ở `service-commons`, mọi service dùng `@PreAuthorize` tự có 403 `ApiError` mà **không viết dòng nào**.
+
+**In scope**
+
+- `packages/service-commons`: `web/AccessDeniedApiExceptionHandler` (bản duy nhất) + `web/AccessDeniedAutoConfiguration`
+  (`@ConditionalOnClass(AccessDeniedException)` · `@ConditionalOnWebApplication(SERVLET)` · `@ConditionalOnMissingBean`)
+  đăng ký trong `AutoConfiguration.imports`.
+- `service-commons/pom.xml`: `spring-security-core` để **`optional = true`** (cùng khuôn `webmvc`/`springdoc`) — consumer
+  không khai security thì không kéo gì thêm.
+- Xoá **6 bản copy**: `services/{catalog,inventory,cart,order,payment,promotion}-service/src/main/java/**/web/AccessDeniedApiExceptionHandler.java`.
+- Test mới `AccessDeniedApiExceptionHandlerTest` ở commons (403 + `code = FORBIDDEN` + `path` + `traceId` có mặt).
+
+**Out of scope**
+
+- Không đụng `SecurityConfig`/`accessDeniedHandler` của filter chain (đó là nhánh **trước** controller, đã trả `ApiError`
+  từ Phase 1) — ticket này chỉ xử lý nhánh **method security** (`@PreAuthorize`).
+- Không gộp `GlobalExceptionHandler` và advice này thành một class: `GlobalExceptionHandler` **không** cần security trên
+  classpath, gộp lại là ép mọi service kéo spring-security.
+- Không thêm `@PreAuthorize` cho cart/order/payment để "cho đủ bộ" (không đổi API surface).
+
+**Acceptance Criteria**
+
+- [x] `service-commons` là **nơi duy nhất** có handler 403: `git grep -l "class AccessDeniedApiExceptionHandler"` = **1 file**.
+- [x] `grep -c AccessDeniedApiExceptionHandler` trong `services/**` = **0** (không service nào còn copy).
+- [x] `@PreAuthorize` bị từ chối vẫn trả **403** + body `ApiError` (`code=FORBIDDEN`, có `traceId`) — kiểm bằng IT sẵn có
+      của `catalog`/`inventory`/`promotion` **và** 1 lần `curl` trên stack compose đã rebuild.
+- [x] `service-template` (không có `spring-security` trên classpath) vẫn **boot được** và test xanh ⇒ guard
+      `@ConditionalOnClass` có tác dụng, không `NoClassDefFoundError`.
+- [x] `mvn -B -ntp verify` toàn repo **BUILD SUCCESS**; 3 script E2E không regress.
+- [x] `TD-3` → `✅ đã trả (SL-2.12)`.
+
+**Ghi chú kỹ thuật**
+
+- **`@ConditionalOnClass` phải đặt ở cấp class của một auto-config riêng**, không đặt trên `@Bean` method: khi đặt trên
+  method, Spring vẫn phải resolve **return type** (class có import `AccessDeniedException`) ⇒ service **không** có
+  spring-security sẽ chết lúc khởi động. Class-level condition được đọc bằng ASM metadata nên class không bị load.
+- **`optional = true` cho `spring-security-core`**: cùng lý do với `webmvc` — commons compile được, consumer không bị ép.
+  Hệ quả tích cực: `api-gateway` (chỉ có `spring-security-oauth2-jose`) và `service-template` **không** kéo thêm gì.
+- **Không đổi hành vi**: copy nguyên nội dung handler (log `warn` vì từ chối quyền là hành vi đúng, không phải sự cố) —
+  ticket này là **refactor**, mọi thay đổi hành vi sẽ bị IT 403 bắt.
+
+**Kết quả verify** *(chạy thật 2026-11-08 — Docker 12 container healthy)*
+
+**1) Một bản duy nhất, không còn copy**
+
+```console
+$ grep -rl 'class AccessDeniedApiExceptionHandler' --include=*.java .
+./packages/service-commons/src/main/java/com/shoplab/commons/web/AccessDeniedApiExceptionHandler.java
+./packages/service-commons/src/test/java/com/shoplab/commons/web/AccessDeniedApiExceptionHandlerTest.java
+$ grep -rl 'AccessDeniedApiExceptionHandler' --include=*.java services | wc -l
+0
+$ git diff --stat origin/main | tail -1
+ 9 files changed, 85 insertions(+), 296 deletions(-)   # 6 file × 48 dòng copy bị xoá
+```
+
+**2) `mvn -B -ntp verify` toàn repo — BUILD SUCCESS · 655 test (537 unit + 118 IT) · 0 fail**
+
+```text
+ShopLab :: Parent / Service Commons / Service Template / Identity / Catalog /
+Inventory / Promotion / Order / Payment / Cart / API Gateway ......... SUCCESS
+537 unit + 118 IT = 655 test, failures 0
+```
+
+`service-commons`: **47 unit** (+5 so với Phase 1: `AccessDeniedApiExceptionHandlerTest` 3 ·
+`AccessDeniedAutoConfigurationTest` 2). `service-template` (**không** có `spring-security` trên
+classpath) vẫn xanh ⇒ guard `@ConditionalOnClass` đúng, không `NoClassDefFoundError`.
+
+**3) 403 trên stack thật** (rebuild image `catalog` + `inventory`)
+
+```console
+$ curl -X POST localhost:8080/v1/categories -H "Authorization: Bearer $BUYER" -d '{"name":"SL212 Buyer",...}'
+{"code":"FORBIDDEN","message":"Không có quyền truy cập","traceId":"11da09f4-…","path":"/v1/categories"}
+status=403
+$ curl -X PUT localhost:8080/v1/stock/$SKU -H "Authorization: Bearer $BUYER" -d '{"onHand":5}'
+{"code":"FORBIDDEN",…}   status=403
+$ curl -X POST localhost:8080/v1/categories -H "Authorization: Bearer $SELLER"   → 201   (không chặn oan)
+$ curl -X PUT  localhost:8080/v1/stock/$SKU     -H "Authorization: Bearer $ADMIN"  → 200   (không chặn oan)
+
+$ docker logs shoplab-catalog-service | grep 11da09f4
+{"msg":"từ chối quyền POST /v1/categories: Access Denied",
+ "logger":"com.shoplab.commons.web.AccessDeniedApiExceptionHandler","level":"WARN","service":"catalog-service"}
+```
+
+Dòng log trên là **bằng chứng quan trọng nhất**: logger là class **trong commons**, không phải bản copy
+của service ⇒ advice được auto-config cắm vào thật.
+
+**4) 3 script E2E — không regress**
+
+```text
+$ bash tools/e2e-smoke.sh           17 PASS / 0 FAIL · 13 request · 552 ms   · E2E smoke: OK
+$ bash tools/e2e-checkout.sh        27 PASS / 0 FAIL · 14 request · 2481 ms  · E2E checkout: OK
+$ bash tools/e2e-checkout-fail.sh   41 PASS / 0 FAIL · 37 request · 11,4 s   · 2 lần liên tiếp
+```
+
+⚠️ Lần chạy `e2e-checkout-fail.sh` **đầu tiên** ngay sau `up -d --force-recreate` cho **38 PASS / 3 FAIL**;
+2 lần sau **41 PASS / 0 FAIL**. Nghi do container mới chưa ấm (script không chờ `healthy`) ⇒ ghi `TD-27`,
+không giấu.
+
+**Sự cố trong lúc verify (1 bug thật — suýt ship 403 → 500)**
+
+- Lần chạy `verify` đầu tiên: `CatalogServiceApplicationIT` **đỏ 2 test** (`expected: 403 but was: 500`).
+  Conditions report in ra `AccessDeniedAutoConfiguration matched` + bean được đăng ký, nhưng log có
+  `GlobalExceptionHandler — unhandled exception: AuthorizationDeniedException`, tức catch-all
+  `@ExceptionHandler(Exception.class)` bắt trước advice cụ thể.
+- Nguyên nhân: `ExceptionHandlerExceptionResolver` lấy advice **đầu tiên** khớp trong cache, và một
+  advice khớp cả **tổ tiên** của exception. Trước đây bản copy là `@Component` (component scan đăng ký
+  **trước** bean auto-config) nên thắng; chuyển sang commons thì thứ tự **đảo lại** ⇒ `Exception` thắng.
+- Fix: `@Order(Ordered.HIGHEST_PRECEDENCE)` trên advice + test canary
+  `shouldStayOrderedBeforeCatchAllAdvice` (mất `@Order` là test đỏ ngay).
+
+**Learning note**
+
+- **Refactor "chỉ move file" vẫn có thể đổi hành vi** — vì **thứ tự đăng ký bean** là một phần hành vi.
+  Cùng một class, cùng annotation, chỉ khác nơi khai báo (`@Component` trong service → `@Bean` ở
+  auto-config) mà 403 thành 500. Nếu chỉ tin `mvn verify` của module commons thì bug này đi thẳng ra
+  production; thứ bắt được nó là **IT 403 có sẵn** của catalog — lại đúng bài học Phase 1: "hành vi liên
+  quan thứ tự/transaction chỉ lộ khi gọi HTTP thật".
+- **`@ExceptionHandler(Exception.class)` là cái bẫy im lặng**: catch-all của commons rất tiện nhưng nó
+  nuốt mọi thứ *chưa* có advice cụ thể, và `ExceptionHandlerExceptionResolver` **không** chọn handler
+  "gần nhất" — nó chọn **advice đầu tiên** khớp. Muốn chắc chắn thì advice cụ thể phải có `@Order` +
+  test canary, đừng dựa vào thứ tự bean.
+- **Guard `@ConditionalOnClass` phải ở cấp class của một auto-config riêng**: đặt trên `@Bean` method
+  thì Spring vẫn resolve return type ⇒ service không có security sẽ chết lúc khởi động. Test bằng
+  `ApplicationContextRunner` + `FilteredClassLoader` chứng minh được nhánh này trong **0,25 s**, không
+  cần dựng service.
+- **Ticket ghi "2 bản copy" nhưng thực tế 6**: số liệu trong ticket cũ **mục ruỗng theo thời gian** (viết
+  từ lúc mới có catalog/inventory). Trước khi làm, đếm lại bằng `grep -rl` — rẻ hơn nhiều so với việc
+  sửa 2 file rồi phát hiện còn 4 bản nữa.
+- **`td;dr` cho service mới**: khai `spring-boot-starter-security` là tự có 403 chuẩn `ApiError`, không
+  phải copy file. Đây là giá trị thật của việc trả nợ `TD-3` (nợ "copy-paste" luôn đắt hơn nợ "thiếu
+  feature").
+
+
 
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
@@ -2223,6 +2374,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | SL-2.6a | **Compensating phải đọc state bền**: saga ghi `lock_id`/`reservation_id` xuống DB ngay sau mỗi bước ⇒ hàm bù chỉ `select` lại là đủ; giữ trong biến RAM thì crash giữa chừng là mất dấu, hàng treo tới hết TTL. Fail thì **trả lại idempotency key** (xoá row) chứ không để `IN_PROGRESS` (job dọn 1 h ⇒ user sửa giỏ xong vẫn 409). **Stub test phải khó tính ngang service thật** — stub nhận mọi body nên sai tên field (`lines` vs `items`) vẫn xanh, chỉ chạy compose thật mới lộ. **5xx của dependency là 503 của mình**, không phải 500. Và: đơn 0 đồng là **bất biến của saga** (`payment_required`), không suy ra từ `orders.total`. |
 | 2026-11-08 | SL-2.6b | **Tách finish khỏi start**: start *bù* khi fail, finish *không* bù (commit xong thì "un-commit" vô nghĩa) — một class làm cả hai sẽ phải rẽ nhánh theo pha. **Không cần state "đang xử lý"** khi service đích idempotent: chốt chặn thật là compare-and-set trên `orders`. **Sweeper không có token ⇒ đừng gọi API cần token** — để TTL sweeper của inventory/promotion trả hàng (đo được `reserved 2 → 0` sau 45 s). Và `payment-window` **phải bằng** TTL reservation/lock, nếu không có cửa sổ "đơn EXPIRED mà tiền vẫn vào". |
 | 2026-11-08 | SL-2.8 | **E2E phải assert giá trị, không chỉ status**: 3 check tiền đỏ dù API đúng (qua `status 201` thì đã "xanh"); và mọi ngôn ngữ trung gian "chuẩn hoá" số — Python `json.load` biến `220000.00` thành `220000.0` ⇒ dùng `parse_float=str` (cùng bẫy với `String.valueOf` ở `SL-2.13`). **Chi phí CI là quyết định thiết kế**: 9 image × `mvn package` ≈ 30 phút/run ⇒ E2E chạy `schedule` + `workflow_dispatch`, không chạy mỗi PR; workflow không chạy trên PR **không** chặn merge — `ci.yml` mới là hàng rào. |
+| 2026-11-08 | SL-2.12 | **Refactor \"chỉ move file\" vẫn đổi hành vi, vì thứ tự đăng ký bean là một phần hành vi**: cùng một advice, khi là `@Component` trong service thì nó đứng **trước** `GlobalExceptionHandler` (catch-all `Exception`) và 403 đúng; chuyển thành `@Bean` ở auto-config thì thành **sau** ⇒ `AuthorizationDeniedException` bị catch-all bắt ⇒ **500**. `ExceptionHandlerExceptionResolver` chọn advice **đầu tiên khớp**, *không* phải \"handler gần nhất\" ⇒ advice cụ thể **phải** có `@Order(HIGHEST_PRECEDENCE)` + test canary, đừng tin thứ tự bean. Guard `@ConditionalOnClass` cho dependency optional **phải ở cấp class của auto-config riêng** (đặt trên `@Bean` method ⇒ Spring vẫn resolve return type ⇒ `NoClassDefFoundError`), và `ApplicationContextRunner` + `FilteredClassLoader` chứng minh được nhánh đó trong 0,25 s. Cuối cùng: **số liệu trong ticket cũ sẽ mục** — ticket ghi \"2 bản copy\", thực tế **6**; đếm lại bằng `grep -rl` trước khi làm. |
+
 
 ---
 
@@ -2236,7 +2389,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 |---|---|---|---|---|
 | `TD-1` | Bảng `refresh_tokens` không có job dọn row hết hạn → phình dần | SL-1.4 | Khi bảng > 10⁶ row **hoặc** khi thêm scheduler | trung bình |
 | `TD-2` | `GET /v1/admin/users` trả **toàn bộ** user, không phân trang | SL-1.4 | Khi số user > 1.000 hoặc có màn quản trị thật | thấp |
-| `TD-3` | Handler map `AccessDeniedException` → 403 nằm trong **catalog**; service khác dùng `@PreAuthorize` phải copy | SL-1.5 | **Đã đạt**: `SL-2.2` là service thứ hai dùng `@PreAuthorize` → ticket `SL-2.12` | trung bình (chờ `SL-2.12`) |
+| `TD-3` | Handler map `AccessDeniedException` → 403 nằm trong **catalog**; service khác dùng `@PreAuthorize` phải copy | SL-1.5 | **Đã trả ở `SL-2.12`**: `AccessDeniedApiExceptionHandler` + `AccessDeniedAutoConfiguration` (`@ConditionalOnClass`) trong `service-commons`, xoá **6 bản copy** ở service | ✅ đã trả (SL-2.12) |
 | `TD-4` | `tools/e2e-smoke.sh` phụ thuộc tài khoản seed + `docker logs` ⇒ chỉ chạy local, chưa vào CI | SL-1.7 | **Đã trả ở `SL-2.8`**: workflow `e2e.yml` dựng compose + chạy `e2e-smoke.sh` + `e2e-checkout.sh` (dispatch/hằng tuần) | ✅ đã trả (SL-2.8) |
 | `TD-5` | `tools/merge-pr.sh` chưa retry khi GitHub API lỗi tạm thời | SL-1.14 | Lần tới script fail vì API (retry + backoff ~15 dòng) | thấp |
 | `TD-6` | Phân trang **offset** (`OFFSET 100000` quét bỏ rất nhiều row) | SL-1.6 | Phase 4 khi đo được p99 của list (→ keyset) | trung bình |
@@ -2260,6 +2413,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | thấp |
 | `TD-26` | `build-image` (CI) **flaky** khi Maven Central tạm thời không trả artifact: mỗi image `mvn package` từ đầu KHÔNG cache Maven ⇒ gặp hiccup là đỏ oan (gặp thật ở `SL-2.8`: `spring-boot-dependencies:4.1.2 … absent in central`, rerun thì xanh) | SL-2.8 (run `42451712993`) | Phase 7: registry + **cache layer Maven** (`--mount=type=cache` hoặc image builder có `.m2` ấm) ⇒ build nhanh và bớt phụ thuộc Central | thấp |
 | `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
+| `TD-27` | `e2e-checkout-fail.sh` **flaky ngay sau khi rebuild container**: lần chạy đầu sau `up -d --force-recreate` → **38 PASS / 3 FAIL**, 2 lần ngay sau đó **41 PASS / 0 FAIL**. Script không chờ `healthy` và không retry nhánh `docker stop`/`start` (F5) | SL-2.12 | Lần tới flaky (hoặc khi thêm kịch bản F7) → thêm bước chờ `healthy` + retry 1 lần cho F5 | thấp |
+
 
 ## 8. Changelog
 
@@ -2337,4 +2492,6 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | `SL-2.13` → `Done`: `catalog-service` có **`GET /v1/skus?ids=`** — **batch** giá/tên cho ≤ 100 SKU trong 1 request để saga `SL-2.6a` + giỏ hàng lấy giá **thật** thay vì tin giá client gửi; `unitPrice = price_override ?? product.price`; SKU archived/không tồn tại → `missingIds` (không 404 cả request); public như `GET /v1/products` (catalog tự mở `GET /v1/skus` + gateway thêm route & public-path `/v1/skus/**`). Verify: `mvn -B -ntp verify` **BUILD SUCCESS** toàn repo (catalog **79 unit** (+13) · **25 IT** (+4) · checkstyle 0 · jacoco pass) · flow thật qua gateway **không token**: 200 + giá đúng (`150000.00` override / `180000.00` giá product) trong **31 ms** · gọi thẳng `:8082` cũng 200 · trùng lặp ⇒ 1 dòng · xoá mềm product ⇒ `missingIds` (HTTP vẫn 200) · **400** cho thiếu ids / sai UUID / 101 id, **200** cho 100 id · `e2e-smoke` **17/17** · OpenAPI 36 → **37 path**. **Tách ticket**: `SL-2.6` (`L`) → **`SL-2.6a`** (saga start) + **`SL-2.6b`** (confirm/cancel/sweeper) — chốt **phương án B** (saga đọc cart + giá batch từ catalog), cập nhật `architecture.md` §5 + §6.1. Debt: **`TD-22`** (endpoint public chưa rate limit/cache) · `TD-20` cập nhật điều kiện revisit. |
 | 2026-11-08 | `SL-2.6a` → `Done`: **checkout saga start** trong `order-service` — `RestClient` sync (timeout 2 s/800 ms, forward JWT user) + `POST /v1/checkout` (`Idempotency-Key`, body chỉ `{voucherCode?}`) chạy `cart → price (batch SL-2.13) → lock voucher → reserve → order PENDING_PAYMENT → payment intent`; state ở `checkout_sagas` + audit `checkout_saga_steps` (6 bước, http status, ms); **compensating theo state bền** (release stock/voucher, cancel order); fail ⇒ trả lại idempotency key; **đơn 0 đồng** (voucher 100%) không tạo payment intent (`payment_required=false`, step `SKIPPED` — ADR-0006 **D6**); 5xx của dependency ⇒ **503**. Gateway route `/v1/checkout`; compose + `.env.example` thêm 5 URL + timeout. Verify: `mvn verify` **BUILD SUCCESS** (order 55 unit + 18 IT, checkstyle 0) · chạy thật: **201** total 220000 + paymentUrl → saga `COMPLETED_START` + 6 step OK + `reserved=2` + voucher `LOCKED` · retry cùng key **200** replay cùng orderId · hết hàng ⇒ **409** + voucher `RELEASED` + saga `FAILED_STOCK` · giỏ rỗng **422** · thiếu key **400** · `e2e-smoke` 17/17 · OpenAPI 37 → **39 path**. **Sự cố**: sai tên field `lines`/`items` (stub không bắt được → stub giờ validate); Boot 4 không có bean `RestClient.Builder`; 5xx map sai sang 500. Debt mới: `TD-24`. |
 | 2026-11-08 | `SL-2.6b` → `Done`: **checkout saga hoàn tất** — `POST /v1/checkout/{orderId}/confirm` (verify payment ở **server** rồi commit stock → voucher ⇒ order `CONFIRMED`; đơn 0 đồng bỏ qua verify — ADR-0006 D6), `POST /v1/checkout/{orderId}/cancel` (release stock + voucher ⇒ `CANCELLED`), `CheckoutSagaSweeper` (quá `payment-window` 15′ ⇒ order/saga `EXPIRED`; hàng/voucher do **TTL sweeper** của inventory/promotion trả — chốt phương án A, ghi `TD-25`); state saga thêm `CONFIRMED`/`CANCELLED`/`EXPIRED` (migration `V3`), step audit thêm `PAYMENT_VERIFY`/`STOCK_COMMIT`/`VOUCHER_COMMIT`/`STOCK_RELEASE`/`VOUCHER_RELEASE`/`EXPIRE`. Verify: `mvn verify` **BUILD SUCCESS** (order 65 unit + 25 IT, checkstyle 0) · chạy thật: confirm trước khi trả tiền → **409**; mock-pay → confirm **200** `CONFIRMED`, `on_hand 10→8`, voucher `COMMITTED`, history 2 dòng; confirm#2 200 (history vẫn 2); cancel → `RELEASED` + `CANCELLED`, cancel#2 200, cancel sau confirm 409; bỏ ngang 20 s → sweeper `EXPIRED`/`PAYMENT_WINDOW_EXCEEDED` rồi TTL 45 s trả `reserved 2→0` + voucher `EXPIRED` · `e2e-smoke` 17/17 · OpenAPI 39 → **41 path**. **Sự cố**: record `@ConfigurationProperties` chỉ được 1 constructor; checkstyle bắt `switch` thiếu `default`. Debt: `TD-25`. |
+| 2026-11-08 | `SL-2.12` → `Done` (**trả `TD-3`**): **403 handler về `service-commons`** — thêm `web/AccessDeniedApiExceptionHandler` (bản duy nhất) + `web/AccessDeniedAutoConfiguration` (`@AutoConfiguration @ConditionalOnClass(AccessDeniedException) @ConditionalOnWebApplication(SERVLET)` + `@ConditionalOnMissingBean`) đăng ký trong `AutoConfiguration.imports`; `service-commons/pom.xml` thêm `spring-security-core` **`optional`** (cùng khuôn `webmvc`/`springdoc`); **xoá 6 bản copy** ở `catalog`/`inventory`/`cart`/`order`/`payment`/`promotion` (~296 dòng trùng). Test mới: `AccessDeniedApiExceptionHandlerTest` (403 + `code`/`path`/`traceId` + không lộ message nội bộ + **canary `@Order`**) và `AccessDeniedAutoConfigurationTest` (`WebApplicationContextRunner` + `FilteredClassLoader` chứng minh guard: không có security ⇒ im lặng bỏ qua). **Bug thật bắt được khi verify**: lần `verify` đầu đỏ 2 IT catalog (`expected 403 but was 500`) — `ExceptionHandlerExceptionResolver` lấy advice **đầu tiên khớp**, nên catch-all `@ExceptionHandler(Exception.class)` của `GlobalExceptionHandler` bắt `AuthorizationDeniedException` trước khi tới advice cụ thể (thứ tự bean đảo khi chuyển từ `@Component` sang auto-config) ⇒ fix bằng `@Order(Ordered.HIGHEST_PRECEDENCE)`. Verify: **655 test (537 unit + 118 IT) · 0 fail** · `mvn verify` BUILD SUCCESS 11 module · `grep -rl 'class AccessDeniedApiExceptionHandler'` = **1 file**, `services/**` = **0** · stack thật (rebuild `catalog`+`inventory`): buyer `POST /v1/categories` **403** `FORBIDDEN` + log `com.shoplab.commons.web.AccessDeniedApiExceptionHandler`, buyer `PUT /v1/stock` **403**, seller **201** / admin **200** (không chặn oan) · `e2e-smoke` 17/17 · `e2e-checkout` 27/27 · `e2e-checkout-fail` 41/41 (flaky 38/3 ở lần đầu sau rebuild → `TD-27`). |
+
 | 2026-11-08 | `SL-2.8` → `Done`: **E2E checkout** — `tools/e2e-checkout.sh` (27 check: tiền · saga · idempotency · mock-pay · confirm · order · tồn kho) + workflow **`e2e.yml`** (compose 10 thành phần + 2 script; `workflow_dispatch` + `schedule` hằng tuần, **không** chạy mỗi PR vì ≈30 phút/run) ⇒ **trả `TD-4`**; verify OpenAPI **41 path/50 operation** + matrix `build-image` **9 service** (đã có, chỉ kiểm). Verify: `e2e-checkout` **27 PASS / 0 FAIL** (931 ms) · `e2e-smoke` 17/17 · `e2e.yml` parse OK · `compose config` OK. **Sự cố**: fail giả do Python đổi số tiền thành float ⇒ `parse_float=str`; CI `build-image` flaky do Maven Central hiccup (rerun xanh) ⇒ `TD-26`. |
