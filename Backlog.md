@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-3.1` ✅ **Done** — RabbitMQ topology + `tools/rabbit-topology.sh`) |
-| **Ticket tiếp theo** | `SL-3.2` — `service-commons`: `EventEnvelope` + publisher + consumer base + dedupe |
+| **Ticket đang làm** | — (`SL-3.2` ✅ **Done** — envelope · publisher confirm · consumer base · dedupe) |
+| **Ticket tiếp theo** | `SL-3.3` — `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -19,7 +19,7 @@
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
-| 3 | Async & event-driven | 🟡 Đang làm (breakdown xong 10 ticket) | 2 / 10 |
+| 3 | Async & event-driven | 🟡 Đang làm (breakdown xong 10 ticket) | 3 / 10 |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
@@ -249,7 +249,7 @@ $ md5sum docs/api/openapi.yaml
 |---|---|---|---|---|
 | 1 | `SL-3.0` | **ADR-0007** — contract event: envelope · đặt tên · **outbox relay** (polling) · **DLQ policy** · dedupe | S | ✅ Done |
 | 2 | `SL-3.1` | **RabbitMQ**: topology (exchange/queue/DLQ) + healthcheck + `tools/rabbit-topology.sh` | S | ✅ Done |
-| 3 | `SL-3.2` | `service-commons`: `EventEnvelope` + publisher (confirm) + consumer base (retry → DLQ) + dedupe `processed_events` | M | Todo |
+| 3 | `SL-3.2` | `service-commons`: `EventEnvelope` + publisher (confirm) + consumer base (retry → DLQ) + dedupe `processed_events` | M | ✅ Done |
 | 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | Todo |
 | 5 | `SL-3.4` | **`notification-service`** (8089): consumer `order.confirmed` → email mock + retry + **DLQ** + `tools/dlq.sh` | M | Todo |
 | 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`**) | M | Todo |
@@ -516,7 +516,7 @@ $ e2e-smoke 17/17 · e2e-checkout 27/27 · e2e-checkout-fail 41/41
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done (2026-11-08) |
 | **Phase** | 3 — Async & event-driven |
 | **Phụ thuộc** | `SL-3.0` (contract) · `SL-3.1` (topology); chặn `SL-3.3`·`SL-3.4`·`SL-3.5`·`SL-3.6` |
 | **Ước lượng** | M |
@@ -553,11 +553,11 @@ Service mới chỉ cần khai dependency là có: publish đúng envelope, cons
 
 **Acceptance Criteria**
 
-- [ ] Publish 1 event từ test ⇒ message có đủ 7 field envelope; `traceId` khớp MDC của caller.
-- [ ] Consumer nhận **cùng `eventId` 2 lần** ⇒ handler chạy **1 lần**, lần 2 `ack` luôn (không vào DLQ).
-- [ ] Handler ném exception ⇒ retry 3 lần rồi **1 message** ở `<queue>.dlq`, `<queue>` rỗng, `unacked = 0`.
-- [ ] Service **không** khai `spring-boot-starter-amqp` vẫn boot bình thường (test `FilteredClassLoader` + `service-template` xanh).
-- [ ] `commons` unit test xanh **không cần broker thật** (mock `RabbitTemplate`/`Channel`); `mvn -B -ntp verify` toàn repo xanh.
+- [x] Publish 1 event từ test ⇒ message có đủ 7 field envelope; `traceId` khớp MDC của caller.
+- [x] Consumer nhận **cùng `eventId` 2 lần** ⇒ handler chạy **1 lần**, lần 2 `ack` luôn (không vào DLQ).
+- [x] Handler ném exception ⇒ retry 3 lần rồi **1 message** ở `<queue>.dlq`, `<queue>` rỗng, `unacked = 0`.
+- [x] Service **không** khai `spring-boot-starter-amqp` vẫn boot bình thường (test `FilteredClassLoader` + `service-template` xanh).
+- [x] `commons` unit test xanh **không cần broker thật** (mock `RabbitTemplate`/`Channel`); `mvn -B -ntp verify` toàn repo xanh.
 
 **Ghi chú kỹ thuật**
 
@@ -567,9 +567,71 @@ Service mới chỉ cần khai dependency là có: publish đúng envelope, cons
   consumer để còn log/inspect được — trade-off đã biết là consumer giữ thread ~4,2 s.
 - `@ConditionalOnClass` phải ở **cấp class auto-config** (bài học `SL-2.12`: đặt trên `@Bean` method ⇒ `NoClassDefFoundError`).
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(chạy thật 2026-11-08 — 12 container healthy)*
 
-**Learning note** *(điền khi Done)*
+**1) `service-commons` 71 unit test xanh — 15 test mới cho hạ tầng event:**
+
+```text
+EventEnvelopeCodecTest          5   round-trip 7 field · version lạ ⇒ EventFormatException ·
+                                    version payload ≠ hậu tố eventType ⇒ từ chối · JSON hỏng/thiếu field
+EventPublisherTest              2   envelope đủ field + traceId từ MDC · broker nack ⇒ EventPublishException
+AbstractEventConsumerTest       5   ack khi xong · trùng eventId ⇒ handler 1 lần · retry cạn ⇒ nack(false)
+                                    · payload hỏng ⇒ nack ngay · event lạ ⇒ ack + bỏ qua
+EventAutoConfigurationTest      3   có AMQP ⇒ codec/publisher/container MANUAL ack · JdbcTemplate ⇒ store
+                                    · enabled=false ⇒ không bean · không AMQP ⇒ back-off
+```
+
+**2) Toàn repo:** `mvn -B -ntp verify` **BUILD SUCCESS · 679 test (561 unit + 118 IT) · 0 fail**.
+
+**3) Trên stack thật** (rebuild `order-service` — service duy nhất có AMQP):
+
+```console
+$ docker ps | grep order        → shoplab-order-service Up (healthy)
+$ docker exec shoplab-postgres psql -U shoplab -d order -c '\d processed_events'
+                     Table "public.processed_events"
+    Column    |           Type        | Nullable | Default
+ event_id     | uuid                 | not null |
+ consumer     | character varying(64)| not null |
+ event_type   | character varying(128)| not null |
+ processed_at | timestamp with time zone | not null | now()
+Indexes: "processed_events_pkey" PRIMARY KEY, btree (event_id, consumer)
+
+$ bash tools/e2e-smoke.sh 17/17 · e2e-checkout 27/27 · e2e-checkout-fail 41/41
+```
+
+Bảng do commons tạo hộ (`shoplab.events.dedup.auto-create-schema=true`) — bằng chứng store dedupe **có**
+được tạo và **có** DDL đúng khoá `(event_id, consumer)`.
+
+**Sự cố trong lúc verify (1 bug thật — loại bug im lặng nguy hiểm nhất)**
+
+`processed_events` **không được tạo** dù service chạy healthy và log sạch. Nguyên nhân: `@ConditionalOnBean
+(JdbcTemplate.class)` chỉ thấy bean **đã đăng ký tại thời điểm nó được đánh giá**; không khai thứ tự thì
+auto-config của commons chạy **trước** `JdbcTemplateAutoConfiguration` ⇒ điều kiện luôn `false` ⇒ bean store
+không bao giờ được tạo, **không một dòng lỗi**. Fix: `@AutoConfiguration(after = RabbitAutoConfiguration.class,
+afterName = "org.springframework.boot.jdbc.autoconfigure.JdbcTemplateAutoConfiguration")` + 2 test khoá lại
+(có `JdbcTemplate` ⇒ có store; không có ⇒ không store, không lỗi).
+Lưu ý phụ: Boot 4 đặt `JdbcTemplateAutoConfiguration` ở `org.springframework.boot.jdbc.autoconfigure` (module
+`spring-boot-jdbc`) nên phải dùng `afterName` (string) — dùng `after = …class` sẽ buộc commons kéo thêm
+dependency chỉ để tham chiếu một cái tên.
+
+**Learning note**
+
+- **`@ConditionalOnBean` là điều kiện *theo thời điểm*, không phải "bean này sẽ có"**: auto-config chạy theo
+  thứ tự, và điều kiện chỉ thấy những gì đã đăng ký trước đó. Không khai `after`/`afterName` ⇒ điều kiện
+  âm thầm `false`, bean không được tạo, **không có lỗi nào để lần theo**. Đây là họ bug giống `SL-3.1`
+  (`RabbitAdmin` khai lazy): code đúng, hệ không làm gì, log sạch.
+- **Cách phát hiện**: kiểm bằng **trạng thái của hệ ngoài** (bảng trong DB, exchange trên broker), không kiểm
+  bằng "service healthy". Cả 2 lần trong phase 3 bug đều nằm ở khoảng giữa "app khởi động xong" và "hệ có
+  thứ mình cần".
+- **Marker dedupe phải xoá khi xử lý fail**: nếu chỉ `insert` trước khi handler chạy thì DLQ replay sẽ bị
+  chính marker đó chặn ⇒ message nằm trong DLQ mà **không bao giờ** chạy lại được. Thiết kế đúng: mark →
+  handle → (fail) unmark → `nack(requeue=false)`; test `shouldNackAfterRetriesExhausted` chốt điều này.
+- **`AcknowledgeMode.MANUAL` là điều kiện của DLQ**: auto-ack nghĩa là message bị coi "xong" ngay khi
+  listener trả về, nên không còn cơ hội `nack` khi handler fail ⇒ mất message trong im lặng. Test kiểm
+  **container thật** (`createListenerContainer`) chứ không chỉ "bean tồn tại".
+- **Thứ tự cũng là hợp đồng**: `markProcessed` phải nguyên tử (`insert … on conflict do nothing` trả
+  `rowsAffected`) — kiểu "select rồi insert" vẫn có khe hở khi 2 lần redeliver tới cùng lúc.
+
 
 ### SL-3.3 — `order-service`: transactional outbox + relay ⇒ `order.confirmed.v1`
 
@@ -1155,6 +1217,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 | 2026-11-08 | SL-3.1 | **"Khai bằng code" không có nghĩa là "đã khai"**: `Declarables` chỉ là *ý định*, `RabbitAdmin` khai **lazy** — chỉ khi có connection đầu tiên. Service chưa publish/consume (đúng trạng thái SL-3.1) ⇒ không ai mở connection ⇒ **không có queue nào**, log sạch, app healthy. Phải kiểm bằng **trạng thái của hệ ngoài** (management API), không kiểm bằng "code đã chạy". Fix: gọi `amqpAdmin.initialize()` ở `SmartInitializingSingleton` — nhưng **fail mềm** (broker chết không làm service chết, ADR-0007), và cái giá của fail mềm là lỗi chỉ còn 1 dòng WARN ⇒ bắt buộc phải có tool để *nhìn thấy* hậu quả. Thêm nữa: **monitoring có độ trễ riêng của nó** — `ready/unacked` của RabbitMQ management API lag ~5 s sau restart, nên đọc "0 message" ngay sau restart **không** chứng minh mất dữ liệu; phải kiểm bằng đường thứ hai (`messages`, hoặc `drain` để ack thật). Và: `routed=false` khi publish sai routing key là lỗi **im lặng** (message rơi vào hư không, không exception) ⇒ tool phải cảnh báo ngay cạnh kết quả. |
 
+| 2026-11-08 | SL-3.2 | **`@ConditionalOnBean` là điều kiện *theo thời điểm*, không phải "bean này sẽ có"**: auto-config chạy theo thứ tự, điều kiện chỉ thấy bean đã đăng ký **trước** nó. Thiếu `after`/`afterName` ⇒ điều kiện âm thầm `false` ⇒ store dedupe không được tạo, bảng `processed_events` không xuất hiện, **không một dòng lỗi** — cùng họ với `SL-3.1` (`RabbitAdmin` khai lazy): code đúng, hệ không làm gì, log sạch. Cách phát hiện duy nhất: kiểm **trạng thái của hệ ngoài** (bảng trong DB, exchange trên broker), không kiểm "service healthy". Phụ: Boot 4 đặt `JdbcTemplateAutoConfiguration` ở module `spring-boot-jdbc` ⇒ dùng `afterName` (string) để commons không phải kéo dependency chỉ vì một cái tên. Hai bài học thiết kế: (1) **marker dedupe phải xoá khi xử lý fail** — nếu chỉ `insert` trước handler thì DLQ replay bị chính marker chặn, message nằm trong DLQ mà không bao giờ chạy lại; (2) **`AcknowledgeMode.MANUAL` là điều kiện của DLQ** — auto-ack nghĩa là message "xong" ngay khi listener trả về ⇒ không còn cơ hội `nack` khi fail ⇒ mất message im lặng. |
+
 ## 7. Technical debt register
 
 > Quy tắc ghi nhận: [`.clinerules/20-tech-debt.md`](.clinerules/20-tech-debt.md). Mỗi món nợ **phải có
@@ -1277,3 +1341,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | `SL-2.8` → `Done`: **E2E checkout** — `tools/e2e-checkout.sh` (27 check: tiền · saga · idempotency · mock-pay · confirm · order · tồn kho) + workflow **`e2e.yml`** (compose 10 thành phần + 2 script; `workflow_dispatch` + `schedule` hằng tuần, **không** chạy mỗi PR vì ≈30 phút/run) ⇒ **trả `TD-4`**; verify OpenAPI **41 path/50 operation** + matrix `build-image` **9 service** (đã có, chỉ kiểm). Verify: `e2e-checkout` **27 PASS / 0 FAIL** (931 ms) · `e2e-smoke` 17/17 · `e2e.yml` parse OK · `compose config` OK. **Sự cố**: fail giả do Python đổi số tiền thành float ⇒ `parse_float=str`; CI `build-image` flaky do Maven Central hiccup (rerun xanh) ⇒ `TD-26`. |
 | 2026-11-08 | `SL-3.0` → `Done`: **ADR-0007 — contract event Phase 3** (`docs/adr/0007-event-contract.md`, 185 dòng): chốt **5 quyết định** — (D1) envelope JSON 7 field (`eventId · eventType · version · occurredAt · producer · traceId · payload`, không field nghiệp vụ) · (D2) exchange topic `shoplab.events` + `shoplab.dlx`, queue **theo consumer** (`q.notification`/`q.order`/`q.search`) + `<queue>.dlq`, routing key `<aggregate>.<event>.v<N>` · (D3) **at-least-once** + consumer **bắt buộc** dedupe `eventId` (`processed_events` PK `(event_id, consumer)`) · (D4) outbox **polling relay** (`@Scheduled` 1 s, batch 100, `FOR UPDATE SKIP LOCKED`, `SENT` chỉ sau publisher confirm, lỗi giữ `PENDING`) · (D5) retry 3 lần trong consumer (200 ms/1 s/3 s) → DLQ, **không auto-replay**, replay tay qua `tools/dlq.sh` có 3 điều kiện kiểm trước. Kèm **bảng 5 event** (`order.confirmed.v1` · `order.cancelled.v1` · `payment.succeeded.v1` · `product.updated.v1` · `product.archived.v1`) + chính sách versioning (không sửa `.v1`, phát `.v2` song song). Mỗi hạng mục có bảng Options ≥ 3 phương án **có loại** + Revisit định lượng. Update `architecture.md`: **§9.4** (bỏ “schema registry từ Phase 3” → version trong envelope + link ADR), §11.2 (link ADR-0007), header `DRAFT v0.5`, Changelog. Verify: ADR 5 mục đúng template · 5/5 hạng mục có bảng trade-off · link check 0 broken. Không code. |
 | 2026-11-08 | `SL-3.1` → `Done`: **RabbitMQ topology bằng code** — `service-commons` thêm `spring-boot-starter-amqp` (**optional**) + `events/EventTopology` (tên exchange/queue/routing key = nguồn sự thật duy nhất, lấy từ ADR-0007) + `EventTopologyAutoConfiguration` (`@ConditionalOnClass(Declarables)` · `@ConditionalOnProperty(shoplab.events.topology.enabled)`) khai `shoplab.events` (topic) + `shoplab.dlx` (direct) + 3 queue (`q.notification`/`q.order`/`q.search`, durable, DLX `shoplab.dlx` routing key = tên queue) + 3 `.dlq` + **5 binding**; thêm `EventTopologyDeclarer` gọi `amqpAdmin.initialize()` lúc startup (**bug thật**: `RabbitAdmin` khai lazy, không có consumer/publisher ⇒ không khai gì). `order-service` là service đầu tiên khai (`spring.rabbitmq.*` + env compose + `depends_on: rabbitmq healthy`). Tool mới **`tools/rabbit-topology.sh`** (`show` · `dlq` · `publish` · `drain` · `purge`, curl + python3). README thêm mục **Broker (RabbitMQ)** + bảng đọc `ready`/`unacked`/`consumers` + **4 bẫy**. Verify: topology đúng ADR (2 exchange · 6 queue · 8 binding) · publish → `ready=1` → `docker restart` broker → `messages=2` **không mất** → `drain` ack → `ready=0` · `routed=false` khi sai key · `mvn verify` **BUILD SUCCESS · 662 test (544 unit + 118 IT)** · `e2e-smoke` 17/17 · `e2e-checkout` 27/27 · `e2e-checkout-fail` 41/41. |
+| 2026-11-08 | `SL-3.2` → `Done`: **hạ tầng event trong `service-commons`** — `EventEnvelope` (7 field, `create()` sinh `eventId` + `traceId` từ MDC, `versionOf()` parse hậu tố `.vN`) · `EventEnvelopeCodec` (encode/decode + validate: **version lạ ⇒ `EventFormatException`** để đẩy DLQ) · `EventPublisher` (**publisher confirm** qua `CorrelationData.getFuture()` + message `PERSISTENT`, nack/timeout ⇒ `EventPublishException`) · `ProcessedEventStore` + `JdbcProcessedEventStore` (`insert … on conflict do nothing` ⇒ `rowsAffected`, PK `(event_id, consumer)`, kèm `unmarkProcessed`) · `AbstractEventConsumer` (`ChannelAwareMessageListener`: decode → skip event lạ → **dedupe** → handler → ack; lỗi ⇒ retry 3 (200 ms/1 s/3 s) ⇒ **xoá marker** ⇒ `nack(requeue=false)` = DLQ; đặt lại `traceId` của producer vào MDC) · `EventProperties` + `EventAutoConfiguration` (container factory **MANUAL ack**, `prefetch=1`/`concurrency=1` để giữ thứ tự). **Bug thật**: `@ConditionalOnBean(JdbcTemplate)` chạy trước `JdbcTemplateAutoConfiguration` ⇒ store **không được tạo, không lỗi** ⇒ fix bằng `after`/`afterName` + 2 test khoá lại; verify trên stack: bảng `processed_events` xuất hiện trong DB `order` (PK `(event_id, consumer)`). Verify: commons **71 unit** (+15 mới) · toàn repo **BUILD SUCCESS · 679 test (561 unit + 118 IT)** · `order-service` rebuild healthy · `e2e-smoke` 17/17 · `e2e-checkout` 27/27 · `e2e-checkout-fail` 41/41. |
