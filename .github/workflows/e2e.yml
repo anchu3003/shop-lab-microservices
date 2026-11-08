@@ -1,0 +1,84 @@
+# ==============================================================================
+# e2e.yml — E2E thật: `docker compose up` cả 10 thành phần rồi chạy smoke + checkout (SL-2.8)
+#
+# VÌ SAO KHÔNG chạy mỗi PR (đọc kỹ trước khi đổi):
+#   Mỗi image build trong CI phải chạy `mvn package` **từ đầu** (không cache Maven giữa các job).
+#   9 service ⇒ ~30 phút/run. Repo private + gói Free chỉ có 2.000 phút/tháng ⇒ chạy mỗi PR sẽ
+#   đốt hết budget trong vài ngày và làm PR chậm. Vì vậy workflow này chạy:
+#     - `workflow_dispatch` (bấm tay khi cần, vd trước khi cắt phase)
+#     - `schedule` hằng tuần (bắt drift của compose/Dockerfile/script mà unit test không thấy)
+#   `ci.yml` (lint + test + build-image 9 service) vẫn là hàng rào chạy mỗi PR.
+#
+# ĐÓNG `TD-4`: smoke trước đây "chỉ chạy local" — nay đã có đường chạy trong CI, có bằng chứng.
+#
+# Liên quan: AGENTS.md §6 · `.clinerules/10-git-workflow.md` (chi phí CI) · Backlog.md → SL-2.8, TD-4
+# ==============================================================================
+
+name: E2E (compose)
+
+on:
+  # Bấm tay: Actions → "E2E (compose)" → Run workflow (chọn branch nào cũng được).
+  workflow_dispatch:
+  # Hằng tuần (02:00 UTC thứ Hai = 09:00 giờ VN) — đủ sớm để biết stack còn dựng được trước sprint.
+  schedule:
+    - cron: '0 2 * * 1'
+
+# Không huỷ giữa đường: `docker compose down -v` ở bước cuối là thứ dọn runner; huỷ ngang dễ để lại
+# container/volume treo và lần sau `up` sẽ đọc dữ liệu cũ (bài học `SL-0.3`: init script chỉ chạy khi
+# volume rỗng).
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  compose-e2e:
+    name: compose up (10 thành phần) + smoke + checkout
+    runs-on: ubuntu-latest
+    # Build 9 image + khởi động + 2 script: 45 phút là trần thực tế; 60 để có margin cho runner chậm.
+    timeout-minutes: 60
+    if: ${{ vars.CI_ENABLED != 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # `.env` KHÔNG commit (chỉ `.env.example`) ⇒ CI tự dựng: copy example rồi thay 4 bí mật
+      # `change_me` bằng giá trị dùng-một-lần. Compose dùng `${VAR:?}` cho POSTGRES_PASSWORD/
+      # REDIS_PASSWORD/RABBITMQ_PASSWORD/PAYMENT_WEBHOOK_SECRET ⇒ thiếu là cả stack không dựng.
+      - name: Chuẩn bị .env + khoá JWT dev
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=ci-postgres-pass|" .env
+          sed -i "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=ci-redis-pass|" .env
+          sed -i "s|^RABBITMQ_PASSWORD=.*|RABBITMQ_PASSWORD=ci-rabbit-pass|" .env
+          sed -i "s|^PAYMENT_WEBHOOK_SECRET=.*|PAYMENT_WEBHOOK_SECRET=ci-webhook-secret|" .env
+          bash tools/gen-dev-keys.sh
+          grep -c . .env
+
+      - name: docker compose up -d --build --wait
+        run: |
+          set -euo pipefail
+          docker compose -f infra/docker-compose.yml --env-file .env up -d --build --wait --wait-timeout 420
+
+      - name: Trạng thái container
+        run: docker compose -f infra/docker-compose.yml --env-file .env ps
+
+      - name: E2E smoke (Phase 1 — walking skeleton)
+        run: bash tools/e2e-smoke.sh
+
+      - name: E2E checkout (Phase 2 — money path)
+        run: bash tools/e2e-checkout.sh
+
+      # Log chỉ dump khi đỏ: log của 10 container rất dài, in vô điều kiện là làm log run không đọc được.
+      - name: Log container (khi fail)
+        if: failure()
+        run: |
+          docker compose -f infra/docker-compose.yml --env-file .env ps || true
+          docker compose -f infra/docker-compose.yml --env-file .env logs --no-color --tail=200 || true
+
+      # `-v` để xoá volume: lần chạy sau phải bắt đầu từ DB trống (init script chỉ chạy khi volume rỗng).
+      - name: Dọn stack
+        if: always()
+        run: docker compose -f infra/docker-compose.yml --env-file .env down -v || true
