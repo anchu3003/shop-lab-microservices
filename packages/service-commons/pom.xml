@@ -64,6 +64,16 @@
       <optional>true</optional>
     </dependency>
 
+    <!--
+      spring-jdbc — CHỈ để compile `JdbcProcessedEventStore` (dedupe theo `processed_events`, SL-3.2).
+      Optional như các dependency hạ tầng khác: service nào không có DB (vd cart) không bị kéo JDBC,
+      và bean store tự tắt nhờ `@ConditionalOnClass(JdbcTemplate.class)`.
+    -->
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-jdbc</artifactId>
+      <optional>true</optional>
+    </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
