@@ -2,8 +2,17 @@ package com.shoplab.order;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
+import com.shoplab.commons.events.EventPublishException;
+import com.shoplab.commons.events.EventPublisher;
 import com.shoplab.order.idempotency.IdempotencyService;
+import com.shoplab.order.outbox.CheckoutOutbox;
+import com.shoplab.order.outbox.OutboxRelay;
 import com.shoplab.order.testsupport.TokenMinter;
 import java.math.BigDecimal;
 import java.net.URI;
@@ -12,6 +21,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -39,6 +49,7 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -73,6 +84,11 @@ class OrderServiceApplicationIT {
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ObjectMapper objectMapper;
   @Autowired private IdempotencyService idempotencyService;
+  @Autowired private CheckoutOutbox finalizer;
+  @Autowired private OutboxRelay relay;
+
+  /** Stub: IT chạy Postgres thật nhưng KHÔNG có RabbitMQ ⇒ thay publisher bằng mock. */
+  @MockitoBean private EventPublisher outboxPublisher;
 
   private final HttpClient httpClient =
       HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
@@ -368,6 +384,80 @@ class OrderServiceApplicationIT {
   }
 
   // ==========================================================================
+  // SL-3.3 — transactional outbox
+  // ==========================================================================
+
+  @Test
+  @DisplayName(
+      "confirm ⇒ order CONFIRMED + ĐÚNG 1 row outbox PENDING (cùng transaction); relay ⇒ SENT")
+  void confirmWritesOutboxInSameTransaction() {
+    UUID orderId = seedOrder();
+
+    boolean changed = finalizer.confirm(orderId, "thanh toán đã xác nhận", Instant.now());
+
+    assertThat(changed).isTrue();
+    assertThat(orderStatus(orderId)).isEqualTo("CONFIRMED");
+    // Đúng 1 row: confirm#2 sẽ là idempotent ở tầng service (không tới đây) — nhưng nếu có bug gọi
+    // 2
+    // lần thì bất biến này bắt được.
+    assertThat(countOutbox(orderId, "order.confirmed.v1")).isEqualTo(1);
+    assertThat(outboxStatus(orderId)).isEqualTo("PENDING");
+
+    int sent = relay.drain();
+
+    assertThat(sent).isGreaterThanOrEqualTo(1);
+    verify(outboxPublisher).publish(argThat(e -> e.eventType().equals("order.confirmed.v1")));
+    assertThat(outboxStatus(orderId)).isEqualTo("SENT");
+    assertThat(outboxSentAt(orderId)).isNotNull();
+  }
+
+  @Test
+  @DisplayName(
+      "broker lỗi ⇒ order VẪN CONFIRMED, row outbox giữ PENDING + attempts≥1 (không mất event)")
+  void orderStaysConfirmedWhenPublishFails() {
+    UUID orderId = seedOrder();
+    doThrow(new EventPublishException("broker nack"))
+        .when(outboxPublisher)
+        .publish(any(com.shoplab.commons.events.EventEnvelope.class));
+
+    boolean changed = finalizer.confirm(orderId, "thanh toán đã xác nhận", Instant.now());
+
+    // Điểm cốt lõi của outbox: publish KHÔNG nằm trên đường commit của nghiệp vụ.
+    assertThat(changed).isTrue();
+    assertThat(orderStatus(orderId)).isEqualTo("CONFIRMED");
+
+    relay.drain();
+
+    assertThat(outboxStatus(orderId)).isEqualTo("PENDING");
+    assertThat(outboxAttempts(orderId)).isGreaterThanOrEqualTo(1);
+    assertThat(outboxLastError(orderId)).contains("broker nack");
+  }
+
+  @Test
+  @DisplayName(
+      "cancel ⇒ 1 row outbox `order.cancelled.v1`; 2 relay chạy song song ⇒ mỗi row publish 1 lần")
+  void cancelWritesOutboxAndRelaysAreExclusive() throws Exception {
+    UUID orderId = seedOrder();
+    assertThat(finalizer.cancel(orderId, "đổi ý", Instant.now())).isTrue();
+    assertThat(orderStatus(orderId)).isEqualTo("CANCELLED");
+    assertThat(countOutbox(orderId, "order.cancelled.v1")).isEqualTo(1);
+
+    // Claim dùng `FOR UPDATE SKIP LOCKED` + `claimed_at` ⇒ 2 relay không lấy cùng row.
+    ExecutorService pool = Executors.newFixedThreadPool(2);
+    try {
+      Future<Integer> a = pool.submit(relay::drain);
+      Future<Integer> b = pool.submit(relay::drain);
+      assertThat(a.get(30, TimeUnit.SECONDS) + b.get(30, TimeUnit.SECONDS)).isLessThanOrEqualTo(1);
+    } finally {
+      pool.shutdownNow();
+    }
+
+    verify(outboxPublisher, times(1))
+        .publish(argThat(e -> e.eventType().equals("order.cancelled.v1")));
+    assertThat(outboxStatus(orderId)).isEqualTo("SENT");
+  }
+
+  // ==========================================================================
   // Helpers
   // ==========================================================================
 
@@ -428,6 +518,52 @@ class OrderServiceApplicationIT {
         orderId,
         userId);
     return orderId;
+  }
+
+  private String orderStatus(UUID orderId) {
+    return jdbc.queryForObject("select status from orders where id = ?", String.class, orderId);
+  }
+
+  private long countOutbox(UUID orderId, String eventType) {
+    Long count =
+        jdbc.queryForObject(
+            "select count(*) from outbox where aggregate_id = ? and event_type = ?",
+            Long.class,
+            orderId,
+            eventType);
+    return count == null ? 0 : count;
+  }
+
+  private String outboxStatus(UUID orderId) {
+    return jdbc.queryForObject(
+        "select status from outbox where aggregate_id = ? order by created_at desc limit 1",
+        String.class,
+        orderId);
+  }
+
+  private int outboxAttempts(UUID orderId) {
+    Integer attempts =
+        jdbc.queryForObject(
+            "select attempts from outbox where aggregate_id = ? order by created_at desc limit 1",
+            Integer.class,
+            orderId);
+    return attempts == null ? 0 : attempts;
+  }
+
+  private String outboxLastError(UUID orderId) {
+    return jdbc.queryForObject(
+        "select last_error from outbox where aggregate_id = ? order by created_at desc limit 1",
+        String.class,
+        orderId);
+  }
+
+  private java.time.Instant outboxSentAt(UUID orderId) {
+    java.sql.Timestamp ts =
+        jdbc.queryForObject(
+            "select sent_at from outbox where aggregate_id = ? order by created_at desc limit 1",
+            java.sql.Timestamp.class,
+            orderId);
+    return ts == null ? null : ts.toInstant();
   }
 
   private long countOrdersByKey(String idempotencyKey) {

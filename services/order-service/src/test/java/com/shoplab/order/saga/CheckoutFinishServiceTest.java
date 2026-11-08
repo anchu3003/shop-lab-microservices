@@ -16,6 +16,7 @@ import com.shoplab.order.order.OrderRecord;
 import com.shoplab.order.order.OrderRepository;
 import com.shoplab.order.order.OrderStatus;
 import com.shoplab.order.order.OrderWriter;
+import com.shoplab.order.outbox.CheckoutOutbox;
 import com.shoplab.order.saga.downstream.DownstreamGateway;
 import com.shoplab.order.saga.downstream.DownstreamResult;
 import com.shoplab.order.saga.downstream.PaymentStatusResponse;
@@ -48,10 +49,11 @@ class CheckoutFinishServiceTest {
   private final CheckoutSagaRepository sagas = mock(CheckoutSagaRepository.class);
   private final OrderRepository orders = mock(OrderRepository.class);
   private final OrderWriter writer = mock(OrderWriter.class);
+  private final CheckoutOutbox finalizer = mock(CheckoutOutbox.class);
 
   private final CheckoutFinishService service =
       new CheckoutFinishService(
-          downstream, sagas, orders, writer, Clock.fixed(NOW, ZoneOffset.UTC));
+          downstream, sagas, orders, writer, finalizer, Clock.fixed(NOW, ZoneOffset.UTC));
 
   // __FINISH_TESTS2__
 
@@ -72,8 +74,7 @@ class CheckoutFinishServiceTest {
     assertThat(response.orderId()).isEqualTo(ORDER_ID);
     verify(downstream).commitStock("token", RESERVATION_ID);
     verify(downstream).commitVoucher("token", LOCK_ID);
-    verify(writer).confirmPending(eq(ORDER_ID), anyString(), any());
-    verify(sagas).markState(eq(ORDER_ID), eq(CheckoutSagaState.CONFIRMED), eq(null), any());
+    verify(finalizer).confirm(eq(ORDER_ID), anyString(), any());
   }
 
   @Test
@@ -86,7 +87,7 @@ class CheckoutFinishServiceTest {
     assertThat(response.state()).isEqualTo(CheckoutSagaState.CONFIRMED);
     verify(downstream, never()).getPaymentIntent(any(), any());
     verify(downstream, never()).commitStock(any(), any());
-    verify(writer, never()).confirmPending(any(), anyString(), any());
+    verify(finalizer, never()).confirm(any(), anyString(), any());
   }
 
   @Test
@@ -104,7 +105,7 @@ class CheckoutFinishServiceTest {
         .isEqualTo(ErrorCode.CONFLICT);
 
     verify(downstream, never()).commitStock(any(), any());
-    verify(writer, never()).confirmPending(any(), anyString(), any());
+    verify(finalizer, never()).confirm(any(), anyString(), any());
   }
 
   @Test
@@ -118,7 +119,7 @@ class CheckoutFinishServiceTest {
     service.confirm(ORDER_ID, USER_ID, false, "token");
 
     verify(downstream, never()).getPaymentIntent(any(), any());
-    verify(writer).confirmPending(eq(ORDER_ID), anyString(), any());
+    verify(finalizer).confirm(eq(ORDER_ID), anyString(), any());
   }
 
   // __FINISH_TESTS3__
@@ -132,8 +133,7 @@ class CheckoutFinishServiceTest {
 
     verify(downstream).releaseStock("token", RESERVATION_ID);
     verify(downstream).releaseVoucher("token", LOCK_ID);
-    verify(writer).cancelPending(ORDER_ID, "đổi ý", NOW);
-    verify(sagas).markState(eq(ORDER_ID), eq(CheckoutSagaState.CANCELLED), eq(null), any());
+    verify(finalizer).cancel(ORDER_ID, "đổi ý", NOW);
   }
 
   @Test

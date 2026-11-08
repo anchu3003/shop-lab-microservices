@@ -53,6 +53,12 @@ spring:
     username: ${RABBITMQ_USER:shoplab}
     password: ${RABBITMQ_PASSWORD:}
     connection-timeout: 3s
+    # SL-3.3: BẮT BUỘC để `EventPublisher` nhận được confirm. Thiếu dòng này, `CorrelationData
+    # .getFuture()` KHÔNG BAO GIỜ complete ⇒ mỗi lần publish treo tới timeout 5 s rồi ném lỗi
+    # (outbox vẫn an toàn: row giữ PENDING, nhưng event bị trễ vô ích).
+    publisher-confirm-type: correlated
+    # Bật returns để broker trả lại message không route được (routing key sai) thay vì nuốt im lặng.
+    publisher-returns: true
 
 server:
   port: ${SERVER_PORT:8087}
@@ -62,6 +68,15 @@ shoplab:
   env: ${APP_ENV:local}
   debug-endpoints: ${SHOPLAB_DEBUG_ENDPOINTS:false}
   git-commit: ${SHOPLAB_GIT_COMMIT:unknown}
+
+  # SL-3.3: outbox relay — trễ tối đa ~interval cho email/index là đánh đổi có chủ ý (ADR-0007 D4).
+  # `claim-timeout` phải LỚN HƠN thời gian publish tối đa (confirm timeout 5 s) để relay khác không
+  # lấy lại row đang được gửi.
+  outbox:
+    interval: ${SHOPLAB_OUTBOX_INTERVAL:1s}
+    initial-delay: ${SHOPLAB_OUTBOX_INITIAL_DELAY:5s}
+    batch-size: ${SHOPLAB_OUTBOX_BATCH_SIZE:100}
+    claim-timeout: ${SHOPLAB_OUTBOX_CLAIM_TIMEOUT:30s}
 
   # SL-3.1: tắt nhanh việc khai topology (vd khi muốn service trỏ vào broker dùng chung mà không
   # được tạo exchange/queue). Mặc định bật — môi trường dev/phòng lab cần topology tự có.

@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-3.10` ✅ **Done** — CI tắt tạm thời + `merge-pr.sh --skip-ci-check`) |
-| **Ticket tiếp theo** | `SL-3.3` — `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` *(merge bằng `--skip-ci-check` cho tới khi bật lại CI — `TD-28`)* |
+| **Ticket đang làm** | — (`SL-3.3` ✅ **Done** — outbox + relay ⇒ `order.confirmed.v1`) |
+| **Ticket tiếp theo** | `SL-3.4` — **`notification-service`** (8089): consumer `order.confirmed` + email mock + retry + DLQ *(merge bằng `--skip-ci-check` — `TD-28`)* |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -19,7 +19,7 @@
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
-| 3 | Async & event-driven | 🟡 Đang làm (breakdown xong 10 ticket) | 3 / 10 |
+| 3 | Async & event-driven | 🟡 Đang làm (11 ticket) | 4 / 11 |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
@@ -250,7 +250,7 @@ $ md5sum docs/api/openapi.yaml
 | 1 | `SL-3.0` | **ADR-0007** — contract event: envelope · đặt tên · **outbox relay** (polling) · **DLQ policy** · dedupe | S | ✅ Done |
 | 2 | `SL-3.1` | **RabbitMQ**: topology (exchange/queue/DLQ) + healthcheck + `tools/rabbit-topology.sh` | S | ✅ Done |
 | 3 | `SL-3.2` | `service-commons`: `EventEnvelope` + publisher (confirm) + consumer base (retry → DLQ) + dedupe `processed_events` | M | ✅ Done |
-| 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | Todo |
+| 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | ✅ Done |
 | 5 | `SL-3.4` | **`notification-service`** (8089): consumer `order.confirmed` → email mock + retry + **DLQ** + `tools/dlq.sh` | M | Todo |
 | 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`**) | M | Todo |
 | 7 | `SL-3.6` | `catalog-service` outbox product event + **`search-service`** (8090, Postgres **FTS**) index + reconcile + `GET /v1/search` | M | Todo |
@@ -638,7 +638,7 @@ dependency chỉ để tham chiếu một cái tên.
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done (2026-11-08) |
 | **Phase** | 3 — Async & event-driven |
 | **Phụ thuộc** | `SL-3.2` (envelope/publisher); chặn `SL-3.4`/`SL-3.7`/`SL-3.8` |
 | **Ước lượng** | M |
@@ -673,13 +673,13 @@ Mọi thay đổi state quan trọng của đơn ghi **outbox trong cùng transa
 
 **Acceptance Criteria**
 
-- [ ] `POST /v1/checkout/{id}/confirm` thành công ⇒ **1 row** `outbox` `PENDING` cùng transaction, sau ≤ 2 s thành `SENT`
+- [x] `POST /v1/checkout/{id}/confirm` thành công ⇒ **1 row** `outbox` `PENDING` cùng transaction, sau ≤ 2 s thành `SENT`
       và có message `order.confirmed.v1` trên `q.notification` (kiểm bằng `tools/rabbit-topology.sh` / psql).
-- [ ] `docker stop shoplab-rabbitmq` rồi confirm ⇒ order **vẫn `CONFIRMED`** (không 503), row giữ `PENDING`,
+- [x] `docker stop shoplab-rabbitmq` rồi confirm ⇒ order **vẫn `CONFIRMED`** (không 503), row giữ `PENDING`,
       `attempts > 0`; `docker start` ⇒ message được gửi, row `SENT`.
-- [ ] Cancel ⇒ `order.cancelled.v1` phát ra tương tự; confirm#2 (idempotent) ⇒ **không** sinh row outbox thứ hai.
-- [ ] Chạy 2 instance relay (hoặc 2 vòng song song trong IT) ⇒ mỗi row chỉ publish **1 lần**, không message trùng.
-- [ ] `mvn -B -ntp verify` xanh; `e2e-checkout` 27/27 + `e2e-checkout-fail` 41/41 không regress.
+- [x] Cancel ⇒ `order.cancelled.v1` phát ra tương tự; confirm#2 (idempotent) ⇒ **không** sinh row outbox thứ hai.
+- [x] Chạy 2 instance relay (hoặc 2 vòng song song trong IT) ⇒ mỗi row chỉ publish **1 lần**, không message trùng.
+- [x] `mvn -B -ntp verify` xanh; `e2e-checkout` 27/27 + `e2e-checkout-fail` 41/41 không regress.
 
 **Ghi chú kỹ thuật**
 
@@ -688,9 +688,76 @@ Mọi thay đổi state quan trọng của đơn ghi **outbox trong cùng transa
   cái nào đang kẹt.
 - `FOR UPDATE SKIP LOCKED` (đúng khuôn `SL-2.3`): nhiều instance relay không giẫm nhau, không cần leader election.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(chạy thật 2026-11-08 — CI đang tắt theo `SL-3.10`, verify local thay CI)*
 
-**Learning note** *(điền khi Done)*
+**1) `mvn -B -ntp verify` (toàn repo): BUILD SUCCESS · 687 test (566 unit + 121 IT) · 0 fail**
+`order-service`: **70 unit** (+5 `OutboxRelayTest`) + **28 IT** (+3 outbox).
+
+**2) Stack thật — confirm ⇒ outbox `PENDING` → `SENT` → message trên `q.notification`:**
+
+```console
+### 1) checkout + thanh toán + confirm
+order=a5c51d63-…   confirm status=200
+### 2) outbox NGAY sau confirm
+PENDING|0                         ← ghi cùng transaction, relay chưa chạy
+### 3) sau ~3 s (relay 1 s/nhịp)
+SENT|1|t                          ← status=SENT, attempts=1, có sent_at
+### 4) order CONFIRMED + payload
+{"total": 100000.00, "userId": "fa72fd12-…", "orderId": "a5c51d63-…",
+ "currency": "VND", "itemCount": 1, "confirmedAt": "2026-11-08T11:56:33…"}
+### 5) message tới queue
+  q.notification         ready= 14 unacked=  0 consumers=0
+```
+
+**3) Broker chết ⇒ order VẪN CONFIRMED, event không mất:**
+
+```console
+$ docker stop shoplab-rabbitmq
+$ bash … confirm            → confirm status=200        ← KHÔNG 503 (publish không nằm trên đường commit)
+PENDING|3|f                 ← vẫn PENDING, attempts tăng mỗi nhịp
+$ (sau 12 s) orders.status=CONFIRMED · outbox.status=PENDING · attempts=11
+$ docker start shoplab-rabbitmq   → healthy
+SENT|21                     ← tự gửi lại thành công, KHÔNG mất event
+```
+
+**4) Cancel ⇒ `order.cancelled.v1`:**
+
+```console
+$ POST /v1/checkout/{id}/cancel → 200
+$ psql: order.cancelled.v1|SENT
+```
+
+**5) Không regress:** `e2e-smoke` 17/17 · `e2e-checkout` 27/27 · `e2e-checkout-fail` 41/41.
+
+**Sự cố trong lúc verify (2 bug thật — cả 2 đều bị outbox "che" an toàn)**
+
+1. **Publisher confirm chưa bật** ⇒ `CorrelationData.getFuture()` **không bao giờ** complete ⇒ mỗi lần publish treo
+   đúng 5 s (confirm timeout) rồi ném lỗi. Triệu chứng: outbox row `PENDING|1` mãi, log
+   `không nhận được publisher confirm … sau 5000 ms`. Fix: `spring.rabbitmq.publisher-confirm-type: correlated`
+   (+ `publisher-returns: true`) trong `order-service`. Đây là cấu hình **bắt buộc** của ADR-0007 D4 mà tôi đã
+   quên — chính outbox giúp bug này **không mất event**, chỉ làm chậm 21 nhịp.
+2. **`JdbcOutboxRepository` đòi bean `ObjectMapper`** ⇒ `order-service` IT đỏ **28/28** (`No qualifying bean of
+   type ObjectMapper`). Fix: tự tạo mapper trong repository (như `EventEnvelopeCodec`) — dịch vụ này không phải
+   tầng serialization web nên đừng phụ thuộc bean đó.
+
+**Learning note**
+
+- **`eventId` phải ổn định qua các lần thử** — chi tiết quyết định cả pattern: nếu relay sinh `eventId` mới mỗi lần
+  publish lại thì `processed_events` của consumer **không chặn được** gì (mỗi lần là event "mới") ⇒ gửi email 2 lần.
+  Dùng `outbox.id` làm `eventId` ⇒ mọi lần retry mang cùng id, dedupe có tác dụng đúng như ADR-0007 D3.
+- **Claim ≠ publish trong cùng transaction**: claim là **transaction ngắn** (UPDATE … `SKIP LOCKED`) rồi mới publish
+  ngoài transaction. Nếu publish trong transaction thì broker chậm (hoặc confirm 5 s như bug ở trên) sẽ giữ row lock
+  của Postgres — biến sự cố broker thành sự cố DB. Thêm `claimed_at` (visibility timeout) để 2 relay không gửi trùng
+  **chắc chắn**, không dựa vào việc 2 vòng quét lệch nhau.
+- **Outbox biến "mất event" thành "trễ event"**: bug confirm ở trên làm mọi lần publish fail trong ~2 phút, nhưng
+  không message nào mất và không đơn nào bị ảnh hưởng. Đây đúng là thứ outbox mua được — và cũng là lý do **không**
+  được coi `attempts` cao là "chuyện nhỏ": nó là tín hiệu cấu hình sai.
+- **`@Transactional` phải đi qua proxy**: tách `CheckoutOutbox` thành bean riêng vì gọi method `@Transactional` từ
+  method khác **cùng class** thì không có transaction nào được mở — outbox sẽ ghi ngoài transaction và mất toàn bộ
+  ý nghĩa (bug loại này không lộ ra ở happy path).
+- **Thanh toán/HTTP nằm ngoài transaction**: transaction chỉ chứa 3 câu SQL local (order + saga + outbox). Giữ
+  transaction qua lời gọi mạng là tự bắn vào chân — một dependency chậm sẽ khoá row hàng giây.
+
 
 ### SL-3.4 — `notification-service` (8089): consumer `order.confirmed` + retry + DLQ
 
@@ -1331,6 +1398,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 | 2026-11-08 | SL-3.2 | **`@ConditionalOnBean` là điều kiện *theo thời điểm*, không phải "bean này sẽ có"**: auto-config chạy theo thứ tự, điều kiện chỉ thấy bean đã đăng ký **trước** nó. Thiếu `after`/`afterName` ⇒ điều kiện âm thầm `false` ⇒ store dedupe không được tạo, bảng `processed_events` không xuất hiện, **không một dòng lỗi** — cùng họ với `SL-3.1` (`RabbitAdmin` khai lazy): code đúng, hệ không làm gì, log sạch. Cách phát hiện duy nhất: kiểm **trạng thái của hệ ngoài** (bảng trong DB, exchange trên broker), không kiểm "service healthy". Phụ: Boot 4 đặt `JdbcTemplateAutoConfiguration` ở module `spring-boot-jdbc` ⇒ dùng `afterName` (string) để commons không phải kéo dependency chỉ vì một cái tên. Hai bài học thiết kế: (1) **marker dedupe phải xoá khi xử lý fail** — nếu chỉ `insert` trước handler thì DLQ replay bị chính marker chặn, message nằm trong DLQ mà không bao giờ chạy lại; (2) **`AcknowledgeMode.MANUAL` là điều kiện của DLQ** — auto-ack nghĩa là message "xong" ngay khi listener trả về ⇒ không còn cơ hội `nack` khi fail ⇒ mất message im lặng. |
 
+| 2026-11-08 | SL-3.3 | **`eventId` phải ổn định qua các lần thử** — chi tiết quyết định cả pattern: relay sinh `eventId` mới mỗi lần publish lại thì dedupe của consumer **không chặn được gì** (mỗi lần là event "mới") ⇒ gửi email 2 lần. Dùng `outbox.id` làm `eventId` thì mọi lần retry mang cùng id. Hai điều nữa: (1) **claim ≠ publish trong cùng transaction** — claim là transaction ngắn (`UPDATE … SKIP LOCKED` + `claimed_at`) rồi publish **ngoài** transaction, nếu không broker chậm sẽ giữ row lock Postgres (biến sự cố broker thành sự cố DB); (2) **`@Transactional` phải đi qua proxy** — tách `CheckoutOutbox` thành bean riêng vì gọi method `@Transactional` cùng class là **không có transaction nào**, outbox ghi ngoài transaction và mất toàn bộ ý nghĩa. Bug thật đáng nhớ: **thiếu `publisher-confirm-type: correlated`** ⇒ `CorrelationData.getFuture()` không bao giờ complete ⇒ mỗi publish treo đúng 5 s rồi fail; outbox đã biến "mất event" thành "trễ event" (21 lần thử, 0 message mất) — đúng thứ pattern này mua được, nhưng `attempts` cao phải được đọc là **cấu hình sai**. |
+
 ## 7. Technical debt register
 
 > Quy tắc ghi nhận: [`.clinerules/20-tech-debt.md`](.clinerules/20-tech-debt.md). Mỗi món nợ **phải có
@@ -1365,6 +1434,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | thấp |
 | `TD-26` | `build-image` (CI) **flaky** khi Maven Central tạm thời không trả artifact: mỗi image `mvn package` từ đầu KHÔNG cache Maven ⇒ gặp hiccup là đỏ oan (gặp thật ở `SL-2.8`: `spring-boot-dependencies:4.1.2 … absent in central`, rerun thì xanh) | SL-2.8 (run `42451712993`) | Phase 7: registry + **cache layer Maven** (`--mount=type=cache` hoặc image builder có `.m2` ấm) ⇒ build nhanh và bớt phụ thuộc Central | thấp |
 | `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
+| `TD-29` | Bảng `outbox` **không có job dọn** row `SENT` ⇒ 1 row/event/lần checkout, phình dần. Hệ quả phụ: đường quét `WHERE status = 'PENDING'` vẫn dùng index riêng nên không chậm, nhưng backup/disk thì lớn lên | SL-3.3 | **Đã trả ở `SL-3.7`** (chưa) — revisit khi bảng > 10⁶ row hoặc khi `notification-service` (`SL-3.4`) xong: gộp 1 job retention cho `outbox` + `processed_events` (giữ 7 ngày để còn điều tra) | trung bình |
 | `TD-28` | **CI đang TẮT tạm thời** (`vars.CI_ENABLED=false`, từ `SL-3.10`) để tăng tốc merge Phase 3 ⇒ mất 3 hàng rào tự động: `test` + JaCoCo gate độc lập, `lint` trong môi trường sạch, và **`build-image` matrix** (chốt duy nhất bắt lỗi Dockerfile/COPY pom khi thêm module/service). Verify chuyển sang **local** (`mvn verify` + e2e) do người/AI tự khai | SL-3.10 | **Bắt buộc** bật lại khi đóng Phase 3 (`gh variable delete CI_ENABLED`) — hoặc sớm hơn nếu có ≥ 1 lần `main` đỏ mà local xanh | cao |
 
 
@@ -1454,3 +1524,5 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | `SL-3.0` → `Done`: **ADR-0007 — contract event Phase 3** (`docs/adr/0007-event-contract.md`, 185 dòng): chốt **5 quyết định** — (D1) envelope JSON 7 field (`eventId · eventType · version · occurredAt · producer · traceId · payload`, không field nghiệp vụ) · (D2) exchange topic `shoplab.events` + `shoplab.dlx`, queue **theo consumer** (`q.notification`/`q.order`/`q.search`) + `<queue>.dlq`, routing key `<aggregate>.<event>.v<N>` · (D3) **at-least-once** + consumer **bắt buộc** dedupe `eventId` (`processed_events` PK `(event_id, consumer)`) · (D4) outbox **polling relay** (`@Scheduled` 1 s, batch 100, `FOR UPDATE SKIP LOCKED`, `SENT` chỉ sau publisher confirm, lỗi giữ `PENDING`) · (D5) retry 3 lần trong consumer (200 ms/1 s/3 s) → DLQ, **không auto-replay**, replay tay qua `tools/dlq.sh` có 3 điều kiện kiểm trước. Kèm **bảng 5 event** (`order.confirmed.v1` · `order.cancelled.v1` · `payment.succeeded.v1` · `product.updated.v1` · `product.archived.v1`) + chính sách versioning (không sửa `.v1`, phát `.v2` song song). Mỗi hạng mục có bảng Options ≥ 3 phương án **có loại** + Revisit định lượng. Update `architecture.md`: **§9.4** (bỏ “schema registry từ Phase 3” → version trong envelope + link ADR), §11.2 (link ADR-0007), header `DRAFT v0.5`, Changelog. Verify: ADR 5 mục đúng template · 5/5 hạng mục có bảng trade-off · link check 0 broken. Không code. |
 | 2026-11-08 | `SL-3.1` → `Done`: **RabbitMQ topology bằng code** — `service-commons` thêm `spring-boot-starter-amqp` (**optional**) + `events/EventTopology` (tên exchange/queue/routing key = nguồn sự thật duy nhất, lấy từ ADR-0007) + `EventTopologyAutoConfiguration` (`@ConditionalOnClass(Declarables)` · `@ConditionalOnProperty(shoplab.events.topology.enabled)`) khai `shoplab.events` (topic) + `shoplab.dlx` (direct) + 3 queue (`q.notification`/`q.order`/`q.search`, durable, DLX `shoplab.dlx` routing key = tên queue) + 3 `.dlq` + **5 binding**; thêm `EventTopologyDeclarer` gọi `amqpAdmin.initialize()` lúc startup (**bug thật**: `RabbitAdmin` khai lazy, không có consumer/publisher ⇒ không khai gì). `order-service` là service đầu tiên khai (`spring.rabbitmq.*` + env compose + `depends_on: rabbitmq healthy`). Tool mới **`tools/rabbit-topology.sh`** (`show` · `dlq` · `publish` · `drain` · `purge`, curl + python3). README thêm mục **Broker (RabbitMQ)** + bảng đọc `ready`/`unacked`/`consumers` + **4 bẫy**. Verify: topology đúng ADR (2 exchange · 6 queue · 8 binding) · publish → `ready=1` → `docker restart` broker → `messages=2` **không mất** → `drain` ack → `ready=0` · `routed=false` khi sai key · `mvn verify` **BUILD SUCCESS · 662 test (544 unit + 118 IT)** · `e2e-smoke` 17/17 · `e2e-checkout` 27/27 · `e2e-checkout-fail` 41/41. |
 | 2026-11-08 | `SL-3.2` → `Done`: **hạ tầng event trong `service-commons`** — `EventEnvelope` (7 field, `create()` sinh `eventId` + `traceId` từ MDC, `versionOf()` parse hậu tố `.vN`) · `EventEnvelopeCodec` (encode/decode + validate: **version lạ ⇒ `EventFormatException`** để đẩy DLQ) · `EventPublisher` (**publisher confirm** qua `CorrelationData.getFuture()` + message `PERSISTENT`, nack/timeout ⇒ `EventPublishException`) · `ProcessedEventStore` + `JdbcProcessedEventStore` (`insert … on conflict do nothing` ⇒ `rowsAffected`, PK `(event_id, consumer)`, kèm `unmarkProcessed`) · `AbstractEventConsumer` (`ChannelAwareMessageListener`: decode → skip event lạ → **dedupe** → handler → ack; lỗi ⇒ retry 3 (200 ms/1 s/3 s) ⇒ **xoá marker** ⇒ `nack(requeue=false)` = DLQ; đặt lại `traceId` của producer vào MDC) · `EventProperties` + `EventAutoConfiguration` (container factory **MANUAL ack**, `prefetch=1`/`concurrency=1` để giữ thứ tự). **Bug thật**: `@ConditionalOnBean(JdbcTemplate)` chạy trước `JdbcTemplateAutoConfiguration` ⇒ store **không được tạo, không lỗi** ⇒ fix bằng `after`/`afterName` + 2 test khoá lại; verify trên stack: bảng `processed_events` xuất hiện trong DB `order` (PK `(event_id, consumer)`). Verify: commons **71 unit** (+15 mới) · toàn repo **BUILD SUCCESS · 679 test (561 unit + 118 IT)** · `order-service` rebuild healthy · `e2e-smoke` 17/17 · `e2e-checkout` 27/27 · `e2e-checkout-fail` 41/41. |
+| 2026-11-08 | `SL-3.10` → `Done`: **tắt CI tạm thời** để tăng tốc merge Phase 3 — kill-switch có sẵn `gh variable set CI_ENABLED --body false` (3 job `skipping`, 0 phút) + **`tools/merge-pr.sh --skip-ci-check`** (mặc định vẫn chặn; có cờ ⇒ in CẢNH BÁO + ghi `CI: BỎ QUA` vào comment evidence hậu merge; vẫn bắt buộc PR mở/không draft + comment tóm tắt + diff không rỗng). Ghi rule: `AGENTS.md` §9 (ngoại lệ + lệnh bật lại) · `.clinerules/10-git-workflow.md` (điều kiện merge thay thế) · `README.md` mục CI · **`TD-28`** (mức `cao`, revisit = **bắt buộc** bật lại khi đóng Phase 3). Verify: `gh variable list` → `CI_ENABLED=false` · push nhánh mới ⇒ **0 run** · `gh pr checks` → 3 job `skipping` · không cờ ⇒ script **chặn** (`run … là 'skipped' (cần 'success')`) · có cờ ⇒ merge được + cảnh báo. |
+| 2026-11-08 | `SL-3.3` → `Done`: **transactional outbox ở `order-service`** — migration `V4__create_outbox.sql` (`outbox` + `status PENDING/SENT` + CHECK `SENT ⇒ sent_at` + index riêng cho `PENDING` + `claimed_at` để 2 relay không gửi trùng) · `OutboxRepository`/`JdbcOutboxRepository` (`claimPending` = 1 câu `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING`, `markSent`, `markFailed` trả claim) · **`CheckoutOutbox`** (bean riêng `@Transactional`: `confirm`/`cancel` ghi order + saga + outbox **cùng transaction** — self-invocation sẽ bỏ qua proxy) · **`OutboxRelay`** (`@Scheduled` 1 s, batch 100, **`eventId = outbox.id`** để retry giữ nguyên id cho dedupe của consumer, lỗi 1 row không chặn row khác) · `OutboxProperties` + env compose. **2 bug thật**: (a) thiếu `spring.rabbitmq.publisher-confirm-type=correlated` ⇒ `getFuture()` không bao giờ complete ⇒ mỗi publish treo 5 s (outbox cứu: event không mất, chỉ trễ); (b) `JdbcOutboxRepository` đòi bean `ObjectMapper` ⇒ IT đỏ 28/28 ⇒ tự tạo mapper. Verify: **mvn verify BUILD SUCCESS · 687 test (566 unit + 121 IT)** · stack thật: confirm ⇒ `PENDING|0` → `SENT|1` + message `q.notification` · **broker chết ⇒ order vẫn `CONFIRMED`**, row `PENDING` `attempts=11`, bật lại ⇒ `SENT` · cancel ⇒ `order.cancelled.v1|SENT` · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-29` (chưa có job dọn row `SENT`). |
