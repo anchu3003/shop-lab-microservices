@@ -152,6 +152,11 @@ build khi số service tăng lên ở Phase 1+.
 | `test` | ∥ song song | `mvn -B -ntp verify -Dcheckstyle.skip=true -Dspotless.check.skip=true` | test đỏ + coverage < 80% LINE (JaCoCo gate) |
 | `build-image` | sau `lint` + `test` | **matrix**, 1 job con/service: `docker build -f services/<service>/Dockerfile --build-arg SKIP_TESTS=true …` | Dockerfile / image build hỏng **của từng service** |
 
+Ngoài `ci.yml` còn workflow [`e2e.yml`](.github/workflows/e2e.yml) (`SL-2.8`): dựng **cả stack** bằng compose rồi chạy
+`e2e-smoke.sh` + `e2e-checkout.sh`. Chạy theo **`workflow_dispatch`** + **`schedule` hằng tuần**, **không** trên PR
+(≈30 phút/run vì mỗi image build phải `mvn package` từ đầu) ⇒ `ci.yml` mới là thứ chặn merge, `e2e.yml` là lưới an toàn
+bắt drift của compose/Dockerfile/script.
+
 Vì sao tách 3 job: CI UI chỉ rõ job nào đỏ (đọc log nhanh), `lint` và `test` độc lập nên chạy song song, còn
 `build-image` là job nặng nhất nên chỉ chạy khi 2 job kia đã xanh (repo private tính **tiền/phút** Actions theo gói).
 
@@ -666,6 +671,35 @@ khi gặp `kid` lạ — rotate khoá không cần restart, có chặn dội). T
 được → **503** (retry được).
 
 ---
+### E2E checkout — `SL-2.8`
+
+Bằng chứng end-to-end **luồng tiền Phase 2** bằng **1 lệnh**: `client → gateway → cart → order(checkout saga) →
+catalog/promotion/inventory → payment → confirm`, assert cả **số tiền** lẫn **trạng thái cuối**.
+
+```bash
+bash tools/e2e-checkout.sh      # cần stack đang chạy (compose up -d)
+```
+
+```text
+== Kết quả: 27 PASS / 0 FAIL · 14 request · 931 ms
+E2E checkout: OK
+```
+
+Luồng kiểm: login admin/seller → register buyer → seller tạo category/product/SKU → admin set tồn kho **10** + voucher
+FIXED **20 000** → buyer thêm **2** món vào giỏ → `POST /v1/checkout` (**201**, `total = 240 000 − 20 000 = 220 000`,
+có `paymentUrl`) → saga `COMPLETED_START` → retry cùng `Idempotency-Key` (**200**, cùng `orderId`) → mock-pay →
+`confirm` (**200**, `CONFIRMED`) → `GET /v1/orders/{id}` = **CONFIRMED** → tồn kho `onHand 10 → 8`, `reserved 0`.
+
+> Vì sao script **riêng** (không nhồi vào `e2e-smoke.sh`): smoke là "health check nhanh" Phase 1 (17 check, ~1 s);
+> tách ra thì khi đỏ biết ngay hỏng tầng nào.
+
+**Chạy trong CI**: workflow [`e2e.yml`](.github/workflows/e2e.yml) dựng **cả 10 thành phần** bằng
+`docker compose up -d --build --wait` rồi chạy 2 script trên. Nó chạy theo **`workflow_dispatch`** (bấm tay) và
+**`schedule` hằng tuần** — **không** chạy mỗi PR vì 9 image × `mvn package` từ đầu ≈ 30 phút/run (gói Free 2 000
+phút/tháng). `ci.yml` vẫn là hàng rào chạy mỗi PR.
+
+
+
 ### E2E smoke — `SL-1.3` → `SL-1.7`
 
 Bằng chứng end-to-end **cả Phase 1** bằng **1 lệnh**: `client → gateway → identity/catalog → DB`.

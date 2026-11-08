@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.6b` ✅ **Done** — checkout saga hoàn tất, đã lên `main`) |
-| **Ticket tiếp theo** | `SL-2.8` — E2E checkout happy path + OpenAPI + compose/CI cho 5 service mới · `SL-2.9` — test nhánh fail |
+| **Ticket đang làm** | — (`SL-2.8` ✅ **Done** — E2E checkout + `e2e.yml` cho CI) |
+| **Ticket tiếp theo** | `SL-2.9` — test nhánh fail (hết hàng giữa chừng · payment fail · timeout) · `SL-2.10` — runbook + DoD Phase 2 |
 | **Số ticket chi tiết hiện có** | 33 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 10) |
 
 ---
@@ -213,7 +213,7 @@ $ md5sum docs/api/openapi.yaml
 | 7 | `SL-2.6a` | **Checkout Saga — start** (`order-service`): `POST /v1/checkout` đọc **cart** → lấy giá bằng **batch SKU** của catalog → lock voucher → reserve stock → tạo order → payment intent; lưu **saga state**; compensating cho nhánh fail lúc start | M | ✅ Done |
 | 8 | `SL-2.6b` | **Checkout Saga — hoàn tất**: `confirm` (commit stock + voucher ⇒ `CONFIRMED`), `cancel` + **sweeper hết hạn 15′** (⇒ `EXPIRED`), idempotent theo saga state | M | ✅ Done |
 | 9 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | ✅ Done |
-| 10 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M | Todo |
+| 10 | `SL-2.8` | E2E checkout happy path (`tools/e2e-checkout.sh` — assert cả **tiền** lẫn trạng thái) + workflow `e2e.yml` (compose + 2 script, chạy dispatch/hằng tuần) + verify OpenAPI/matrix | M | ✅ Done |
 | 11 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M | Todo |
 | 12 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S | Todo |
 | 13 | `SL-2.11` | *(phát sinh từ `SL-2.0`)* `catalog-service`: **soft delete** product — `status = ARCHIVED` + `deleted_at`, `DELETE` không xoá row, list/get ẩn product đã xoá, `reserve` từ chối SKU archived | S | ✅ Done |
@@ -1775,6 +1775,126 @@ $ bash tools/export-openapi.sh  VALIDATE PASS · 41 path · 50 operation  (trư�
   vào được"; ngắn hơn ⇒ khách đang trả tiền thì đơn bị expire. Cấu hình này là **ràng buộc chéo service**, ghi rõ trong
   `application.yml` để người sau không sửa lẻ.
 
+### SL-2.8 — E2E checkout happy path + OpenAPI + CI matrix cho service mới
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done (2026-11-08) |
+| **Phase** | 2 — Core commerce flow |
+| **Phụ thuộc** | `SL-2.1` · `SL-2.5` · `SL-2.6a` · `SL-2.6b` · `SL-2.7` (đủ 5 mảnh của luồng tiền); **chặn** `SL-2.9`/`SL-2.10` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Tới `SL-2.6b`, từng mảnh đã được verify riêng lẻ, nhưng **chưa có một lệnh nào chứng minh cả luồng tiền chạy end-to-end**
+qua cửa vào duy nhất (client → gateway → cart → order saga → catalog/promotion/inventory → payment → confirm). Thiếu nó
+thì mỗi lần merge vẫn phải tự dựng lại chuỗi `curl` bằng tay — và người mới không biết bắt đầu từ đâu.
+
+**Mục tiêu**
+
+1. Một script **một lệnh** chạy happy path checkout trên stack thật, assert cả **số tiền** lẫn **trạng thái cuối**.
+2. Chứng minh OpenAPI + CI matrix đã phủ đủ service mới (không sửa nếu đã đúng).
+3. Trả `TD-4`: smoke/E2E có đường chạy trong CI (không chỉ local).
+
+**In scope**
+
+- `tools/e2e-checkout.sh` (**mới**): register buyer → seller tạo category/product/SKU → admin set stock + voucher →
+  cart → `POST /v1/checkout` → `GET /v1/checkout/{id}` → retry cùng `Idempotency-Key` → mock-pay → `confirm` →
+  `GET /v1/orders/{id}` → `GET /v1/stock/{skuId}`. PASS/FAIL counter, mỗi bước in gợi ý điều tra.
+- `.github/workflows/e2e.yml` (**mới**): `workflow_dispatch` + `schedule` hằng tuần; `docker compose up -d --build --wait`
+  rồi chạy `e2e-smoke.sh` + `e2e-checkout.sh`; dump log khi đỏ; `down -v` luôn.
+- README: mục E2E + cách chạy; bảng CI workflow.
+
+**Out of scope**
+
+- Không chạy E2E trên **mỗi PR** (lý do chi phí ở Ghi chú kỹ thuật) — `ci.yml` vẫn là hàng rào mỗi PR.
+- Không push image lên registry / không cache layer (Phase 7: registry + buildx cache sẽ làm `e2e` rẻ hơn nhiều).
+- Nhánh **fail** của checkout (payment fail, hết hàng giữa chừng, timeout) → `SL-2.9`.
+- Không đụng `e2e-smoke.sh` (giữ vai trò walking skeleton Phase 1, 17 check ổn định).
+
+**Acceptance Criteria**
+
+- [x] `bash tools/e2e-checkout.sh` (stack local đang chạy) → **27 PASS / 0 FAIL**, exit 0.
+- [x] Script assert **tiền**: `subtotal = 2 × 120000`, `total = subtotal − 20000` (voucher), `total` không đổi sau confirm.
+- [x] Script assert **trạng thái**: saga `COMPLETED_START` → sau pay + confirm = `CONFIRMED`; order (góc nhìn client)
+      `CONFIRMED`; tồn kho `onHand 10 → 8`, `reserved = 0`.
+- [x] Script assert **idempotency**: retry cùng key → **200** + cùng `orderId`.
+- [x] Script hỏng thì **fail thật**: `exit 1` + gợi ý (`docker compose logs …`); bước sau phụ thuộc bước trước bị skip có
+      đếm lỗi (không "xanh giả").
+- [x] `bash tools/e2e-smoke.sh` vẫn **17/17** (không regress).
+- [x] `tools/export-openapi.sh` → **41 path / 50 operation**, `VALIDATE PASS`.
+- [x] `ci.yml` matrix `build-image` **đủ 9 service** (gồm 5 service mới) — đã có từ `SL-1.12`/`SL-2.x`, chỉ verify.
+- [x] Workflow `e2e.yml` parse hợp lệ (`python3 yaml.safe_load`), trigger `workflow_dispatch` + `schedule`, không thêm
+      chi phí cho PR.
+
+**Ghi chú kỹ thuật**
+
+- **Script riêng thay vì nhồi vào `e2e-smoke.sh`**: smoke là "health check nhanh" của Phase 1 (17 check, ~1 s). Nhồi
+  Phase 2 vào đó làm nó chậm và khi đỏ thì không biết hỏng tầng nào; tách ra thì mỗi script một vai trò.
+- **`parse_float=str` khi đọc JSON**: `json.load` đổi `220000.00` thành float `220000.0` ⇒ so sánh tiền fail giả. Đây là
+  cùng một bẫy với `String.valueOf(double)` đã gặp ở `SL-2.13` — lần này ở phía shell.
+- **E2E chạy theo `schedule` + dispatch, không theo PR**: mỗi image build trong CI phải `mvn package` từ đầu (không cache
+  Maven giữa job) ⇒ 9 image ≈ 30 phút/run. Gói Free 2.000 phút/tháng ⇒ chạy mỗi PR là tự bắn vào chân. `TD-4` vẫn **đóng**
+  vì đã có đường chạy trong CI + bằng chứng cơ chế (`compose config` OK, `--wait` hỗ trợ, env prep chạy được).
+- **`down -v` ở bước `always()`**: volume cũ làm `init/01-create-databases.sh` không chạy lại (bài học `SL-0.3`) ⇒ lần
+  chạy sau sẽ gặp "database không tồn tại" rất khó hiểu.
+- **`--wait --wait-timeout 420`**: để runner chờ healthcheck thay vì `sleep` mò; fail sớm nếu service không lên.
+
+**Kết quả verify** *(chạy thật 2026-11-08 — stack compose 10 container healthy)*
+
+```text
+$ bash tools/e2e-checkout.sh
+== E2E checkout happy path (Phase 2) — http://localhost:8080
+  PASS [1] 1 login admin + seller                  PASS [15] 11b saga đã xong bước start
+  PASS [2] 2 register buyer → 201                  PASS [16] 12 retry cùng Idempotency-Key → 200 (replay)
+  PASS [3] 3 login buyer                           PASS [17] 12b replay trả cùng orderId
+  PASS [4] 4 seller tạo category → 201             PASS [18] 12c replay có body checkout hợp lệ
+  PASS [5] 5 seller tạo product → 201              PASS [19] 13 mock provider báo đã thanh toán → 200
+  PASS [6] 6 seller tạo SKU → 201                  PASS [20] 14 confirm → 200
+  PASS [7] 7 admin set tồn kho = 10 → 200          PASS [21] 14b saga CONFIRMED
+  PASS [8] 8 admin tạo voucher FIXED 20000 → 201   PASS [22] 15 GET order (client) → 200
+  PASS [9] 9 buyer thêm 2 món vào giỏ → 200        PASS [23] 15b order CONFIRMED
+  PASS [10] 10 checkout → 201                      PASS [24] 15c order giữ total đã chốt
+  PASS [11] 10b total = subtotal − voucher         PASS [25] 16 GET tồn kho → 200
+  PASS [12] 10c subtotal đúng                      PASS [26] 16b onHand 10 → 8
+  PASS [13] 10d có paymentUrl                      PASS [27] 16c reserved về 0
+  PASS [14] 11 GET trạng thái saga → 200
+== Kết quả: 27 PASS / 0 FAIL · 14 request · 931 ms
+E2E checkout: OK
+```
+
+```text
+$ bash tools/e2e-smoke.sh       17 PASS / 0 FAIL · 13 request · 949 ms
+$ bash tools/export-openapi.sh  VALIDATE PASS · 41 path · 50 operation
+$ .github/workflows/ci.yml      matrix build-image: 9 service (template, identity, catalog, inventory,
+                                promotion, order, payment, cart, gateway)
+$ .github/workflows/e2e.yml     yaml OK · jobs: [compose-e2e] · triggers: workflow_dispatch, schedule
+$ docker compose ... config -q  compose config OK (Compose v5.7.0, hỗ trợ --wait)
+$ env prep (sed 4 secret)       POSTGRES/REDIS/RABBITMQ/PAYMENT_WEBHOOK → giá trị CI, không còn 'change_me'
+```
+
+**Sự cố trong lúc verify (2 lỗi thật)**
+
+- **Fail giả vì Python đổi số**: `json.load` trả `float` ⇒ `220000.00` thành `"220000.0"` ⇒ 3 assertion tiền đỏ dù API
+  đúng. Fix: `parse_float=str, parse_int=str` để giữ nguyên chuỗi số của API.
+- **CI run `42451712993` đỏ ở `build-image (promotion-service)`** — không phải do code: Maven Central tạm thời không trả
+  `spring-boot-dependencies:4.1.2` ("absent in central") trong khi 8 job khác resolve bình thường; rerun thì **xanh**.
+  Ghi `TD-26` (build-image flaky vì không cache Maven — trả nợ ở Phase 7 khi có registry + cache layer).
+
+**Learning note**
+
+- **E2E phải assert *giá trị*, không chỉ status**: 3/27 check đỏ ngay lần chạy đầu đều là check tiền — nếu chỉ check `201`
+  thì script đã "xanh" trong khi con số trên hoá đơn có thể sai. Cùng lý do `SL-2.5` đặt CHECK constraint ở DB, còn script
+  này đặt assertion ở tầng HTTP.
+- **Script E2E là tài liệu sống**: chuỗi bước (cart → checkout → mock-pay → confirm → kiểm kho) chính là luồng nghiệp vụ
+  viết bằng lệnh chạy được — người mới đọc là hiểu hệ, không phải đọc 5 service.
+- **Chi phí CI là quyết định thiết kế**: cùng một workflow, chạy mỗi PR (≈30 phút/lần) sẽ đốt 2.000 phút trong ~1 tuần.
+  `schedule` + `workflow_dispatch` giữ được giá trị "chứng minh chạy trong CI" mà không phá budget.
+- **Trigger theo `schedule` không chạy trên PR** ⇒ workflow này **không** tạo cảm giác an toàn giả: nó không chặn merge,
+  phần chặn vẫn là `ci.yml`. Hai thứ khác vai, đừng gộp.
+- **`parse_float=str` lần thứ hai trong repo** (`SL-2.13` là `String.valueOf`): mọi ngôn ngữ trung gian đều có xu hướng
+  "chuẩn hoá" số — assert tiền phải so sánh **chuỗi gốc**.
+
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
 
@@ -1982,6 +2102,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | SL-2.13 | **Endpoint batch thuộc về service sở hữu dữ liệu, không phải nơi cần dùng**: `catalog` trả giá, `order` không cache giá. `missingIds` đúng hơn 404 cả request — một SKU chết không nên làm hỏng cả giỏ. Đếm kích thước request **trước** khi dedupe, không thì client lách trần bằng cách lặp id. Tên DTO lồng phải dài (`SkuLine`) vì spec OpenAPI merge toàn hệ. Và: `String.valueOf` trên số JSON (`Double`) là bẫy assertion. |
 | 2026-11-08 | SL-2.6a | **Compensating phải đọc state bền**: saga ghi `lock_id`/`reservation_id` xuống DB ngay sau mỗi bước ⇒ hàm bù chỉ `select` lại là đủ; giữ trong biến RAM thì crash giữa chừng là mất dấu, hàng treo tới hết TTL. Fail thì **trả lại idempotency key** (xoá row) chứ không để `IN_PROGRESS` (job dọn 1 h ⇒ user sửa giỏ xong vẫn 409). **Stub test phải khó tính ngang service thật** — stub nhận mọi body nên sai tên field (`lines` vs `items`) vẫn xanh, chỉ chạy compose thật mới lộ. **5xx của dependency là 503 của mình**, không phải 500. Và: đơn 0 đồng là **bất biến của saga** (`payment_required`), không suy ra từ `orders.total`. |
 | 2026-11-08 | SL-2.6b | **Tách finish khỏi start**: start *bù* khi fail, finish *không* bù (commit xong thì "un-commit" vô nghĩa) — một class làm cả hai sẽ phải rẽ nhánh theo pha. **Không cần state "đang xử lý"** khi service đích idempotent: chốt chặn thật là compare-and-set trên `orders`. **Sweeper không có token ⇒ đừng gọi API cần token** — để TTL sweeper của inventory/promotion trả hàng (đo được `reserved 2 → 0` sau 45 s). Và `payment-window` **phải bằng** TTL reservation/lock, nếu không có cửa sổ "đơn EXPIRED mà tiền vẫn vào". |
+| 2026-11-08 | SL-2.8 | **E2E phải assert giá trị, không chỉ status**: 3 check tiền đỏ dù API đúng (qua `status 201` thì đã "xanh"); và mọi ngôn ngữ trung gian "chuẩn hoá" số — Python `json.load` biến `220000.00` thành `220000.0` ⇒ dùng `parse_float=str` (cùng bẫy với `String.valueOf` ở `SL-2.13`). **Chi phí CI là quyết định thiết kế**: 9 image × `mvn package` ≈ 30 phút/run ⇒ E2E chạy `schedule` + `workflow_dispatch`, không chạy mỗi PR; workflow không chạy trên PR **không** chặn merge — `ci.yml` mới là hàng rào. |
 
 ---
 
@@ -1996,7 +2117,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-1` | Bảng `refresh_tokens` không có job dọn row hết hạn → phình dần | SL-1.4 | Khi bảng > 10⁶ row **hoặc** khi thêm scheduler | trung bình |
 | `TD-2` | `GET /v1/admin/users` trả **toàn bộ** user, không phân trang | SL-1.4 | Khi số user > 1.000 hoặc có màn quản trị thật | thấp |
 | `TD-3` | Handler map `AccessDeniedException` → 403 nằm trong **catalog**; service khác dùng `@PreAuthorize` phải copy | SL-1.5 | **Đã đạt**: `SL-2.2` là service thứ hai dùng `@PreAuthorize` → ticket `SL-2.12` | trung bình (chờ `SL-2.12`) |
-| `TD-4` | `tools/e2e-smoke.sh` phụ thuộc tài khoản seed + `docker logs` ⇒ chỉ chạy local, chưa vào CI | SL-1.7 | Phase 2 (D6: smoke trong CI) | trung bình |
+| `TD-4` | `tools/e2e-smoke.sh` phụ thuộc tài khoản seed + `docker logs` ⇒ chỉ chạy local, chưa vào CI | SL-1.7 | **Đã trả ở `SL-2.8`**: workflow `e2e.yml` dựng compose + chạy `e2e-smoke.sh` + `e2e-checkout.sh` (dispatch/hằng tuần) | ✅ đã trả (SL-2.8) |
 | `TD-5` | `tools/merge-pr.sh` chưa retry khi GitHub API lỗi tạm thời | SL-1.14 | Lần tới script fail vì API (retry + backoff ~15 dòng) | thấp |
 | `TD-6` | Phân trang **offset** (`OFFSET 100000` quét bỏ rất nhiều row) | SL-1.6 | Phase 4 khi đo được p99 của list (→ keyset) | trung bình |
 | `TD-7` | `q` dùng `LIKE '%…%'` (leading wildcard) ⇒ không dùng được btree, full scan | SL-1.6 | Phase 3/8 khi cần search thật (→ `tsvector`/trigram) | trung bình |
@@ -2017,6 +2138,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-23` | IT `inventory`: `commitAfterExpiryReturnsGone` **flaky** — test đẩy `expires_at` về quá khứ rồi `commit`, nhưng sweeper trong IT chạy mỗi **300 ms** nên có lúc nó expire trước ⇒ `commit` trả **409** thay vì **410** (đỏ trên CI chậm, xanh ở máy local) | SL-2.13 (CI run `42444551383`) | Lần tới khi sửa test của inventory: tắt sweeper (`sweep-interval-ms` rất lớn) cho test lazy-expire, hoặc assert `status ∈ {410, 409}` + kiểm `reserved = 0` (điều thực sự quan trọng) | trung bình |
 | `TD-24` | `checkout_saga_steps` + `checkout_sagas` **không có job dọn** — 1 dòng/bước/lần checkout ⇒ phình mãi (audit nhưng không ai đọc sau 30 ngày) | SL-2.6a | Khi bảng > 10⁶ row hoặc khi `SL-2.6b` thêm sweeper (gộp 1 `@Scheduled` dọn saga `COMPLETED_START`/`FAILED_*` cũ > 30 ngày) | thấp |
 | `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | thấp |
+| `TD-26` | `build-image` (CI) **flaky** khi Maven Central tạm thời không trả artifact: mỗi image `mvn package` từ đầu KHÔNG cache Maven ⇒ gặp hiccup là đỏ oan (gặp thật ở `SL-2.8`: `spring-boot-dependencies:4.1.2 … absent in central`, rerun thì xanh) | SL-2.8 (run `42451712993`) | Phase 7: registry + **cache layer Maven** (`--mount=type=cache` hoặc image builder có `.m2` ấm) ⇒ build nhanh và bớt phụ thuộc Central | thấp |
 | `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
 
 ## 8. Changelog
@@ -2095,3 +2217,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | `SL-2.13` → `Done`: `catalog-service` có **`GET /v1/skus?ids=`** — **batch** giá/tên cho ≤ 100 SKU trong 1 request để saga `SL-2.6a` + giỏ hàng lấy giá **thật** thay vì tin giá client gửi; `unitPrice = price_override ?? product.price`; SKU archived/không tồn tại → `missingIds` (không 404 cả request); public như `GET /v1/products` (catalog tự mở `GET /v1/skus` + gateway thêm route & public-path `/v1/skus/**`). Verify: `mvn -B -ntp verify` **BUILD SUCCESS** toàn repo (catalog **79 unit** (+13) · **25 IT** (+4) · checkstyle 0 · jacoco pass) · flow thật qua gateway **không token**: 200 + giá đúng (`150000.00` override / `180000.00` giá product) trong **31 ms** · gọi thẳng `:8082` cũng 200 · trùng lặp ⇒ 1 dòng · xoá mềm product ⇒ `missingIds` (HTTP vẫn 200) · **400** cho thiếu ids / sai UUID / 101 id, **200** cho 100 id · `e2e-smoke` **17/17** · OpenAPI 36 → **37 path**. **Tách ticket**: `SL-2.6` (`L`) → **`SL-2.6a`** (saga start) + **`SL-2.6b`** (confirm/cancel/sweeper) — chốt **phương án B** (saga đọc cart + giá batch từ catalog), cập nhật `architecture.md` §5 + §6.1. Debt: **`TD-22`** (endpoint public chưa rate limit/cache) · `TD-20` cập nhật điều kiện revisit. |
 | 2026-11-08 | `SL-2.6a` → `Done`: **checkout saga start** trong `order-service` — `RestClient` sync (timeout 2 s/800 ms, forward JWT user) + `POST /v1/checkout` (`Idempotency-Key`, body chỉ `{voucherCode?}`) chạy `cart → price (batch SL-2.13) → lock voucher → reserve → order PENDING_PAYMENT → payment intent`; state ở `checkout_sagas` + audit `checkout_saga_steps` (6 bước, http status, ms); **compensating theo state bền** (release stock/voucher, cancel order); fail ⇒ trả lại idempotency key; **đơn 0 đồng** (voucher 100%) không tạo payment intent (`payment_required=false`, step `SKIPPED` — ADR-0006 **D6**); 5xx của dependency ⇒ **503**. Gateway route `/v1/checkout`; compose + `.env.example` thêm 5 URL + timeout. Verify: `mvn verify` **BUILD SUCCESS** (order 55 unit + 18 IT, checkstyle 0) · chạy thật: **201** total 220000 + paymentUrl → saga `COMPLETED_START` + 6 step OK + `reserved=2` + voucher `LOCKED` · retry cùng key **200** replay cùng orderId · hết hàng ⇒ **409** + voucher `RELEASED` + saga `FAILED_STOCK` · giỏ rỗng **422** · thiếu key **400** · `e2e-smoke` 17/17 · OpenAPI 37 → **39 path**. **Sự cố**: sai tên field `lines`/`items` (stub không bắt được → stub giờ validate); Boot 4 không có bean `RestClient.Builder`; 5xx map sai sang 500. Debt mới: `TD-24`. |
 | 2026-11-08 | `SL-2.6b` → `Done`: **checkout saga hoàn tất** — `POST /v1/checkout/{orderId}/confirm` (verify payment ở **server** rồi commit stock → voucher ⇒ order `CONFIRMED`; đơn 0 đồng bỏ qua verify — ADR-0006 D6), `POST /v1/checkout/{orderId}/cancel` (release stock + voucher ⇒ `CANCELLED`), `CheckoutSagaSweeper` (quá `payment-window` 15′ ⇒ order/saga `EXPIRED`; hàng/voucher do **TTL sweeper** của inventory/promotion trả — chốt phương án A, ghi `TD-25`); state saga thêm `CONFIRMED`/`CANCELLED`/`EXPIRED` (migration `V3`), step audit thêm `PAYMENT_VERIFY`/`STOCK_COMMIT`/`VOUCHER_COMMIT`/`STOCK_RELEASE`/`VOUCHER_RELEASE`/`EXPIRE`. Verify: `mvn verify` **BUILD SUCCESS** (order 65 unit + 25 IT, checkstyle 0) · chạy thật: confirm trước khi trả tiền → **409**; mock-pay → confirm **200** `CONFIRMED`, `on_hand 10→8`, voucher `COMMITTED`, history 2 dòng; confirm#2 200 (history vẫn 2); cancel → `RELEASED` + `CANCELLED`, cancel#2 200, cancel sau confirm 409; bỏ ngang 20 s → sweeper `EXPIRED`/`PAYMENT_WINDOW_EXCEEDED` rồi TTL 45 s trả `reserved 2→0` + voucher `EXPIRED` · `e2e-smoke` 17/17 · OpenAPI 39 → **41 path**. **Sự cố**: record `@ConfigurationProperties` chỉ được 1 constructor; checkstyle bắt `switch` thiếu `default`. Debt: `TD-25`. |
+| 2026-11-08 | `SL-2.8` → `Done`: **E2E checkout** — `tools/e2e-checkout.sh` (27 check: tiền · saga · idempotency · mock-pay · confirm · order · tồn kho) + workflow **`e2e.yml`** (compose 10 thành phần + 2 script; `workflow_dispatch` + `schedule` hằng tuần, **không** chạy mỗi PR vì ≈30 phút/run) ⇒ **trả `TD-4`**; verify OpenAPI **41 path/50 operation** + matrix `build-image` **9 service** (đã có, chỉ kiểm). Verify: `e2e-checkout` **27 PASS / 0 FAIL** (931 ms) · `e2e-smoke` 17/17 · `e2e.yml` parse OK · `compose config` OK. **Sự cố**: fail giả do Python đổi số tiền thành float ⇒ `parse_float=str`; CI `build-image` flaky do Maven Central hiccup (rerun xanh) ⇒ `TD-26`. |
