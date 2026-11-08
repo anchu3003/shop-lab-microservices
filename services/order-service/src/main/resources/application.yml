@@ -90,6 +90,13 @@ shoplab:
     # mọi thứ khoẻ; chậm hơn nghĩa là fail-fast chứ không kéo lê.
     read-timeout: ${SAGA_READ_TIMEOUT:800ms}
     currency: ${SAGA_CURRENCY:VND}
+    # SL-2.6b: quá hạn này mà chưa thanh toán ⇒ sweeper đánh dấu EXPIRED. Cố ý bằng TTL
+    # reservation của inventory và TTL voucher lock của promotion (15m): dài hơn thì tồn tại cửa sổ
+    # "đơn đã EXPIRED nhưng tiền vẫn vào được".
+    payment-window: ${SAGA_PAYMENT_WINDOW:15m}
+    sweep-interval: ${SAGA_SWEEP_INTERVAL:60s}
+    sweep-initial-delay: ${SAGA_SWEEP_INITIAL_DELAY:30s}
+    sweep-batch-size: ${SAGA_SWEEP_BATCH_SIZE:50}
 
 logging:
   level:

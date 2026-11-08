@@ -602,6 +602,8 @@ fail (release stock/voucher, cancel order).
 |---|---|---|
 | `POST /v1/checkout` | đã đăng nhập | **bắt buộc** `Idempotency-Key`; body chỉ `{voucherCode?}` — dòng hàng lấy từ **giỏ**. 201 · 200 replay · **422** giỏ rỗng · **409** SKU không mua được / hết hàng · **503** không tới được service đích · **400** thiếu key |
 | `GET /v1/checkout/{orderId}` | chủ đơn / admin | trạng thái saga: `state` · `lockId` · `reservationId` · `paymentIntentId` · `failureCode` |
+| `POST /v1/checkout/{orderId}/confirm` | chủ đơn / admin | **verify payment thật** rồi commit stock + voucher ⇒ `CONFIRMED`; gọi lại → **200**; payment chưa `SUCCEEDED` → **409**; đơn 0 đồng bỏ qua bước verify |
+| `POST /v1/checkout/{orderId}/cancel` | chủ đơn / admin | release stock + voucher ⇒ `CANCELLED` (body `{reason?}`); gọi lại → **200**; đơn đã `CONFIRMED` → **409** |
 
 ```bash
 # Buyer: thêm hàng vào giỏ rồi checkout (voucher tuỳ chọn)
@@ -611,10 +613,21 @@ curl -s -X POST localhost:8080/v1/checkout -H "Authorization: Bearer $BUYER" \
   -H 'Content-Type: application/json' -H "Idempotency-Key: ck-1" -d '{"voucherCode":"SALE20"}'
 ```
 
-State lưu ở `checkout_sagas` + audit `checkout_saga_steps` (6 bước, http status, ms) trong DB `order`.
-**Đơn 0 đồng** (voucher 100%) không tạo payment intent: response `paymentRequired=false`, bước `PAYMENT_INTENT` =
-`SKIPPED` ([ADR-0006](docs/adr/0006-checkout-model.md) D6). Timeout mỗi bước 2 s connect / 800 ms read, URL 5 service
-qua `SAGA_*_URL`; confirm/cancel/sweeper 15′ thuộc `SL-2.6b`.
+State lưu ở `checkout_sagas` + audit `checkout_saga_steps` (6 bước start + các bước finish, http status, ms) trong DB
+`order`. **Đơn 0 đồng** (voucher 100%) không tạo payment intent: response `paymentRequired=false`, bước
+`PAYMENT_INTENT` = `SKIPPED` ([ADR-0006](docs/adr/0006-checkout-model.md) D6). Timeout mỗi bước 2 s connect / 800 ms
+read, URL 5 service qua `SAGA_*_URL`.
+
+**Bước hoàn tất**: sau khi thanh toán (mock: `POST /mock-provider/pay/{id}`) client gọi
+`POST /v1/checkout/{orderId}/confirm` → saga verify với payment-service rồi commit stock + voucher. Không thanh toán
+trong `SAGA_PAYMENT_WINDOW` (mặc định **15′** = TTL reservation/voucher) ⇒ `CheckoutSagaSweeper` đánh dấu `EXPIRED`;
+hàng/voucher về kho theo TTL sweeper của inventory/promotion ([ADR-0006](docs/adr/0006-checkout-model.md) D7).
+
+```bash
+curl -s -X POST localhost:8080/v1/checkout/<orderId>/confirm -H "Authorization: Bearer $BUYER"
+curl -s -X POST localhost:8080/v1/checkout/<orderId>/cancel  -H "Authorization: Bearer $BUYER" \
+  -H 'Content-Type: application/json' -d '{"reason":"doi y"}'
+```
 
 ### api-gateway — `SL-1.2`
 

@@ -173,6 +173,65 @@ public class DownstreamGateway {
                     .toEntity(PaymentIntent.class)));
   }
 
+  /** Đọc trạng thái payment intent — saga **tự** kiểm "đã trả tiền chưa", không tin client. */
+  public DownstreamResult<PaymentStatusResponse> getPaymentIntent(
+      String bearer, UUID paymentIntentId) {
+    return call(
+        "payment",
+        "đọc payment intent",
+        () ->
+            toResult(
+                client
+                    .get()
+                    .uri(properties.paymentUrl() + "/v1/payment-intents/{id}", paymentIntentId)
+                    .headers(headers -> headers.setBearerAuth(bearer))
+                    .retrieve()
+                    .onStatus(
+                        HttpStatusCode::isError, (request, response) -> fail("payment", response))
+                    .toEntity(PaymentStatusResponse.class)));
+  }
+
+  /**
+   * Chốt hàng (`POST /v1/stock/commit`) — trừ `on_hand` thật.
+   *
+   * <p>Idempotent ở phía inventory: gọi lại khi đã `COMMITTED` trả **200** (không trừ 2 lần) ⇒
+   * retry confirm sau lỗi giữa chừng là an toàn.
+   */
+  public DownstreamResult<Void> commitStock(String bearer, UUID reservationId) {
+    return call(
+        "inventory",
+        "commit stock",
+        () ->
+            toResult(
+                client
+                    .post()
+                    .uri(properties.inventoryUrl() + "/v1/stock/commit")
+                    .headers(headers -> headers.setBearerAuth(bearer))
+                    .body(new ReservationRefBody(reservationId))
+                    .retrieve()
+                    .onStatus(
+                        HttpStatusCode::isError, (request, response) -> fail("inventory", response))
+                    .toBodilessEntity()));
+  }
+
+  /** Chốt lượt voucher (`POST /v1/vouchers/commit`) — `used + 1`, `locked − 1`. Idempotent. */
+  public DownstreamResult<Void> commitVoucher(String bearer, UUID lockId) {
+    return call(
+        "promotion",
+        "commit voucher",
+        () ->
+            toResult(
+                client
+                    .post()
+                    .uri(properties.promotionUrl() + "/v1/vouchers/commit")
+                    .headers(headers -> headers.setBearerAuth(bearer))
+                    .body(new VoucherRefBody(lockId))
+                    .retrieve()
+                    .onStatus(
+                        HttpStatusCode::isError, (request, response) -> fail("promotion", response))
+                    .toBodilessEntity()));
+  }
+
   /**
    * Trả chỗ hàng — <b>bù</b>, nên fail chỉ log. Endpoint {@code release} của inventory idempotent ⇒
    * gọi 2 lần không phá dữ liệu.

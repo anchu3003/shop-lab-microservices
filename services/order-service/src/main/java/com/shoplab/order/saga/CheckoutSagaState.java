@@ -28,5 +28,17 @@ public enum CheckoutSagaState {
   FAILED_ORDER,
 
   /** Không tạo được payment intent — stock + voucher trả lại, order `CANCELLED`. */
-  FAILED_PAYMENT
+  FAILED_PAYMENT,
+
+  /** Tiền đã về (hoặc đơn 0 đồng): stock + voucher đã **commit**, order `CONFIRMED`. */
+  CONFIRMED,
+
+  /** Khách huỷ (hoặc cancel do lỗi): stock + voucher đã **release**, order `CANCELLED`. */
+  CANCELLED,
+
+  /**
+   * Quá `payment-window` mà chưa thanh toán: order `EXPIRED`; hàng/voucher do TTL sweeper của
+   * inventory/promotion trả (xem `SL-2.6b` — sweeper không có token user).
+   */
+  EXPIRED
 }

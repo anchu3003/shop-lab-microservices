@@ -1,5 +1,6 @@
 package com.shoplab.order.saga;
 
+import com.shoplab.order.order.ChangeStatusRequest;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -33,9 +34,11 @@ public class CheckoutController {
   private static final String IDEMPOTENCY_HEADER = "Idempotency-Key";
 
   private final CheckoutService service;
+  private final CheckoutFinishService finish;
 
-  public CheckoutController(CheckoutService service) {
+  public CheckoutController(CheckoutService service, CheckoutFinishService finish) {
     this.service = service;
+    this.finish = finish;
   }
 
   /**
@@ -62,6 +65,29 @@ public class CheckoutController {
   @GetMapping("/{orderId}")
   public SagaStatusResponse status(@PathVariable UUID orderId, @AuthenticationPrincipal Jwt jwt) {
     return service.status(orderId, UUID.fromString(jwt.getSubject()), isAdmin(jwt));
+  }
+
+  /**
+   * Chốt đơn sau khi thanh toán → **200** `state=CONFIRMED` (idempotent: gọi lại trả 200).
+   *
+   * <p>Saga **tự** hỏi `payment-service` xem intent đã `SUCCEEDED` chưa — client nói "tôi trả rồi"
+   * không đủ.
+   */
+  @PostMapping("/{orderId}/confirm")
+  public SagaStatusResponse confirm(@PathVariable UUID orderId, @AuthenticationPrincipal Jwt jwt) {
+    return finish.confirm(
+        orderId, UUID.fromString(jwt.getSubject()), isAdmin(jwt), jwt.getTokenValue());
+  }
+
+  /** Huỷ đơn còn chờ thanh toán → 200 `state=CANCELLED`; huỷ đơn đã `CONFIRMED` → **409**. */
+  @PostMapping("/{orderId}/cancel")
+  public SagaStatusResponse cancel(
+      @PathVariable UUID orderId,
+      @RequestBody(required = false) ChangeStatusRequest request,
+      @AuthenticationPrincipal Jwt jwt) {
+    String reason = request == null ? null : request.reason();
+    return finish.cancel(
+        orderId, UUID.fromString(jwt.getSubject()), isAdmin(jwt), jwt.getTokenValue(), reason);
   }
 
   /**

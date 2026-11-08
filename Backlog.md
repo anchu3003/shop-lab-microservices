@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.6a` ✅ **Done** — checkout saga start đã lên `main`) |
-| **Ticket tiếp theo** | `SL-2.6b` — Checkout Saga **hoàn tất** (confirm · cancel · sweeper 15′) · `SL-2.8` — E2E checkout |
+| **Ticket đang làm** | — (`SL-2.6b` ✅ **Done** — checkout saga hoàn tất, đã lên `main`) |
+| **Ticket tiếp theo** | `SL-2.8` — E2E checkout happy path + OpenAPI + compose/CI cho 5 service mới · `SL-2.9` — test nhánh fail |
 | **Số ticket chi tiết hiện có** | 33 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 10) |
 
 ---
@@ -211,7 +211,7 @@ $ md5sum docs/api/openapi.yaml
 | 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | ✅ Done |
 | 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M | ✅ Done |
 | 7 | `SL-2.6a` | **Checkout Saga — start** (`order-service`): `POST /v1/checkout` đọc **cart** → lấy giá bằng **batch SKU** của catalog → lock voucher → reserve stock → tạo order → payment intent; lưu **saga state**; compensating cho nhánh fail lúc start | M | ✅ Done |
-| 8 | `SL-2.6b` | **Checkout Saga — hoàn tất**: `confirm` (commit stock + voucher ⇒ `CONFIRMED`), `cancel` + **sweeper hết hạn 15′** (⇒ `EXPIRED`), idempotent theo saga state | M | Todo |
+| 8 | `SL-2.6b` | **Checkout Saga — hoàn tất**: `confirm` (commit stock + voucher ⇒ `CONFIRMED`), `cancel` + **sweeper hết hạn 15′** (⇒ `EXPIRED`), idempotent theo saga state | M | ✅ Done |
 | 9 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | ✅ Done |
 | 10 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M | Todo |
 | 11 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M | Todo |
@@ -1664,7 +1664,7 @@ $ bash tools/export-openapi.sh  VALIDATE PASS · 39 path · 48 operation · 46 s
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done (2026-11-08) |
 | **Phase** | 2 — Core commerce flow *(tách từ `SL-2.6`)* |
 | **Phụ thuộc** | `SL-2.6a` (saga state + HTTP client tới service khác); **chặn** `SL-2.8`/`SL-2.9` |
 | **Ước lượng** | M |
@@ -1696,14 +1696,15 @@ Hoàn tất vòng đời checkout: `confirm` (tiền đã về ⇒ commit stock 
 
 **Acceptance Criteria**
 
-- [ ] `confirm` khi payment `SUCCEEDED` ⇒ **200**, order `CONFIRMED`, reservation `COMMITTED`, voucher lock `COMMITTED`.
-- [ ] `confirm` trên saga có `payment_required = false` (đơn 0 đồng, chốt ở `SL-2.6a`) ⇒ **200** và commit bình thường
+- [x] `confirm` khi payment `SUCCEEDED` ⇒ **200**, order `CONFIRMED`, reservation `COMMITTED`, voucher lock `COMMITTED`.
+- [x] `confirm` trên saga có `payment_required = false` (đơn 0 đồng, chốt ở `SL-2.6a`) ⇒ **200** và commit bình thường
       **không** cần gọi payment-service (không có intent để verify).
-- [ ] `confirm` khi payment **chưa** `SUCCEEDED` ⇒ **409**, **không** commit gì (không tin lời client).
-- [ ] `confirm` lần 2 ⇒ **200**, `stock_ledger`/voucher **không** thêm dòng commit thứ hai.
-- [ ] `cancel` ⇒ reservation/voucher `RELEASED`, order `CANCELLED`; `cancel` sau `confirm` ⇒ **409**.
-- [ ] Sweeper: saga quá 15′ ⇒ order `EXPIRED`, `reserved` giảm đúng `qty`, voucher trả lượt; chạy 2 vòng không bù 2 lần.
-- [ ] Unit + IT xanh; `e2e-smoke` không regress.
+- [x] `confirm` khi payment **chưa** `SUCCEEDED` ⇒ **409**, **không** commit gì (không tin lời client).
+- [x] `confirm` lần 2 ⇒ **200**, `stock_ledger`/voucher **không** thêm dòng commit thứ hai.
+- [x] `cancel` ⇒ reservation/voucher `RELEASED`, order `CANCELLED`; `cancel` sau `confirm` ⇒ **409**.
+- [x] Sweeper: saga quá 15′ ⇒ order `EXPIRED`, voucher/hàng được **TTL sweeper** của inventory/promotion trả (chốt
+      phương án **A** — sweeper không có token user nên không gọi `release`); chạy 2 vòng không bù 2 lần.
+- [x] Unit + IT xanh; `e2e-smoke` không regress.
 
 **Ghi chú kỹ thuật**
 
@@ -1712,6 +1713,67 @@ Hoàn tất vòng đời checkout: `confirm` (tiền đã về ⇒ commit stock 
 - **Commit theo thứ tự stock → voucher**: stock là tài nguyên khan hiếm (hết hàng = mất đơn), voucher sai thì sửa được.
 - **Idempotent theo trạng thái saga**, không theo `Idempotency-Key`: confirm/cancel là thao tác trên **cùng** một đơn nên
   khoá tự nhiên là `orderId` + state hiện tại.
+
+**Kết quả verify** *(chạy thật 2026-11-08 — compose 10 container healthy, Postgres thật)*
+
+**1) `mvn -B -ntp verify` — BUILD SUCCESS, checkstyle 0**
+
+`order` unit **65** (+12: `CheckoutFinishServiceTest` 8 · `CheckoutSagaSweeperTest` 2 · `SagaPropertiesTest` +2) ·
+IT **25** (+7 `CheckoutSagaIT`) · jacoco gate pass.
+
+**2) Luồng thật qua gateway** (`bash /tmp/verify-checkout-finish.sh`)
+
+```text
+== 1) confirm TRƯỚC khi trả tiền ==
+   order=2a6d1c1a-… · paymentUrl=http://localhost:8080/mock-provider/pay/pi_mock_10750d6e-…
+   confirm → HTTP 409 · code CONFLICT
+== 2) mock-pay rồi confirm ==
+   mock-pay → HTTP 200 · confirm → HTTP 200 · state CONFIRMED
+   DB order:   CONFIRMED
+   inventory:  on_hand=8 reserved=0                  ← 10 − 2 (commit thật)
+   voucher:    COMMITTED
+   steps:      CART:OK → PRICE:OK → VOUCHER_LOCK:OK → STOCK_RESERVE:OK → ORDER_CREATE:OK
+               → PAYMENT_INTENT:OK → PAYMENT_VERIFY:FAILED → PAYMENT_VERIFY:OK
+               → STOCK_COMMIT:OK → VOUCHER_COMMIT:OK
+   history:    ∅→PENDING_PAYMENT | PENDING_PAYMENT→CONFIRMED
+== 3) confirm#2 → 200 · history vẫn 2 dòng · cancel sau confirm → 409
+== 4) cancel đơn 2 → 200 CANCELLED · reservation RELEASED · voucher RELEASED · cancel#2 → 200
+== 5) Đơn 3 bỏ ngang (payment-window 20s trong .env để demo):
+   sau 30s:  order EXPIRED · saga EXPIRED/PAYMENT_WINDOW_EXCEEDED · reserved=2 (sweeper KHÔNG gọi release)
+   confirm sau expire → 409
+   sau TTL 45s: on_hand=8 reserved=0 · voucher EXPIRED   ← TTL sweeper của inventory/promotion trả
+```
+
+**3) Regression + contract**
+
+```text
+$ bash tools/e2e-smoke.sh       17 PASS / 0 FAIL · 13 request · 949 ms
+$ bash tools/export-openapi.sh  VALIDATE PASS · 41 path · 50 operation  (trước: 39 path)
+```
+
+**Sự cố trong lúc verify (2 lỗi thật)**
+
+- **`@ConfigurationProperties` record chỉ được có MỘT constructor**: thêm constructor "tiện cho test" ⇒ Boot báo
+  `No default constructor found` và **context chết**. Fix: bỏ constructor phụ, đưa helper `defaults()` vào test.
+- **Checkstyle bắt `switch` thiếu `default`** dù đã cover hết enum (`MissingSwitchDefault`): thêm `default -> throw`
+  (đúng ý: trạng thái lạ phải nổ, không im lặng bỏ qua).
+
+**Learning note**
+
+- **Tách bước finish ra service riêng thay vì nhồi vào `CheckoutService`**: start và finish có bất biến khác nhau (start
+  *bù* khi fail; finish *không* bù vì `commit` đã xong thì "un-commit" vô nghĩa). Một class làm cả hai sẽ phải rẽ nhánh
+  theo "đang ở pha nào" — đúng loại state ngầm dễ sai.
+- **Không cần state "đang xử lý" khi service đích đã idempotent**: `commit`/`release` gọi 2 lần vẫn 200, nên 2 request
+  confirm/cancel đồng thời không phá dữ liệu; chốt chặn thật là **compare-and-set trên `orders`** (1 lần chuyển, 1 dòng
+  history). Thêm `CANCELLING`/`EXPIRING` chỉ làm state machine phình ra mà không thêm bảo vệ nào.
+- **Verify payment ở server, luôn luôn**: client gọi `/confirm` sau khi thanh toán nhưng "đã trả tiền" phải đọc từ
+  `payment-service`. Ca `confirm` trước khi trả tiền trả **409** — nếu tin client thì ai cũng có đơn free.
+- **Sweeper không có token ⇒ đừng cố gọi API cần token**: chọn "chỉ ghi DB + để TTL sweeper của 2 service kia trả hàng"
+  (đã chứng minh bằng số: sau 45 s `reserved 2 → 0`, voucher `EXPIRED`). Đánh đổi ghi vào `TD-25`, và khi Phase 3 có
+  service-to-service auth thì sweeper gọi `release` ngay để không phải chờ TTL.
+- **`payment-window` phải bằng TTL của reservation/lock** (15′): dài hơn ⇒ tồn tại cửa sổ "đơn đã `EXPIRED` mà tiền vẫn
+  vào được"; ngắn hơn ⇒ khách đang trả tiền thì đơn bị expire. Cấu hình này là **ràng buộc chéo service**, ghi rõ trong
+  `application.yml` để người sau không sửa lẻ.
 
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
@@ -1919,6 +1981,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | SL-2.1 | **Service không Postgres là hợp lý khi dữ liệu chịu mất** — nhưng cũng mất luôn ràng buộc DB canh bất biến ⇒ dồn hết vào Lua + test đồng thời. |
 | 2026-11-08 | SL-2.13 | **Endpoint batch thuộc về service sở hữu dữ liệu, không phải nơi cần dùng**: `catalog` trả giá, `order` không cache giá. `missingIds` đúng hơn 404 cả request — một SKU chết không nên làm hỏng cả giỏ. Đếm kích thước request **trước** khi dedupe, không thì client lách trần bằng cách lặp id. Tên DTO lồng phải dài (`SkuLine`) vì spec OpenAPI merge toàn hệ. Và: `String.valueOf` trên số JSON (`Double`) là bẫy assertion. |
 | 2026-11-08 | SL-2.6a | **Compensating phải đọc state bền**: saga ghi `lock_id`/`reservation_id` xuống DB ngay sau mỗi bước ⇒ hàm bù chỉ `select` lại là đủ; giữ trong biến RAM thì crash giữa chừng là mất dấu, hàng treo tới hết TTL. Fail thì **trả lại idempotency key** (xoá row) chứ không để `IN_PROGRESS` (job dọn 1 h ⇒ user sửa giỏ xong vẫn 409). **Stub test phải khó tính ngang service thật** — stub nhận mọi body nên sai tên field (`lines` vs `items`) vẫn xanh, chỉ chạy compose thật mới lộ. **5xx của dependency là 503 của mình**, không phải 500. Và: đơn 0 đồng là **bất biến của saga** (`payment_required`), không suy ra từ `orders.total`. |
+| 2026-11-08 | SL-2.6b | **Tách finish khỏi start**: start *bù* khi fail, finish *không* bù (commit xong thì "un-commit" vô nghĩa) — một class làm cả hai sẽ phải rẽ nhánh theo pha. **Không cần state "đang xử lý"** khi service đích idempotent: chốt chặn thật là compare-and-set trên `orders`. **Sweeper không có token ⇒ đừng gọi API cần token** — để TTL sweeper của inventory/promotion trả hàng (đo được `reserved 2 → 0` sau 45 s). Và `payment-window` **phải bằng** TTL reservation/lock, nếu không có cửa sổ "đơn EXPIRED mà tiền vẫn vào". |
 
 ---
 
@@ -1953,6 +2016,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-22` | `GET /v1/skus?ids=` là **public**, nhận tới 100 id, **chưa rate limit** và **chưa cache** ⇒ 1 client có thể dội tải catalog (100 id/request) hoặc dùng làm đòn bộc phát | SL-2.13 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi đo được p99 list/get của catalog tăng do traffic `/v1/skus` (Phase 4 — cache-aside) | thấp |
 | `TD-23` | IT `inventory`: `commitAfterExpiryReturnsGone` **flaky** — test đẩy `expires_at` về quá khứ rồi `commit`, nhưng sweeper trong IT chạy mỗi **300 ms** nên có lúc nó expire trước ⇒ `commit` trả **409** thay vì **410** (đỏ trên CI chậm, xanh ở máy local) | SL-2.13 (CI run `42444551383`) | Lần tới khi sửa test của inventory: tắt sweeper (`sweep-interval-ms` rất lớn) cho test lazy-expire, hoặc assert `status ∈ {410, 409}` + kiểm `reserved = 0` (điều thực sự quan trọng) | trung bình |
 | `TD-24` | `checkout_saga_steps` + `checkout_sagas` **không có job dọn** — 1 dòng/bước/lần checkout ⇒ phình mãi (audit nhưng không ai đọc sau 30 ngày) | SL-2.6a | Khi bảng > 10⁶ row hoặc khi `SL-2.6b` thêm sweeper (gộp 1 `@Scheduled` dọn saga `COMPLETED_START`/`FAILED_*` cũ > 30 ngày) | thấp |
+| `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | thấp |
 | `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
 
 ## 8. Changelog
@@ -2030,3 +2094,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | `SL-2.1` → `Done`: thêm **`cart-service`** (8083) — service **đầu tiên không có Postgres**: Redis HASH `cart:<owner>` (owner = `u:<userId>` | `g:<guestToken>`), TTL **30 ngày** refresh mỗi lần ghi; mọi phép ghi chạy **Lua** (read-modify-write nguyên tử + bất biến `qty 1..999`/`maxLines` trong script); **guest cart** với token do **server** cấp (marker `cart:guest:<token>`); **merge khi login** cộng dồn + cap + xoá giỏ guest trong cùng script; gateway để `/v1/carts/**` public và cart tự phân xử danh tính. Verify: `mvn verify` **BUILD SUCCESS** (cart 34 unit + 6 IT, toàn repo xanh, jacoco 80.8 %) · flow thật: guest 201 → PUT idempotent → 422 biên → 401 không token/token bịa → merge cộng dồn 1+2=3 → token bị thu hồi → **10 merge song song ⇒ qty 5** · Redis: type=hash, TTL 2592000s · `e2e-smoke` 17/17 · OpenAPI 36 path/45 operation. **Sự cố**: Dockerfile mất `COPY payment pom` (bẫy copy-service lần 3); OpenAPI trùng schema `Line` ⇒ đổi `LineItem`. Debt mới: `TD-20`, `TD-21`. |
 | 2026-11-08 | `SL-2.13` → `Done`: `catalog-service` có **`GET /v1/skus?ids=`** — **batch** giá/tên cho ≤ 100 SKU trong 1 request để saga `SL-2.6a` + giỏ hàng lấy giá **thật** thay vì tin giá client gửi; `unitPrice = price_override ?? product.price`; SKU archived/không tồn tại → `missingIds` (không 404 cả request); public như `GET /v1/products` (catalog tự mở `GET /v1/skus` + gateway thêm route & public-path `/v1/skus/**`). Verify: `mvn -B -ntp verify` **BUILD SUCCESS** toàn repo (catalog **79 unit** (+13) · **25 IT** (+4) · checkstyle 0 · jacoco pass) · flow thật qua gateway **không token**: 200 + giá đúng (`150000.00` override / `180000.00` giá product) trong **31 ms** · gọi thẳng `:8082` cũng 200 · trùng lặp ⇒ 1 dòng · xoá mềm product ⇒ `missingIds` (HTTP vẫn 200) · **400** cho thiếu ids / sai UUID / 101 id, **200** cho 100 id · `e2e-smoke` **17/17** · OpenAPI 36 → **37 path**. **Tách ticket**: `SL-2.6` (`L`) → **`SL-2.6a`** (saga start) + **`SL-2.6b`** (confirm/cancel/sweeper) — chốt **phương án B** (saga đọc cart + giá batch từ catalog), cập nhật `architecture.md` §5 + §6.1. Debt: **`TD-22`** (endpoint public chưa rate limit/cache) · `TD-20` cập nhật điều kiện revisit. |
 | 2026-11-08 | `SL-2.6a` → `Done`: **checkout saga start** trong `order-service` — `RestClient` sync (timeout 2 s/800 ms, forward JWT user) + `POST /v1/checkout` (`Idempotency-Key`, body chỉ `{voucherCode?}`) chạy `cart → price (batch SL-2.13) → lock voucher → reserve → order PENDING_PAYMENT → payment intent`; state ở `checkout_sagas` + audit `checkout_saga_steps` (6 bước, http status, ms); **compensating theo state bền** (release stock/voucher, cancel order); fail ⇒ trả lại idempotency key; **đơn 0 đồng** (voucher 100%) không tạo payment intent (`payment_required=false`, step `SKIPPED` — ADR-0006 **D6**); 5xx của dependency ⇒ **503**. Gateway route `/v1/checkout`; compose + `.env.example` thêm 5 URL + timeout. Verify: `mvn verify` **BUILD SUCCESS** (order 55 unit + 18 IT, checkstyle 0) · chạy thật: **201** total 220000 + paymentUrl → saga `COMPLETED_START` + 6 step OK + `reserved=2` + voucher `LOCKED` · retry cùng key **200** replay cùng orderId · hết hàng ⇒ **409** + voucher `RELEASED` + saga `FAILED_STOCK` · giỏ rỗng **422** · thiếu key **400** · `e2e-smoke` 17/17 · OpenAPI 37 → **39 path**. **Sự cố**: sai tên field `lines`/`items` (stub không bắt được → stub giờ validate); Boot 4 không có bean `RestClient.Builder`; 5xx map sai sang 500. Debt mới: `TD-24`. |
+| 2026-11-08 | `SL-2.6b` → `Done`: **checkout saga hoàn tất** — `POST /v1/checkout/{orderId}/confirm` (verify payment ở **server** rồi commit stock → voucher ⇒ order `CONFIRMED`; đơn 0 đồng bỏ qua verify — ADR-0006 D6), `POST /v1/checkout/{orderId}/cancel` (release stock + voucher ⇒ `CANCELLED`), `CheckoutSagaSweeper` (quá `payment-window` 15′ ⇒ order/saga `EXPIRED`; hàng/voucher do **TTL sweeper** của inventory/promotion trả — chốt phương án A, ghi `TD-25`); state saga thêm `CONFIRMED`/`CANCELLED`/`EXPIRED` (migration `V3`), step audit thêm `PAYMENT_VERIFY`/`STOCK_COMMIT`/`VOUCHER_COMMIT`/`STOCK_RELEASE`/`VOUCHER_RELEASE`/`EXPIRE`. Verify: `mvn verify` **BUILD SUCCESS** (order 65 unit + 25 IT, checkstyle 0) · chạy thật: confirm trước khi trả tiền → **409**; mock-pay → confirm **200** `CONFIRMED`, `on_hand 10→8`, voucher `COMMITTED`, history 2 dòng; confirm#2 200 (history vẫn 2); cancel → `RELEASED` + `CANCELLED`, cancel#2 200, cancel sau confirm 409; bỏ ngang 20 s → sweeper `EXPIRED`/`PAYMENT_WINDOW_EXCEEDED` rồi TTL 45 s trả `reserved 2→0` + voucher `EXPIRED` · `e2e-smoke` 17/17 · OpenAPI 39 → **41 path**. **Sự cố**: record `@ConfigurationProperties` chỉ được 1 constructor; checkstyle bắt `switch` thiếu `default`. Debt: `TD-25`. |

@@ -322,7 +322,14 @@ total, currency, paymentRequired, paymentIntentId, paymentUrl}`; retry cùng key
 Saga lưu state ở 2 bảng trong DB `order`: `checkout_sagas` (1 dòng/đơn: state · `payment_required` · các id đã giữ ·
 `failure_code`) và `checkout_saga_steps` (audit từng bước: `CART · PRICE · VOUCHER_LOCK · STOCK_RESERVE ·
 ORDER_CREATE · PAYMENT_INTENT` + http status + thời gian). Đơn 0 đồng (voucher 100%) ⇒ `payment_required = false`,
-không tạo payment intent ([ADR-0006](docs/adr/0006-checkout-model.md) D6). `SL-2.6b` lo confirm/cancel/sweeper.
+không tạo payment intent ([ADR-0006](docs/adr/0006-checkout-model.md) D6).
+
+**Bước hoàn tất** (`SL-2.6b`): `POST /v1/checkout/{orderId}/confirm` — saga **tự** hỏi `payment-service` xem intent đã
+`SUCCEEDED` chưa (không tin client) rồi `commit` stock → voucher ⇒ order `CONFIRMED` + saga `CONFIRMED`;
+`POST /v1/checkout/{orderId}/cancel` — `release` stock + voucher ⇒ `CANCELLED`. `CheckoutSagaSweeper` quét mỗi 60 s:
+đơn quá `payment-window` (**15′ = TTL reservation/lock**) mà còn `PENDING_PAYMENT` ⇒ order + saga `EXPIRED`.
+Sweeper **không gọi** `release` (chạy nền, không có token user) — hàng/voucher do TTL sweeper của
+`inventory`/`promotion` trả (ADR-0006 D7, nợ `TD-25`).
 
 **Nguồn dữ liệu của saga (chốt 2026-11-08 — phương án B, `SL-2.13` + `SL-2.6a`):** `order-service` **đọc giỏ** từ
 `cart-service` (`GET /v1/carts`, forward JWT của user) rồi lấy giá/tên bằng **batch** `GET /v1/skus?ids=` của
