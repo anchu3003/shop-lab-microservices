@@ -13,6 +13,15 @@ public interface SkuRepository extends JpaRepository<Sku, UUID> {
   /** SKU của một product, sắp theo mã — thứ tự ổn định để response không "nhảy" giữa 2 lần gọi. */
   List<Sku> findByProductIdOrderByCodeAsc(UUID productId);
 
+  /**
+   * Tra <b>nhiều</b> SKU theo id + trạng thái (SL-2.13) — 1 câu query cho N id.
+   *
+   * <p>Điều kiện {@code status} nằm ở DB chứ không lọc ở Java: (a) không kéo row đã archive về app,
+   * (b) người đọc thấy ngay "chỉ SKU đang bán" là ràng buộc của truy vấn, không phải một {@code if}
+   * ai đó có thể quên ở tầng service.
+   */
+  List<Sku> findByIdInAndStatus(List<UUID> ids, SkuStatus status);
+
   /** Mã SKU phải duy nhất toàn hệ (unique index ở DB); check trước để trả 409 thay vì 500. */
   boolean existsByCode(String code);
 

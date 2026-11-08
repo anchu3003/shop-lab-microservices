@@ -50,9 +50,12 @@ public class SecurityConfig {
   /**
    * Đọc: guest xem được (đây là lý do catalog là service read-heavy đầu tiên). Ghi: chỉ
    * seller/admin — khai ở từng method bằng {@code @PreAuthorize} vì cùng path, khác HTTP method.
+   *
+   * <p>SL-2.13: {@code /v1/skus} cũng public — tra giá nhiều SKU là đường đọc, khách chưa đăng nhập
+   * vẫn phải thấy giá trong giỏ.
    */
   private static final String[] PUBLIC_READ_PATHS = {
-    "/v1/categories", "/v1/products", "/v1/products/**"
+    "/v1/categories", "/v1/products", "/v1/products/**", "/v1/skus"
   };
 
   /**

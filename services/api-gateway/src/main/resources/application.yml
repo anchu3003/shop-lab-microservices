@@ -52,6 +52,9 @@ shoplab:
       # SL-2.1: khách CHƯA đăng nhập vẫn phải có giỏ ⇒ cả prefix phải qua được gateway. Authorization
       # nằm ở cart-service: có JWT → giỏ user, không có → bắt buộc X-Cart-Token do server cấp.
       - /v1/carts/**
+      # SL-2.13: tra giá nhiều SKU là đường ĐỌC (giá niêm yết vốn công khai, guest xem giỏ cũng cần)
+      # ⇒ public như /v1/products/**.
+      - /v1/skus/**
       - /.well-known/**
       # SL-1.8: spec OpenAPI của chính gateway (chỉ bật ở local — xem springdoc.api-docs.enabled).
       - /v3/api-docs
@@ -88,6 +91,9 @@ shoplab:
       - path-prefix: /v1/products
         base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
       - path-prefix: /v1/categories
+        base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
+      # SL-2.13: tra giá nhiều SKU (batch) — saga checkout + giỏ hàng dùng để lấy giá thật.
+      - path-prefix: /v1/skus
         base-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
       # SL-2.2: inventory-service (reserve/commit/release). Cần token — không nằm trong public-paths.
       - path-prefix: /v1/stock
