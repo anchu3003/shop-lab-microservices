@@ -26,6 +26,9 @@ public interface OrderRepository {
    */
   int markStatus(UUID orderId, OrderStatus from, OrderStatus to, Instant now);
 
+  /** Gắn payment intent vào order (saga checkout tạo order trước khi có intent). */
+  void attachPaymentIntent(UUID orderId, UUID paymentIntentId, Instant now);
+
   void insertHistory(UUID orderId, OrderStatus from, OrderStatus to, String reason, Instant now);
 
   /** Danh sách đơn của một user, mới nhất trước (admin truyền userId = null để lấy tất cả). */

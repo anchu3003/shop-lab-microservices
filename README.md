@@ -592,6 +592,30 @@ state machine một chiều `PENDING_PAYMENT → CONFIRMED | CANCELLED | EXPIRED
 code đúng. Job dọn `idempotency_keys` (COMPLETED > 24 h, IN_PROGRESS > 1 h) chạy mỗi giờ, chỉnh bằng
 `ORDER_IDEMPOTENCY_RETENTION` · `ORDER_IDEMPOTENCY_STALE_AFTER` · `SHOPLAB_ORDER_SWEEP_INTERVAL_MS`.
 
+### checkout saga — `SL-2.6a`
+
+`POST /v1/checkout` biến `order-service` thành **orchestrator**: client gọi 1 phát, server chạy
+`cart → giá (batch `GET /v1/skus?ids=`) → lock voucher → reserve stock → tạo order → payment intent`, và **tự bù** khi
+fail (release stock/voucher, cancel order).
+
+| Method + path | Quyền | Ghi chú |
+|---|---|---|
+| `POST /v1/checkout` | đã đăng nhập | **bắt buộc** `Idempotency-Key`; body chỉ `{voucherCode?}` — dòng hàng lấy từ **giỏ**. 201 · 200 replay · **422** giỏ rỗng · **409** SKU không mua được / hết hàng · **503** không tới được service đích · **400** thiếu key |
+| `GET /v1/checkout/{orderId}` | chủ đơn / admin | trạng thái saga: `state` · `lockId` · `reservationId` · `paymentIntentId` · `failureCode` |
+
+```bash
+# Buyer: thêm hàng vào giỏ rồi checkout (voucher tuỳ chọn)
+curl -s -X PUT localhost:8080/v1/carts/items/<skuId> -H "Authorization: Bearer $BUYER" \
+  -H 'Content-Type: application/json' -d '{"qty":2}'
+curl -s -X POST localhost:8080/v1/checkout -H "Authorization: Bearer $BUYER" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: ck-1" -d '{"voucherCode":"SALE20"}'
+```
+
+State lưu ở `checkout_sagas` + audit `checkout_saga_steps` (6 bước, http status, ms) trong DB `order`.
+**Đơn 0 đồng** (voucher 100%) không tạo payment intent: response `paymentRequired=false`, bước `PAYMENT_INTENT` =
+`SKIPPED` ([ADR-0006](docs/adr/0006-checkout-model.md) D6). Timeout mỗi bước 2 s connect / 800 ms read, URL 5 service
+qua `SAGA_*_URL`; confirm/cancel/sweeper 15′ thuộc `SL-2.6b`.
+
 ### api-gateway — `SL-1.2`
 
 **Cửa vào duy nhất** của hệ thống (port **8080**): route `/v1/**` tới service tương ứng, verify JWT **một chỗ**,

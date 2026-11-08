@@ -17,6 +17,9 @@ public interface IdempotencyRepository {
 
   Optional<IdempotencyRecord> find(String scope, String key);
 
+  /** Xoá một khoá (dùng khi request fail trước khi có kết quả bền — xem {@code abort}). */
+  void delete(String scope, String key);
+
   /** Ghi lại response để retry sau này được replay đúng y nguyên. */
   void complete(
       String scope, String key, int statusCode, String responseBody, UUID resourceId, Instant now);

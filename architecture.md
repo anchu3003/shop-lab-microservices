@@ -314,6 +314,16 @@ sequenceDiagram
 | Sync vs async | Phase 2 **sync REST** (timeout mỗi bước 300–800 ms) + compensating | p99 mục tiêu ~125 ms; async/outbox để Phase 3 (có baseline để so sánh) |
 | `TD-12` | Soft delete product (`status = ARCHIVED` + `deleted_at`), code ở `SL-2.11` | `stock_ledger`/`reservations` còn tham chiếu được `sku_id` ⇒ reconcile được |
 
+**API của `order-service` cho saga** (`SL-2.6a`, đã chạy thật): `POST /v1/checkout` (bắt buộc
+`Idempotency-Key`, body chỉ `{voucherCode?}` — dòng hàng lấy từ giỏ) → **201** `{orderId, status, subtotal, discount,
+total, currency, paymentRequired, paymentIntentId, paymentUrl}`; retry cùng key → **200** + `Idempotent-Replayed`.
+`GET /v1/checkout/{orderId}` → trạng thái saga (`state`, `lockId`, `reservationId`, `paymentIntentId`, `failureCode`).
+
+Saga lưu state ở 2 bảng trong DB `order`: `checkout_sagas` (1 dòng/đơn: state · `payment_required` · các id đã giữ ·
+`failure_code`) và `checkout_saga_steps` (audit từng bước: `CART · PRICE · VOUCHER_LOCK · STOCK_RESERVE ·
+ORDER_CREATE · PAYMENT_INTENT` + http status + thời gian). Đơn 0 đồng (voucher 100%) ⇒ `payment_required = false`,
+không tạo payment intent ([ADR-0006](docs/adr/0006-checkout-model.md) D6). `SL-2.6b` lo confirm/cancel/sweeper.
+
 **Nguồn dữ liệu của saga (chốt 2026-11-08 — phương án B, `SL-2.13` + `SL-2.6a`):** `order-service` **đọc giỏ** từ
 `cart-service` (`GET /v1/carts`, forward JWT của user) rồi lấy giá/tên bằng **batch** `GET /v1/skus?ids=` của
 `catalog-service`. Vì sao không đọc giá từ client: giá do client gửi là mời gọi sửa 1 field để trả ít tiền hơn. Vì sao

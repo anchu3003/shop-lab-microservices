@@ -852,6 +852,112 @@ paths:
                 $ref: '#/components/schemas/ApiError'
       security:
       - bearerAuth: []
+  /v1/checkout:
+    post:
+      tags:
+      - Checkout
+      operationId: checkout
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/CheckoutResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
+  /v1/checkout/{orderId}:
+    get:
+      tags:
+      - Checkout
+      operationId: status
+      parameters:
+      - name: orderId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/SagaStatusResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+      security:
+      - bearerAuth: []
   /v1/orders:
     get:
       tags:
@@ -2429,6 +2535,42 @@ components:
           type: string
           maxLength: 200
           minLength: 0
+    CheckoutRequest:
+      type: object
+      properties:
+        voucherCode:
+          type: string
+          maxLength: 64
+          minLength: 0
+          pattern: '[A-Za-z0-9_-]*'
+    CheckoutResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - PENDING_PAYMENT
+          - CONFIRMED
+          - CANCELLED
+          - EXPIRED
+        subtotal:
+          type: number
+        discount:
+          type: number
+        total:
+          type: number
+        currency:
+          type: string
+        paymentRequired:
+          type: boolean
+        paymentIntentId:
+          type: string
+          format: uuid
+        paymentUrl:
+          type: string
     CreateCategoryRequest:
       type: object
       properties:
@@ -2903,6 +3045,41 @@ components:
       required:
       - items
       - orderId
+    SagaStatusResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+          - STARTED
+          - COMPLETED_START
+          - FAILED_STOCK
+          - FAILED_ORDER
+          - FAILED_PAYMENT
+        paymentRequired:
+          type: boolean
+        lockId:
+          type: string
+          format: uuid
+        reservationId:
+          type: string
+          format: uuid
+        paymentIntentId:
+          type: string
+          format: uuid
+        paymentUrl:
+          type: string
+        failureCode:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     SetItemRequest:
       type: object
       properties:

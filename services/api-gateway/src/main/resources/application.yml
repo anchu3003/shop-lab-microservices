@@ -104,6 +104,9 @@ shoplab:
       # SL-2.5: order-service (tạo/xem đơn + chuyển trạng thái). Cần token.
       - path-prefix: /v1/orders
         base-url: ${ORDER_SERVICE_URL:http://localhost:8087}
+      # SL-2.6a: checkout saga (orchestration). Cần token — buyer đặt hàng từ giỏ của chính mình.
+      - path-prefix: /v1/checkout
+        base-url: ${ORDER_SERVICE_URL:http://localhost:8087}
       # SL-2.7: payment-service (payment intent). Cần token.
       - path-prefix: /v1/payment-intents
         base-url: ${PAYMENT_SERVICE_URL:http://localhost:8088}

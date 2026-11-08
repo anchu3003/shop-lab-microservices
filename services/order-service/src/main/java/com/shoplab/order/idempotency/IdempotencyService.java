@@ -108,6 +108,22 @@ public class IdempotencyService {
     return deleted;
   }
 
+  /**
+   * Trả khoá khi request fail <b>trước khi</b> có kết quả bền (saga chưa hoàn tất).
+   *
+   * <p><b>Vì sao xoá thay vì để nguyên {@code IN_PROGRESS}</b>: row {@code IN_PROGRESS} chỉ được
+   * dọn bởi job (mặc định sau **1 h**). Để nguyên nghĩa là client vừa nhận "hết hàng", sửa giỏ xong
+   * bấm lại **vẫn** nhận 409 cho tới khi job chạy — trải nghiệm tệ và rất khó hiểu.
+   *
+   * <p><b>Đánh đổi đã chấp nhận</b>: mất chốt "cùng key mà payload khác" cho lần fail (lần sau cùng
+   * key sẽ chạy lại từ đầu). Với checkout, retry-sau-fail là hành vi <b>mong muốn</b>; còn chốt
+   * payload khác vẫn còn nguyên cho các lần thành công.
+   */
+  @Transactional
+  public void abort(String scope, String key) {
+    repository.delete(scope, key);
+  }
+
   /** SHA-256 của payload đã canonical hoá — dùng để phát hiện "cùng key, khác body". */
   public static String hash(String canonicalPayload) {
     try {

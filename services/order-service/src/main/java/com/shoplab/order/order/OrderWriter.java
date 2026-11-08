@@ -1,7 +1,9 @@
 package com.shoplab.order.order;
 
 import com.shoplab.order.idempotency.IdempotencyService;
+import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,8 +45,42 @@ public class OrderWriter {
       String idempotencyScope,
       String idempotencyKey,
       String responseBody) {
+    createPending(order, items);
+    idempotency.complete(idempotencyScope, idempotencyKey, 201, responseBody, order.id());
+  }
+
+  /**
+   * Ghi order + history <b>không</b> đụng idempotency — dùng cho saga checkout (`SL-2.6a`).
+   *
+   * <p>Vì sao cần bản này: response cuối của checkout chỉ biết <b>sau</b> bước payment intent (có
+   * `paymentUrl`), nên khoá idempotency được complete muộn hơn, ở tầng saga. Vẫn an toàn: khoá chỉ
+   * thành {@code COMPLETED} khi mọi thứ đã tồn tại (bài học `SL-2.5`: không bao giờ để khoá
+   * COMPLETED trỏ tới đơn ma).
+   */
+  @Transactional
+  public void createPending(OrderRecord order, List<OrderItemRecord> items) {
     orders.insert(order, items);
     orders.insertHistory(order.id(), null, OrderStatus.PENDING_PAYMENT, null, order.createdAt());
-    idempotency.complete(idempotencyScope, idempotencyKey, 201, responseBody, order.id());
+  }
+
+  /** Gắn payment intent vào order (sau khi payment-service tạo xong). */
+  @Transactional
+  public void attachPaymentIntent(UUID orderId, UUID paymentIntentId, Instant now) {
+    orders.attachPaymentIntent(orderId, paymentIntentId, now);
+  }
+
+  /**
+   * Huỷ đơn còn `PENDING_PAYMENT` — dùng khi saga phải bù sau khi đã tạo order.
+   *
+   * @return {@code true} nếu thực sự chuyển được (0 row ⇒ đơn đã ở trạng thái khác, vd đã bị huỷ
+   *     song song — không ghi history lần 2)
+   */
+  @Transactional
+  public boolean cancelPending(UUID orderId, String reason, Instant now) {
+    if (orders.markStatus(orderId, OrderStatus.PENDING_PAYMENT, OrderStatus.CANCELLED, now) != 1) {
+      return false;
+    }
+    orders.insertHistory(orderId, OrderStatus.PENDING_PAYMENT, OrderStatus.CANCELLED, reason, now);
+    return true;
   }
 }
