@@ -39,6 +39,18 @@
       <optional>true</optional>
     </dependency>
 
+    <!--
+      spring-security-core — CHỈ để compile `AccessDeniedApiExceptionHandler` (map lỗi `@PreAuthorize`
+      thành 403, SL-2.12). Để **optional** như `webmvc`/`springdoc`: service không dùng security
+      (vd `service-template`) KHÔNG bị kéo spring-security, và auto-config tự tắt nhờ
+      `@ConditionalOnClass(AccessDeniedException.class)` — xem `AccessDeniedAutoConfiguration`.
+    -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-core</artifactId>
+      <optional>true</optional>
+    </dependency>
+
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
