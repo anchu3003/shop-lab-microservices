@@ -71,6 +71,11 @@ jobs:
       - name: E2E checkout (Phase 2 — money path)
         run: bash tools/e2e-checkout.sh
 
+      # SL-2.9: nhánh fail + compensating. Chạy SAU happy path vì nó `docker stop/start`
+      # payment-service (F5) — để cuối cho gọn, tránh ảnh hưởng các bước khác.
+      - name: E2E checkout nhánh fail (compensating)
+        run: bash tools/e2e-checkout-fail.sh
+
       # Log chỉ dump khi đỏ: log của 10 container rất dài, in vô điều kiện là làm log run không đọc được.
       - name: Log container (khi fail)
         if: failure()

@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.8` ✅ **Done** — E2E checkout + `e2e.yml` cho CI) |
-| **Ticket tiếp theo** | `SL-2.9` — test nhánh fail (hết hàng giữa chừng · payment fail · timeout) · `SL-2.10` — runbook + DoD Phase 2 |
+| **Ticket đang làm** | — (`SL-2.9` ✅ **Done** — E2E nhánh fail + hook bơm lỗi ở payment) |
+| **Ticket tiếp theo** | `SL-2.10` — `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) · `SL-2.12` — 403 handler → `commons` |
 | **Số ticket chi tiết hiện có** | 33 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 10) |
 
 ---
@@ -214,7 +214,7 @@ $ md5sum docs/api/openapi.yaml
 | 8 | `SL-2.6b` | **Checkout Saga — hoàn tất**: `confirm` (commit stock + voucher ⇒ `CONFIRMED`), `cancel` + **sweeper hết hạn 15′** (⇒ `EXPIRED`), idempotent theo saga state | M | ✅ Done |
 | 9 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | ✅ Done |
 | 10 | `SL-2.8` | E2E checkout happy path (`tools/e2e-checkout.sh` — assert cả **tiền** lẫn trạng thái) + workflow `e2e.yml` (compose + 2 script, chạy dispatch/hằng tuần) + verify OpenAPI/matrix | M | ✅ Done |
-| 11 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M | Todo |
+| 11 | `SL-2.9` | **E2E nhánh fail**: hết hàng · provider từ chối · payment 5xx · **timeout thật** · dependency chết · retry sau fail — assert `reserved`/`locked`/`order.status`; thêm hook bơm lỗi (guarded) ở payment | M | ✅ Done |
 | 12 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S | Todo |
 | 13 | `SL-2.11` | *(phát sinh từ `SL-2.0`)* `catalog-service`: **soft delete** product — `status = ARCHIVED` + `deleted_at`, `DELETE` không xoá row, list/get ẩn product đã xoá, `reserve` từ chối SKU archived | S | ✅ Done |
 | 14 | `SL-2.12` | *(phát sinh từ `SL-2.2`)* `service-commons`: chuyển `AccessDeniedApiExceptionHandler` (403 cho `@PreAuthorize`) vào commons — xoá 2 bản copy ở catalog/inventory (**trả `TD-3`**) | S | Todo |
@@ -1894,6 +1894,126 @@ $ env prep (sed 4 secret)       POSTGRES/REDIS/RABBITMQ/PAYMENT_WEBHOOK → giá
   phần chặn vẫn là `ci.yml`. Hai thứ khác vai, đừng gộp.
 - **`parse_float=str` lần thứ hai trong repo** (`SL-2.13` là `String.valueOf`): mọi ngôn ngữ trung gian đều có xu hướng
   "chuẩn hoá" số — assert tiền phải so sánh **chuỗi gốc**.
+
+### SL-2.9 — E2E nhánh fail: hết hàng · payment fail · timeout ⇒ compensating đúng
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done (2026-11-08) |
+| **Phase** | 2 — Core commerce flow |
+| **Phụ thuộc** | `SL-2.2`/`SL-2.4` (release idempotent) · `SL-2.6a` (compensating) · `SL-2.6b` (confirm/cancel) · `SL-2.7` (mock provider `?fail=true`) · `SL-2.8` (khuôn script E2E); **chặn** `SL-2.10` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+`SL-2.8` chỉ chứng minh **happy path**. Nhưng thứ đắt nhất trong saga là **compensating**: nếu nó sai thì hàng bị treo, voucher bị
+giữ, đơn treo `PENDING_PAYMENT` — không ai thấy qua test happy path. Cần một lệnh chạy được **các nhánh fail thật** và assert
+**state thật** (`stock.reserved`, `voucher.locked`, `order.status`), không chỉ assert status HTTP.
+
+**Mục tiêu**
+
+`tools/e2e-checkout-fail.sh` chạy 6 kịch bản fail trên stack thật, mỗi kịch bản assert **hệ đã trở về trạng thái sạch**.
+
+**In scope**
+
+- Script mới `tools/e2e-checkout-fail.sh` (F1…F6, PASS/FAIL/SKIP + exit code).
+- `payment-service`: **hook bơm lỗi** (`debug/FaultInjection` + `FaultInjectionFilter` + `DebugFaultsController`) — chỉ tồn tại khi
+  `shoplab.debug-endpoints=true`, ẩn khỏi OpenAPI (`@Hidden`), chỉ tác động `/v1/payment-intents`.
+- `e2e.yml`: thêm bước chạy script fail (sau happy path).
+- README: mục E2E nhánh fail + cảnh báo `/debug/**` **không** có route ở gateway.
+
+**Out of scope**
+
+- Không bơm lỗi ở inventory/promotion/catalog (chỉ payment — nơi compensating nhiều nhánh nhất); mở rộng để dành khi cần.
+- Không test ca "khách bỏ ngang" (đã verify ở `SL-2.6b`: sweeper + TTL, `reserved 2 → 0` sau 45 s).
+- Không circuit breaker/retry (Phase 5) — Phase 2 chỉ fail-fast + timeout.
+
+**Acceptance Criteria**
+
+- [x] **F1 hết hàng** (`onHand = 0`) → checkout **409** · `voucher.locked = 0` · `stock.reserved = 0`.
+- [x] **F2 provider từ chối** (mock `?fail=true`) → `confirm` **409** (không commit) · `cancel` **200** · saga `CANCELLED` ·
+      `reserved 0` · `locked 0`.
+- [x] **F3 payment trả 5xx** (hook `failStatus=500`) → checkout **503** · `reserved 0` · `locked 0` · order mới nhất
+      `CANCELLED`.
+- [x] **F4 payment chậm hơn timeout** (hook `sleepMs=2000` > `SAGA_READ_TIMEOUT` 800 ms) → checkout **503** · thời gian chờ
+      **≥ 700 ms** (chứng minh timeout thật, không phải fail tức thì) · `reserved 0` · `locked 0`.
+- [x] **F5 payment chết hẳn** (`docker stop`) → checkout **503** · service tự sống lại · `reserved 0` · `locked 0`; thiếu
+      docker thì **SKIP có đếm** (không im lặng).
+- [x] **F6 retry cùng `Idempotency-Key` sau fail** → **201** (khoá đã được trả, không kẹt `IN_PROGRESS`) · `reserved 1`.
+- [x] Script exit 0 khi tất cả pass; exit 1 + gợi ý `docker compose logs …` khi có FAIL.
+- [x] `e2e-checkout.sh` (27/27) + `e2e-smoke.sh` (17/17) **không regress**; `mvn -B -ntp verify` **BUILD SUCCESS**.
+
+**Ghi chú kỹ thuật**
+
+- **Bơm lỗi bằng filter, không sửa controller**: `FaultInjectionFilter` chỉ tồn tại khi bật debug endpoints ⇒ production **không
+  có** một dòng `if debug` nào trong đường nghiệp vụ; filter chạy sau Spring Security nên request đã xác thực (giống
+  dependency thật).
+- **`/debug/**` cố ý không có route ở gateway**: debug là nội bộ, không expose ra biên. Script gọi thẳng `:8088` (compose
+  publish port) — đây cũng là cách con người debug thật.
+- **Timeout phải là "chậm hơn ngưỡng"**: `sleepMs=2000` > `SAGA_READ_TIMEOUT` 800 ms; nếu ai set timeout 10 phút thì F4 sẽ
+  đỏ (chậm quá) — đó là mục đích (canh cấu hình, không chỉ canh code).
+- **`docker stop` (F5) khác `failStatus=500` (F3)**: refused = TCP chết ngay (~0 ms), 500 = service sống nhưng lỗi. Cả hai vào
+  cùng nhánh `ResourceAccessException`/5xx → 503, nhưng F5 chứng minh checkout không treo khi dependency biến mất.
+- **`cleanup` trap luôn reset hook + `docker start`**: script chết giữa đường mà để `sleepMs=2000` thì mọi checkout sau
+  (kể cả `e2e-checkout.sh`) sẽ timeout oan.
+
+**Kết quả verify** *(chạy thật 2026-11-08 — stack compose 10 container healthy, `order-service` env mặc định 15′/800 ms)*
+
+```text
+$ bash tools/e2e-checkout-fail.sh
+-- F1 hết hàng giữa chừng
+  PASS F1.1 checkout hết hàng → 409      PASS F1.2 voucher locked = 0      PASS F1.3 reserved = 0
+-- F2 payment fail (provider từ chối)
+  PASS F2.1 checkout → 201 · F2.2 reserved = 1 · F2.3 provider FAILED → 200
+  PASS F2.4 confirm khi payment FAILED → 409 · F2.5 cancel → 200 · F2.6 saga CANCELLED
+  PASS F2.7 reserved = 0 · F2.8 locked = 0
+-- F3 payment lỗi 5xx (debug hook)
+  PASS F3.1 bật failStatus=500 → 200 · F3.2 checkout → 503 · F3.3 tắt hook → 200
+  PASS F3.4 reserved = 0 · F3.5 locked = 0 · F3.6 order mới nhất CANCELLED
+-- F4 payment chậm hơn read-timeout (2000 ms)
+  PASS F4.1 bật sleepMs=2000 → 200 · F4.2 checkout → 503
+  PASS F4.3 đã chờ tới timeout rồi mới bỏ (921 ms ≥ 700 ms)
+  PASS F4.4 reserved = 0 · F4.5 locked = 0
+-- F5 payment chết hẳn (docker stop)
+  PASS F5.1 checkout → 503 · F5.2 payment sống lại · F5.3 reserved = 0 · F5.4 locked = 0
+-- F6 retry cùng key sau fail
+  PASS F6.1 retry key của F3 → 201 · F6.2 reserved = 1 · F6.3 huỷ đơn → 200 · F6.4 reserved = 0
+
+== Kết quả: 41 PASS / 0 FAIL / 0 SKIP · 37 request · 12118 ms
+E2E checkout fail-branches: OK
+```
+
+```text
+$ bash tools/e2e-checkout.sh   27 PASS / 0 FAIL · 956 ms     (không regress)
+$ bash tools/e2e-smoke.sh      17 PASS / 0 FAIL · 484 ms     (không regress)
+$ mvn -B -ntp verify           BUILD SUCCESS — payment 64 unit (+5 FaultInjectionTest) + 12 IT,
+                               toàn repo 11 module xanh, checkstyle 0
+$ python3 yaml.safe_load(e2e.yml)  steps: 9 (thêm bước chạy script fail)
+```
+
+**Sự cố trong lúc verify (3 lỗi thật — 1 trong code test, 2 trong script)**
+
+- **`/debug/faults` qua gateway → 401**: gateway **không** có route `/debug/**` (đúng thiết kế — debug không expose ra biên) ⇒
+  script phải gọi thẳng `:8088`. Đây là phát hiện tốt: nếu route đó tồn tại thì mới là lỗi bảo mật.
+- **Assert sai field**: `POST /v1/checkout/{id}/cancel` trả `SagaStatusResponse` (`state`), không phải `OrderResponse`
+  (`status`) ⇒ F2.6 đọc `status` ra rỗng.
+- **`$STATUS` bị ghi đè**: gọi `faults 0 0` (cũng dùng `http_do`) **trước** khi assert F4.2 ⇒ assert đọc status của lệnh reset
+  (200) thay vì 503 của checkout. Fix: chốt `F4_STATUS="$STATUS"` ngay sau lời gọi cần đo.
+
+**Learning note**
+
+- **Compensating chỉ đáng tin khi assert *state*, không phải status**: 503 trả về client **không** chứng minh hàng đã được
+  trả — phải đọc `stock.reserved` và `voucher.locked` (qua API, không cần psql). Cùng triết lý `SL-2.5` (CHECK ở DB) nhưng ở
+  tầng E2E.
+- **Bơm lỗi phải nằm ở hạ tầng, không ở nghiệp vụ**: một `Filter` có `@ConditionalOnProperty` giữ `PaymentController` sạch;
+  production không có endpoint nào để bật nó, và filter chạy **sau** security nên request đã xác thực như thật.
+- **Timeout chỉ được chứng minh khi dependency *chậm hơn* ngưỡng**: `docker stop` (refused ~0 ms) và `failStatus=500` đi cùng
+  một nhánh code, nhưng **không** chứng minh `SAGA_READ_TIMEOUT` có tác dụng. F4 đo được 921 ms ≈ 800 ms timeout ⇒ cấu hình
+  là thật.
+- **Script E2E cũng là code**: `$STATUS` là biến toàn cục bị mọi `http_do` ghi đè ⇒ phải chốt giá trị ngay sau lời gọi cần đo.
+  Đây là loại bug làm test "xanh/đỏ sai" — nguy hiểm hơn bug trong sản phẩm vì nó làm mất niềm tin vào bộ test.
+- **`cleanup` trap là bắt buộc khi test bơm lỗi**: không reset thì một lần script chết sẽ làm **mọi** checkout sau đó timeout —
+  triệu chứng hoàn toàn không liên quan tới nguyên nhân.
 
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.

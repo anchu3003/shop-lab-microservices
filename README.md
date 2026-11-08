@@ -698,6 +698,34 @@ có `paymentUrl`) → saga `COMPLETED_START` → retry cùng `Idempotency-Key` (
 **`schedule` hằng tuần** — **không** chạy mỗi PR vì 9 image × `mvn package` từ đầu ≈ 30 phút/run (gói Free 2 000
 phút/tháng). `ci.yml` vẫn là hàng rào chạy mỗi PR.
 
+### E2E nhánh fail + compensating — `SL-2.9`
+
+```bash
+bash tools/e2e-checkout-fail.sh     # cần stack đang chạy + SHOPLAB_DEBUG_ENDPOINTS=true cho payment
+# == Kết quả: 41 PASS / 0 FAIL / 0 SKIP · 37 request · 12118 ms
+```
+
+| Kịch bản | Bơm lỗi bằng | Assert state thật |
+|---|---|---|
+| F1 hết hàng | SKU `onHand = 0` | **409** · `voucher.locked = 0` · `stock.reserved = 0` |
+| F2 provider từ chối | `POST /mock-provider/pay/{id}?fail=true` | `confirm` **409** · `cancel` **200** · saga `CANCELLED` · `reserved 0` · `locked 0` |
+| F3 payment 5xx | hook `failStatus=500` | checkout **503** · `reserved 0` · `locked 0` · order `CANCELLED` |
+| F4 **timeout** | hook `sleepMs=2000` (> `SAGA_READ_TIMEOUT` 800 ms) | checkout **503** sau **921 ms** · bù sạch |
+| F5 dependency chết | `docker stop shoplab-payment-service` | checkout **503** · service tự sống lại · bù sạch |
+| F6 retry sau fail | cùng `Idempotency-Key` của F3 | **201** (khoá đã được trả, không kẹt `IN_PROGRESS`) |
+
+**Hook bơm lỗi** (`payment-service: debug/FaultInjection*`): chỉ tồn tại khi `shoplab.debug-endpoints=true` (compose local/E2E),
+`@Hidden` khỏi OpenAPI, chỉ tác động `/v1/payment-intents`.
+
+```bash
+# Gọi THẲNG port payment — `/debug/**` cố ý KHÔNG có route ở gateway (debug là nội bộ).
+curl -s -X POST 'localhost:8088/debug/faults?sleepMs=2000'   # làm chậm (test read timeout)
+curl -s -X POST 'localhost:8088/debug/faults?failStatus=500' # trả 5xx ngay
+curl -s -X POST 'localhost:8088/debug/faults/reset'          # tắt
+```
+
+> Script tự `reset` + `docker start` trong `trap EXIT`: để hook bật dở mà script chết thì **mọi** checkout sau đó sẽ timeout oan.
+
 
 
 ### E2E smoke — `SL-1.3` → `SL-1.7`
