@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Trạng thái** | `DRAFT v0.4` — Phase 0 + Phase 1 **hoàn thành**; Phase 2 (core commerce flow) đang làm: đã chốt mô hình checkout ([ADR-0006](docs/adr/0006-checkout-model.md)) |
+| **Trạng thái** | `DRAFT v0.5` — Phase 0 · Phase 1 · Phase 2 **hoàn thành** (tag `phase-2`); Phase 3 (async & event-driven) đang làm: đã chốt contract event ([ADR-0007](docs/adr/0007-event-contract.md)) |
 | **Người thực hiện** | bạn + AI |
-| **Cập nhật lần cuối** | 2026-11-07 (`SL-2.0` — ADR-0006 mô hình checkout Phase 2) |
+| **Cập nhật lần cuối** | 2026-11-08 (`SL-3.0` — ADR-0007 contract event Phase 3) |
 | **Liên quan** | `AGENTS.md`, `Backlog.md`, `Backlog-phase-0.md`, `docs/adr/`, `docs/phases/` |
 
 ---
@@ -574,8 +574,10 @@ outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
 
 - REST cho external, version qua path `/v1/...`; **OpenAPI là source of truth**.
 - gRPC cho internal call cần latency thấp / typed contract (inventory, catalog).
-- Event contract có version, schema registry từ Phase 3 trở đi.
-- Breaking change phải có **deprecation window**, không phá client đang chạy.
+- **Event contract**: envelope 7 field + routing key `<aggregate>.<event>.v<N>` + at-least-once + consumer idempotent
+  theo `eventId` — chốt ở **[ADR-0007](docs/adr/0007-event-contract.md)** (`SL-3.0`). **Không** dùng schema registry ở phase
+  này (điều kiện thêm: [ADR-0007](docs/adr/0007-event-contract.md) → Revisit); version nằm trong routing key **và** payload.
+- Breaking change phải có **deprecation window**, không phá client đang chạy (với event: phát `.v2` song song).
 
 ### 9.5. Testing strategy
 
@@ -686,7 +688,8 @@ phạm vi + điều kiện revisit: [`docs/adr/0004-service-commons-shared-libra
 **Quyết định:** Phase 3 dùng **RabbitMQ** (học concept nhanh), Phase 8 thêm **Kafka** cho luồng
 event streaming / CDC → analytics. Việc so sánh 2 broker chính là một bài học trade-off.
 
-**Contract event** (envelope · đặt tên · topology · outbox relay · DLQ) chốt ở **ADR-0007** (`SL-3.0`);
+**Contract event** (envelope · đặt tên · topology · outbox relay · DLQ) chốt ở
+**[ADR-0007](docs/adr/0007-event-contract.md)** (`SL-3.0`);
 envelope dùng chung cho mọi service nên nó nằm ở `service-commons` (`SL-3.2`), không ở từng service.
 **`search-service` dùng PostgreSQL FTS ở Phase 3** (DB riêng `search`), OpenSearch để Phase 8 — đổi storage
 mà **không đổi event contract** là mục tiêu của cách chia này.
@@ -836,3 +839,5 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-07 | `SL-2.5`: thêm **`order-service`** (8087, DB `order`) — tạo đơn **idempotent** (`Idempotency-Key`: 201/200 replay/422/409), `order_items` **snapshot** giá/tên, state machine `PENDING_PAYMENT → CONFIRMED|CANCELLED|EXPIRED` + history; job dọn `idempotency_keys` (trả `TD-14`); bất biến tiền do CHECK ở DB canh; cập nhật §5, §8.4 | bạn + AI |
 | 2026-11-07 | `SL-2.7`: thêm **`payment-service`** (8088, DB `payment`) — payment intent idempotent (`Idempotency-Key`), **mock provider** (fail-closed ngoài local), webhook **idempotent** theo khoá tự nhiên (`provider_event_id` PK + `provider_txn_id` UNIQUE) + **HMAC-SHA256 trên raw body** & timestamp window; bất biến tiền do CHECK canh (`amount > 0`, `SUCCEEDED ⇔ paid_at`); mỗi đơn tối đa 1 intent sống (unique index có điều kiện). Cập nhật §5, §6.2, §8.4 | bạn + AI |
 | 2026-11-07 | `SL-2.1`: thêm **`cart-service`** (8083) — service **đầu tiên không có Postgres**: Redis HASH `cart:<owner>` (owner = `u:<userId>` | `g:<guestToken>`), TTL **30 ngày** refresh mỗi lần ghi; mọi phép ghi chạy **Lua** (read-modify-write nguyên tử, bất biến `qty 1..999` + `maxLines` kiểm trong script); **guest cart** với token do **server** cấp (`POST /v1/carts/guest`, marker `cart:guest:<token>`); **merge khi login** cộng dồn + cap + xoá giỏ guest trong cùng script ⇒ gọi lại không cộng lần 2; gateway để `/v1/carts/**` **public** và cart tự phân xử danh tính. **Cart không snapshot giá** (quyết định A, `TD-20`) ⇒ cập nhật §5, §8.4 | bạn + AI |
+| 2026-11-08 | `SL-3.0` mở **Phase 3**: ADR-[0007](docs/adr/0007-event-contract.md) chốt **contract event** (envelope 7 field · routing key `<aggregate>.<event>.v<N>` · exchange `shoplab.events` + `shoplab.dlx` · queue theo consumer + DLQ · **at-least-once + dedupe `eventId`** · outbox **polling relay** · retry 3 → DLQ không auto-replay) + bảng 5 event khởi điểm; sửa §9.4 (bỏ "schema registry từ Phase 3" → version trong envelope), §5/§8.2/§11.2/§12 (search dùng **Postgres FTS** ở Phase 3, OpenSearch Phase 8) | bạn + AI |
+
