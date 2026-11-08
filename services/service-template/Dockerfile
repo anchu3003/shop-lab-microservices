@@ -34,6 +34,7 @@ COPY services/order-service/pom.xml services/order-service/
 COPY services/api-gateway/pom.xml services/api-gateway/
 COPY services/payment-service/pom.xml services/payment-service/
 COPY services/cart-service/pom.xml services/cart-service/
+COPY services/notification-service/pom.xml services/notification-service/
 RUN mvn -B -q -pl services/service-template -am dependency:go-offline
 
 COPY packages/ packages/

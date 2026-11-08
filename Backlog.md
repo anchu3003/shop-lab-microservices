@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-3.3` ✅ **Done** — outbox + relay ⇒ `order.confirmed.v1`) |
-| **Ticket tiếp theo** | `SL-3.4` — **`notification-service`** (8089): consumer `order.confirmed` + email mock + retry + DLQ *(merge bằng `--skip-ci-check` — `TD-28`)* |
+| **Ticket đang làm** | — (`SL-3.4` ✅ **Done** — `notification-service` + DLQ + `tools/dlq.sh`) |
+| **Ticket tiếp theo** | `SL-3.5` — `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`**) *(merge bằng `--skip-ci-check` — `TD-28`)* |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -19,7 +19,7 @@
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
-| 3 | Async & event-driven | 🟡 Đang làm (11 ticket) | 4 / 11 |
+| 3 | Async & event-driven | 🟡 Đang làm (11 ticket) | 5 / 11 |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
@@ -251,7 +251,7 @@ $ md5sum docs/api/openapi.yaml
 | 2 | `SL-3.1` | **RabbitMQ**: topology (exchange/queue/DLQ) + healthcheck + `tools/rabbit-topology.sh` | S | ✅ Done |
 | 3 | `SL-3.2` | `service-commons`: `EventEnvelope` + publisher (confirm) + consumer base (retry → DLQ) + dedupe `processed_events` | M | ✅ Done |
 | 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | ✅ Done |
-| 5 | `SL-3.4` | **`notification-service`** (8089): consumer `order.confirmed` → email mock + retry + **DLQ** + `tools/dlq.sh` | M | Todo |
+| 5 | `SL-3.4` | **`notification-service`** (8089): consumer `order.confirmed` → email mock + retry + **DLQ** + `tools/dlq.sh` | M | ✅ Done |
 | 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`**) | M | Todo |
 | 7 | `SL-3.6` | `catalog-service` outbox product event + **`search-service`** (8090, Postgres **FTS**) index + reconcile + `GET /v1/search` | M | Todo |
 | 8 | `SL-3.7` | E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml` | S | Todo |
@@ -763,7 +763,7 @@ $ psql: order.cancelled.v1|SENT
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done ✅ (2026-11-08) |
 | **Phase** | 3 — Async & event-driven |
 | **Phụ thuộc** | `SL-3.2` (consumer base) · `SL-3.3` (event thật để consume); chặn `SL-3.7`/`SL-3.8` |
 | **Ước lượng** | M |
@@ -795,12 +795,12 @@ thì chỉ là cấu hình.
 
 **Acceptance Criteria**
 
-- [ ] Confirm đơn ⇒ trong ≤ **2 s** có row `notification_logs` `SENT` + `GET /v1/notifications/me` thấy nó; log có `eventId`.
-- [ ] Publish lại **cùng `eventId`** ⇒ vẫn **1** row (dedupe), không gửi lần 2.
-- [ ] Bật `SHOPLAB_NOTIFICATION_FAIL_MODE=true` ⇒ retry **3 lần** rồi message sang `q.notification.dlq`, queue chính
+- [x] Confirm đơn ⇒ trong ≤ **2 s** có row `notification_logs` `SENT` + `GET /v1/notifications/me` thấy nó; log có `eventId`.
+- [x] Publish lại **cùng `eventId`** ⇒ vẫn **1** row (dedupe), không gửi lần 2.
+- [x] Bật `SHOPLAB_NOTIFICATION_FAIL_MODE=true` ⇒ retry **3 lần** rồi message sang `q.notification.dlq`, queue chính
       `ready = 0`, `unacked = 0` (không treo).
-- [ ] `bash tools/dlq.sh move q.notification` (sau khi tắt fail-mode) ⇒ message được xử lý, `notification_logs` +1, DLQ rỗng.
-- [ ] Checkout vẫn xanh khi `notification-service` **chết** (async đúng nghĩa): confirm **200**, không 503.
+- [x] `bash tools/dlq.sh move q.notification` (sau khi tắt fail-mode) ⇒ message được xử lý, `notification_logs` +1, DLQ rỗng.
+- [x] Checkout vẫn xanh khi `notification-service` **chết** (async đúng nghĩa): confirm **200**, không 503.
 
 **Ghi chú kỹ thuật**
 
@@ -811,7 +811,97 @@ thì chỉ là cấu hình.
 
 **Kết quả verify** *(điền khi Done)*
 
+CI **đang tắt** (`SL-3.10`/`TD-28`) ⇒ bằng chứng dưới đây là `mvn verify` + e2e **chạy local**, dán nguyên output.
+
+**1. Test tự động** — `mvn -B -ntp verify` (toàn repo, **12 module**):
+
+```
+[INFO] BUILD SUCCESS
+TOTAL: Tests run: 730, Failures: 0, Errors: 0   (600 unit + 130 IT)
+  · riêng notification-service: 34 unit + 9 IT
+  · NotificationServiceApplicationIT (5): Flyway tạo 3 bảng + seed 2 template · event_id UNIQUE chặn ghi trùng ·
+    me không token → 401 · me chỉ trả log của chính mình (mới nhất trước) · ?limit bị chặn bởi trần cấu hình
+  · NotificationConsumerIT (4): send + ack · publish lại cùng eventId → 1 row · fail-mode → nack(requeue=false) +
+    xoá marker dedupe · fail-mode bị bỏ qua khi env != local
+  · TemplateRendererTest (5) + NotificationServiceTest (7)
+```
+
+**2. Async end-to-end (stack thật)** — publish `order.confirmed.v1` (envelope thật) rồi poll DB:
+
+```
+publish: {"routed":true}
+row xuất hiện sau 239 ms          <-- AC "≤ 2 s"
+SENT|order.confirmed|Đơn hàng 4fe873b0-…-a52c6effed47 đã được xác nhận
+```
+
+`GET /v1/notifications/me` qua gateway (buyer token):
+
+```
+status=200
+[{"id":"f8f27889-…","eventId":"50681af7-…","orderId":"b5a0d2ff-…","channel":"EMAIL",
+  "template":"order.confirmed","recipient":"user-abb11f6d@shoplab.local",
+  "subject":"Đơn hàng b5a0d2ff-… đã được xác nhận", …}]
+```
+
+**3. Dedupe** — publish **cùng `eventId`** lần 2: `rows = 1`, log consumer `đã xử lý trước đó`.
+
+**4. Retry → DLQ** (`SHOPLAB_NOTIFICATION_FAIL_MODE=true`, restart service):
+
+```
+q.notification        ready=  0 unacked=  1 consumers=1     <-- đang retry
+   … sau ~4 s (200ms + 1s + 3s) …
+q.notification        ready=  0 unacked=  0 consumers=1     <-- KHÔNG treo
+q.notification.dlq    ready=  1
+docker logs … | grep -c 'lỗi xử lý|→ DLQ'  →  4             <-- 3 lần retry + 1 lần sang DLQ
+```
+
+**5. Replay có kiểm soát** — tắt fail-mode rồi `bash tools/dlq.sh move q.notification`:
+
+```
+  replay 1 message từ q.notification.dlq → shoplab.events (routing key GỐC = order.confirmed.v1) → {"routed":true}
+rows cho eventId đó: 1        <-- message được xử lý lại, notification_logs +1
+q.notification.dlq   ready=  0
+```
+
+**6. Decoupling** — `docker stop shoplab-notification-service` rồi confirm 1 đơn mới:
+
+```
+notification ĐANG TẮT → confirm: 200        <-- AC: không 503
+bật lại → notification_logs có thêm: 1     <-- message chờ trong queue được xử lý khi consumer sống lại
+```
+
+**7. Regression** — e2e local (3 script):
+
+```
+== Kết quả: 17 PASS / 0 FAIL · 13 request · 1145 ms     (e2e-smoke)
+== Kết quả: 27 PASS / 0 FAIL · 14 request · 3854 ms     (e2e-checkout)
+== Kết quả: 41 PASS / 0 FAIL / 0 SKIP · 37 request      (e2e-checkout-fail)
+```
+
 **Learning note** *(điền khi Done)*
+
+- **Replay không phải "publish lại payload"** — bẫy này làm **mất message thật** ngay trong ticket này. Trong DLQ,
+  `routing_key` của message là **tên queue** (`q.notification`) vì DLX đặt routing key = tên queue (ADR-0007 D2).
+  Bản đầu của `tools/dlq.sh move` publish lại bằng `routing_key` hiện tại ⇒ `routed=false` ⇒ message bị **ack khỏi
+  DLQ rồi rơi vào hư không**, không một lỗi nào. Routing key gốc nằm ở header `x-death[0].routing-keys`. Bài học
+  kép: (1) đọc `x-death` khi replay; (2) **peek trước, consume sau** — validate xong mới `ack`, và script giờ exit
+  **không consume** khi không parse được.
+- **Quoting bash giết message**: bản `move` đầu tiên parse bằng `python3 -c "…nhiều dòng…"` trong `"$( … )"` — parse
+  trả rỗng, mà message đã bị `get` mất rồi mới phát hiện. Chuyển sang **file python tạm + heredoc quoted** (không
+  expansion) là hết hẳn lớp lỗi này. Với script vận hành, "parse lỗi" phải là **no-op**, không được là "mất dữ liệu".
+- **`spring.rabbitmq.listener.simple.auto-startup` không áp cho factory tự khai**: service dùng
+  `eventListenerContainerFactory` riêng (cần `AcknowledgeMode.MANUAL`) nên property của Boot **không** chạm tới ⇒ IT
+  (không có broker) chết với `FatalListenerStartupException: Authentication failure`, **đỏ cả 17 test** dù logic
+  đúng. Phải thêm cờ riêng của commons (`shoplab.events.consumer-auto-startup`). Tổng quát: **property của Boot chỉ
+  có tác dụng với bean của Boot** — tự khai bean thì phải tự khai công tắc.
+- **Dedupe là điều kiện của retry**, không phải tính năng phụ: retry gửi lại đúng message đó, nên marker
+  `processed_events` **phải bị xoá khi handler fail** — xoá sai thứ tự thì retry thành "đã xử lý" (mất thông báo),
+  không xoá thì retry vô nghĩa. `notification_logs.event_id UNIQUE` là chốt thứ hai ở tầng DB.
+- **Async giải quyết "không chặn" nhưng đẻ ra "im lặng"**: khi service chết, confirm vẫn 200 (đúng), message **chờ
+  trong queue** rồi được xử lý lúc consumer sống lại — nhưng nếu consumer chết **mãi** thì không ai biết thông báo
+  đã không gửi. Đây là lý do `SL-3.8`/`SL-3.9` cần metric **queue depth + consumer down**, không chỉ log.
+- 16 unit + 9 IT cho service mới, nhưng **0 dòng** retry/dedupe/DLQ trong code service — tất cả nằm ở
+  `AbstractEventConsumer`. Đó là giá trị thật của `SL-3.2`: service thứ 2 trở đi chỉ viết ~60 dòng.
 
 ### SL-3.5 — `payment.succeeded` ⇒ `order-service` auto-confirm (trả `TD-17`)
 
@@ -1398,6 +1488,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 | 2026-11-08 | SL-3.2 | **`@ConditionalOnBean` là điều kiện *theo thời điểm*, không phải "bean này sẽ có"**: auto-config chạy theo thứ tự, điều kiện chỉ thấy bean đã đăng ký **trước** nó. Thiếu `after`/`afterName` ⇒ điều kiện âm thầm `false` ⇒ store dedupe không được tạo, bảng `processed_events` không xuất hiện, **không một dòng lỗi** — cùng họ với `SL-3.1` (`RabbitAdmin` khai lazy): code đúng, hệ không làm gì, log sạch. Cách phát hiện duy nhất: kiểm **trạng thái của hệ ngoài** (bảng trong DB, exchange trên broker), không kiểm "service healthy". Phụ: Boot 4 đặt `JdbcTemplateAutoConfiguration` ở module `spring-boot-jdbc` ⇒ dùng `afterName` (string) để commons không phải kéo dependency chỉ vì một cái tên. Hai bài học thiết kế: (1) **marker dedupe phải xoá khi xử lý fail** — nếu chỉ `insert` trước handler thì DLQ replay bị chính marker chặn, message nằm trong DLQ mà không bao giờ chạy lại; (2) **`AcknowledgeMode.MANUAL` là điều kiện của DLQ** — auto-ack nghĩa là message "xong" ngay khi listener trả về ⇒ không còn cơ hội `nack` khi fail ⇒ mất message im lặng. |
 
+| 2026-11-08 | SL-3.4 | **Replay DLQ không phải "publish lại payload"** — trong DLQ, `routing_key` của message là **tên queue** (`q.notification`) vì DLX đặt routing key = tên queue (ADR-0007 D2); routing key gốc nằm ở header `x-death[0].routing-keys`. Bản đầu `tools/dlq.sh move` publish lại bằng `routing_key` hiện tại ⇒ `routed=false` ⇒ message **bị ack khỏi DLQ rồi rơi vào hư không**, không một lỗi nào (đúng họ "lỗi im lặng" của `SL-3.1`/`SL-3.2`). Nguyên tắc cho tool vận hành: **peek trước, consume sau** — validate xong mới `ack`, và parse lỗi phải là **no-op**. Kèm bài học bash: `python3 -c "…nhiều dòng…"` trong `"$( … )"` là bẫy thật — parse trả rỗng *sau khi* message đã bị `get` mất; chuyển sang **file python tạm + heredoc quoted** là hết lớp lỗi này. Thứ hai: **property của Boot chỉ áp cho bean của Boot** — `spring.rabbitmq.listener.simple.auto-startup=false` không chạm tới `eventListenerContainerFactory` tự khai (cần `AcknowledgeMode.MANUAL`) ⇒ IT không có broker chết với `FatalListenerStartupException: Authentication failure`, **đỏ cả 17 test** dù logic đúng; phải tự khai công tắc (`shoplab.events.consumer-auto-startup`). Thứ ba, về thiết kế: **dedupe là điều kiện của retry** (marker phải bị xoá khi handler fail, nếu không DLQ replay bị chính marker chặn) và **async đổi "chặn" lấy "im lặng"** — service chết thì confirm vẫn 200 (đúng), message chờ trong queue rồi xử lý khi consumer sống lại, nhưng consumer chết **mãi** thì không ai biết ⇒ phải có metric queue depth (§`SL-3.8`/`SL-3.9`). |
+
 | 2026-11-08 | SL-3.3 | **`eventId` phải ổn định qua các lần thử** — chi tiết quyết định cả pattern: relay sinh `eventId` mới mỗi lần publish lại thì dedupe của consumer **không chặn được gì** (mỗi lần là event "mới") ⇒ gửi email 2 lần. Dùng `outbox.id` làm `eventId` thì mọi lần retry mang cùng id. Hai điều nữa: (1) **claim ≠ publish trong cùng transaction** — claim là transaction ngắn (`UPDATE … SKIP LOCKED` + `claimed_at`) rồi publish **ngoài** transaction, nếu không broker chậm sẽ giữ row lock Postgres (biến sự cố broker thành sự cố DB); (2) **`@Transactional` phải đi qua proxy** — tách `CheckoutOutbox` thành bean riêng vì gọi method `@Transactional` cùng class là **không có transaction nào**, outbox ghi ngoài transaction và mất toàn bộ ý nghĩa. Bug thật đáng nhớ: **thiếu `publisher-confirm-type: correlated`** ⇒ `CorrelationData.getFuture()` không bao giờ complete ⇒ mỗi publish treo đúng 5 s rồi fail; outbox đã biến "mất event" thành "trễ event" (21 lần thử, 0 message mất) — đúng thứ pattern này mua được, nhưng `attempts` cao phải được đọc là **cấu hình sai**. |
 
 ## 7. Technical debt register
@@ -1436,6 +1528,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
 | `TD-29` | Bảng `outbox` **không có job dọn** row `SENT` ⇒ 1 row/event/lần checkout, phình dần. Hệ quả phụ: đường quét `WHERE status = 'PENDING'` vẫn dùng index riêng nên không chậm, nhưng backup/disk thì lớn lên | SL-3.3 | **Đã trả ở `SL-3.7`** (chưa) — revisit khi bảng > 10⁶ row hoặc khi `notification-service` (`SL-3.4`) xong: gộp 1 job retention cho `outbox` + `processed_events` (giữ 7 ngày để còn điều tra) | trung bình |
 | `TD-28` | **CI đang TẮT tạm thời** (`vars.CI_ENABLED=false`, từ `SL-3.10`) để tăng tốc merge Phase 3 ⇒ mất 3 hàng rào tự động: `test` + JaCoCo gate độc lập, `lint` trong môi trường sạch, và **`build-image` matrix** (chốt duy nhất bắt lỗi Dockerfile/COPY pom khi thêm module/service). Verify chuyển sang **local** (`mvn verify` + e2e) do người/AI tự khai | SL-3.10 | **Bắt buộc** bật lại khi đóng Phase 3 (`gh variable delete CI_ENABLED`) — hoặc sớm hơn nếu có ≥ 1 lần `main` đỏ mà local xanh | cao |
+| `TD-30` | `notification_logs` + `processed_events` **không có job dọn**: `processed_events` tăng 1 row/event/consumer **vĩnh viễn** (không xoá được vì dedupe cần), `notification_logs` tăng 1 row/đơn đã confirm — sau 1 năm là chục triệu row ở cả 2 bảng | SL-3.4 | Gộp vào **cùng job retention** với `TD-29`: `processed_events` giữ ≥ 7 ngày (đủ dài hơn max retry + replay tay), `notification_logs` giữ theo yêu cầu nghiệp vụ (≥ 90 ngày). Revisit khi bảng > 10⁶ row **hoặc** khi làm `SL-3.7`/`SL-3.9` (job/runbook) | trung bình |
 
 
 ## 8. Changelog
@@ -1526,3 +1619,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | `SL-3.2` → `Done`: **hạ tầng event trong `service-commons`** — `EventEnvelope` (7 field, `create()` sinh `eventId` + `traceId` từ MDC, `versionOf()` parse hậu tố `.vN`) · `EventEnvelopeCodec` (encode/decode + validate: **version lạ ⇒ `EventFormatException`** để đẩy DLQ) · `EventPublisher` (**publisher confirm** qua `CorrelationData.getFuture()` + message `PERSISTENT`, nack/timeout ⇒ `EventPublishException`) · `ProcessedEventStore` + `JdbcProcessedEventStore` (`insert … on conflict do nothing` ⇒ `rowsAffected`, PK `(event_id, consumer)`, kèm `unmarkProcessed`) · `AbstractEventConsumer` (`ChannelAwareMessageListener`: decode → skip event lạ → **dedupe** → handler → ack; lỗi ⇒ retry 3 (200 ms/1 s/3 s) ⇒ **xoá marker** ⇒ `nack(requeue=false)` = DLQ; đặt lại `traceId` của producer vào MDC) · `EventProperties` + `EventAutoConfiguration` (container factory **MANUAL ack**, `prefetch=1`/`concurrency=1` để giữ thứ tự). **Bug thật**: `@ConditionalOnBean(JdbcTemplate)` chạy trước `JdbcTemplateAutoConfiguration` ⇒ store **không được tạo, không lỗi** ⇒ fix bằng `after`/`afterName` + 2 test khoá lại; verify trên stack: bảng `processed_events` xuất hiện trong DB `order` (PK `(event_id, consumer)`). Verify: commons **71 unit** (+15 mới) · toàn repo **BUILD SUCCESS · 679 test (561 unit + 118 IT)** · `order-service` rebuild healthy · `e2e-smoke` 17/17 · `e2e-checkout` 27/27 · `e2e-checkout-fail` 41/41. |
 | 2026-11-08 | `SL-3.10` → `Done`: **tắt CI tạm thời** để tăng tốc merge Phase 3 — kill-switch có sẵn `gh variable set CI_ENABLED --body false` (3 job `skipping`, 0 phút) + **`tools/merge-pr.sh --skip-ci-check`** (mặc định vẫn chặn; có cờ ⇒ in CẢNH BÁO + ghi `CI: BỎ QUA` vào comment evidence hậu merge; vẫn bắt buộc PR mở/không draft + comment tóm tắt + diff không rỗng). Ghi rule: `AGENTS.md` §9 (ngoại lệ + lệnh bật lại) · `.clinerules/10-git-workflow.md` (điều kiện merge thay thế) · `README.md` mục CI · **`TD-28`** (mức `cao`, revisit = **bắt buộc** bật lại khi đóng Phase 3). Verify: `gh variable list` → `CI_ENABLED=false` · push nhánh mới ⇒ **0 run** · `gh pr checks` → 3 job `skipping` · không cờ ⇒ script **chặn** (`run … là 'skipped' (cần 'success')`) · có cờ ⇒ merge được + cảnh báo. |
 | 2026-11-08 | `SL-3.3` → `Done`: **transactional outbox ở `order-service`** — migration `V4__create_outbox.sql` (`outbox` + `status PENDING/SENT` + CHECK `SENT ⇒ sent_at` + index riêng cho `PENDING` + `claimed_at` để 2 relay không gửi trùng) · `OutboxRepository`/`JdbcOutboxRepository` (`claimPending` = 1 câu `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING`, `markSent`, `markFailed` trả claim) · **`CheckoutOutbox`** (bean riêng `@Transactional`: `confirm`/`cancel` ghi order + saga + outbox **cùng transaction** — self-invocation sẽ bỏ qua proxy) · **`OutboxRelay`** (`@Scheduled` 1 s, batch 100, **`eventId = outbox.id`** để retry giữ nguyên id cho dedupe của consumer, lỗi 1 row không chặn row khác) · `OutboxProperties` + env compose. **2 bug thật**: (a) thiếu `spring.rabbitmq.publisher-confirm-type=correlated` ⇒ `getFuture()` không bao giờ complete ⇒ mỗi publish treo 5 s (outbox cứu: event không mất, chỉ trễ); (b) `JdbcOutboxRepository` đòi bean `ObjectMapper` ⇒ IT đỏ 28/28 ⇒ tự tạo mapper. Verify: **mvn verify BUILD SUCCESS · 687 test (566 unit + 121 IT)** · stack thật: confirm ⇒ `PENDING|0` → `SENT|1` + message `q.notification` · **broker chết ⇒ order vẫn `CONFIRMED`**, row `PENDING` `attempts=11`, bật lại ⇒ `SENT` · cancel ⇒ `order.cancelled.v1|SENT` · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-29` (chưa có job dọn row `SENT`). |
+| 2026-11-08 | `SL-3.4` → `Done`: **`notification-service` (8089)** — service mới (`notification` DB riêng, Flyway `V1`: `notification_logs` + `notification_templates` seed 2 mẫu + `processed_events`) · consumer `q.notification` (`order.confirmed.v1` / `order.cancelled.v1`) **không viết lại hạ tầng**: chỉ override `consumerName()`/`handledEventTypes()`/`handleEvent()` trên `AbstractEventConsumer` (~60 dòng, 0 dòng retry/DLQ/dedupe) · `TemplateRenderer` placeholder `{{var}}` (không engine) · `GET /v1/notifications/me` (userId từ claim `sub`, `?limit` bị chặn bởi trần cấu hình) · `SHOPLAB_NOTIFICATION_FAIL_MODE` **fail-closed** (chỉ `env=local`) để test retry/DLQ · **`tools/dlq.sh`** `list|peek|move|purge` — replay đọc **routing key gốc từ `x-death`**, `peek` trước rồi mới `ack`. Hạ tầng: commons thêm cờ `shoplab.events.consumer-auto-startup` (property `spring.rabbitmq.listener.simple.auto-startup` của Boot **không** áp cho container factory tự khai ⇒ IT đỏ 17 test), compose + gateway route + CI matrix + `.env.example`. **Bug thật**: `dlq.sh move` bản đầu publish bằng `routing_key` hiện tại = tên queue ⇒ `routed=false` ⇒ **mất message**; parse `python3 -c` nhiều dòng trong `$( )` cũng làm rơi 1 message (chuyển sang file python tạm). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 730 test (600 unit + 130 IT)** · async thật: publish → row sau **239 ms** · dedupe: cùng `eventId` 2 lần ⇒ **1 row** · fail-mode ⇒ `ready=0 unacked=0` + `q.notification.dlq ready=1`, `dlq.sh move` ⇒ DLQ `1→0` + `notification_logs` +1 · `docker stop` notification ⇒ confirm vẫn **200**, bật lại ⇒ message được xử lý · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-30` (retention `notification_logs` + `processed_events`).

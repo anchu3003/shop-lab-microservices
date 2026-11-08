@@ -121,6 +121,9 @@ shoplab:
       # (JWT hoặc X-Cart-Token do chính nó cấp).
       - path-prefix: /v1/carts
         base-url: ${CART_SERVICE_URL:http://localhost:8083}
+      # SL-3.4: notification-service — chỉ đường đọc thông báo của CHÍNH mình. Cần token.
+      - path-prefix: /v1/notifications
+        base-url: ${NOTIFICATION_SERVICE_URL:http://localhost:8089}
       # JWKS công bố qua gateway để client chỉ cần biết MỘT địa chỉ.
       - path-prefix: /.well-known
         base-url: ${IDENTITY_SERVICE_URL:http://localhost:8081}

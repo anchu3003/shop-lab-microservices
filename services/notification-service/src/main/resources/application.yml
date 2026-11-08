@@ -1,0 +1,82 @@
+# ==============================================================================
+# application.yml — cấu hình notification-service (SL-3.4)
+#
+# 12-factor (AGENTS.md §6): mọi giá trị phụ thuộc môi trường đọc từ env.
+# ==============================================================================
+
+spring:
+  application:
+    name: notification-service
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+  datasource:
+    # Database RIÊNG (database per service). Tên do init script của Postgres tạo sẵn.
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB_NOTIFICATION:notification}
+    username: ${POSTGRES_USER:shoplab}
+    password: ${POSTGRES_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:4}
+      minimum-idle: 1
+      connection-timeout: 3000
+      pool-name: notification-pool
+
+  flyway:
+    enabled: true
+    # FAIL-CLOSED: chỉ migration; template seed nằm luôn trong V1 (không seed riêng cho dev).
+    locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}
+    baseline-on-migrate: false
+
+  # SL-3.4: consumer cần broker + publisher confirm KHÔNG cần (service này chỉ consume).
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:shoplab}
+    password: ${RABBITMQ_PASSWORD:}
+    connection-timeout: 3s
+    # Consumer list: 1 thread (giữ thứ tự trong queue — ADR-0007 D3) và prefetch nhỏ.
+    listener:
+      simple:
+        concurrency: 1
+        prefetch: 1
+
+server:
+  port: ${SERVER_PORT:8089}
+  shutdown: graceful
+
+shoplab:
+  env: ${APP_ENV:local}
+  debug-endpoints: ${SHOPLAB_DEBUG_ENDPOINTS:false}
+  git-commit: ${SHOPLAB_GIT_COMMIT:unknown}
+
+  jwt:
+    jwks-uri: ${IDENTITY_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+    issuer: ${IDENTITY_JWT_ISSUER:https://identity.shoplab.local}
+
+  readiness:
+    dependencies:
+      postgres: ${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}
+      rabbitmq: ${RABBITMQ_HOST:localhost}:${RABBITMQ_PORT:5672}
+
+  # SL-3.4: retry/DLQ + fail-mode (fail-closed: chỉ có tác dụng khi env=local).
+  notification:
+    env: ${APP_ENV:local}
+    fail-mode: ${SHOPLAB_NOTIFICATION_FAIL_MODE:false}
+    retry-delays: ${SHOPLAB_NOTIFICATION_RETRY_DELAYS:200ms,1s,3s}
+    list-limit: ${SHOPLAB_NOTIFICATION_LIST_LIMIT:50}
+
+  # SL-3.2: dedupe table do CHÍNH service khai bằng Flyway (V1) ⇒ tắt auto-create của commons.
+  events:
+    enabled: true
+    dedup:
+      auto-create-schema: false
+
+logging:
+  level:
+    com.shoplab: ${LOG_LEVEL:INFO}
+
+# --- OpenAPI (SL-1.8) ---
+springdoc:
+  api-docs:
+    enabled: ${SHOPLAB_OPENAPI_ENABLED:true}
+    path: /v3/api-docs

@@ -261,6 +261,7 @@ bash tools/reset-infra.sh
 | `8087` | `order-service` | Phase 2 (`SL-2.5`) — đơn hàng idempotent + state machine; DB `order` |
 | `8088` | `payment-service` | Phase 2 (`SL-2.7`) — payment intent + webhook provider idempotent; DB `payment` |
 | `8083` | `cart-service` | Phase 2 (`SL-2.1`) — giỏ hàng trên **Redis** (không có Postgres) |
+| `8089` | `notification-service` | Phase 3 (`SL-3.4`) — consumer `q.notification` (email mock) + `GET /v1/notifications/me`; DB `notification` |
 
 > `up -d` mặc định **KHÔNG** dựng `service-template` — service mẫu nằm trong profile `template` (`SL-1.13`). Bật khi cần:
 > `docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template`
@@ -320,6 +321,22 @@ bash tools/rabbit-topology.sh purge q.notification             # xoá sạch mes
    `docker compose down -v`) rồi để service khai lại.
 4. **`routed=false` khi publish** = không queue nào bind routing key đó (thường là gõ sai routing key) —
    message **mất im lặng**, không lỗi nào được ném ra.
+
+### DLQ: xem & replay (`SL-3.4`)
+
+`manager` UI đọc được nhưng replay bằng tay rất dễ sai. Dùng tool:
+
+```bash
+bash tools/dlq.sh list                     # DLQ nào đang có message (ready=…)
+bash tools/dlq.sh peek q.notification      # xem 1 message — KHÔNG consume
+bash tools/dlq.sh move q.notification      # replay 1 message về queue chính (routing key GỐC)
+bash tools/dlq.sh purge q.notification     # xoá sạch .dlq (chỉ khi đã hiểu vì sao message vào đó)
+```
+
+> ⚠️ **Bẫy quan trọng**: trong DLQ, `routing_key` của message là **tên queue** (`q.notification`) — DLX đặt
+> routing key = tên queue (`ADR-0007` D2). Routing key **gốc** nằm ở header `x-death[0].routing-keys`. Publish lại
+> bằng tên queue ⇒ `routed=false` ⇒ **message mất**. `dlq.sh move` đọc `x-death`, `peek` trước rồi mới `ack`, nên
+> khi parse lỗi nó **không consume gì**.
 
 **RAM baseline** (đo lúc idle, `docker stats --no-stream`, WSL2/Docker 29.9.2):
 
