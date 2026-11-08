@@ -221,6 +221,10 @@ services:
       # Đường dẫn TRONG container (khớp với volume mount bên dưới).
       IDENTITY_JWT_PRIVATE_KEY_PATH: /app/keys/dev-private.pem
       IDENTITY_JWT_PUBLIC_KEY_PATH: /app/keys/dev-public.pem
+      # SL-3.11: secret của client service-to-service (service token). Thiếu ⇒ identity KHÔNG khởi động
+      # được (fail-closed, không có default trong application.yml).
+      ORDER_SERVICE_CLIENT_SECRET: ${ORDER_SERVICE_CLIENT_SECRET:?ORDER_SERVICE_CLIENT_SECRET chưa set — cp .env.example .env rồi chạy lại}
+      SHOPLAB_SERVICE_TOKEN_TTL: ${SHOPLAB_SERVICE_TOKEN_TTL:-5m}
     volumes:
       # `./keys` tính theo thư mục chứa compose file (infra/) → infra/keys.
       - ./keys:/app/keys:ro

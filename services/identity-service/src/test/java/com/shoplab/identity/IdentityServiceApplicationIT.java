@@ -69,6 +69,9 @@ class IdentityServiceApplicationIT {
 
   private static final String CORRELATION_HEADER = "x-correlation-id";
 
+  /** SL-3.11: secret của client {@code order-service} dùng trong test (production đọc từ env). */
+  private static final String ORDER_CLIENT_SECRET = "secret-order-it";
+
   @Container
   static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
 
@@ -105,6 +108,17 @@ class IdentityServiceApplicationIT {
 
     registry.add("shoplab.jwt.private-key-path", () -> KEYS.privateKeyPath().toString());
     registry.add("shoplab.jwt.public-key-path", () -> KEYS.publicKeyPath().toString());
+
+    // SL-3.11: registry client service-to-service (yml dùng ${ORDER_SERVICE_CLIENT_SECRET} không
+    // default
+    // ⇒ phải set ở đây, nếu không context fail ngay — đúng ý đồ fail-closed).
+    registry.add("shoplab.service-auth.clients[order-service].secret", () -> ORDER_CLIENT_SECRET);
+    registry.add(
+        "shoplab.service-auth.clients[order-service].allowed-audiences[0]",
+        () -> "inventory-service");
+    registry.add(
+        "shoplab.service-auth.clients[order-service].allowed-audiences[1]",
+        () -> "promotion-service");
 
     // Readiness check TCP → trỏ vào container để /ready UP thật.
     registry.add("shoplab.readiness.dependencies[0].name", () -> "postgres");
@@ -489,5 +503,62 @@ class IdentityServiceApplicationIT {
 
     assertThat(forbidden.statusCode()).isEqualTo(403);
     assertThat(forbidden.body()).contains("\"code\":\"FORBIDDEN\"");
+  }
+
+  // ------------------------------------------------------------------ SL-3.11
+
+  private static Map<String, String> serviceTokenBody(String clientId, String secret, String aud) {
+    return Map.of("clientId", clientId, "clientSecret", secret, "audience", aud);
+  }
+
+  @Test
+  @DisplayName("SL-3.11: /v1/auth/service-token cấp token role=SERVICE + aud + exp ngắn")
+  void serviceTokenShouldCarryServiceClaims() throws Exception {
+    HttpResponse<String> response =
+        post(
+            "/v1/auth/service-token",
+            serviceTokenBody("order-service", ORDER_CLIENT_SECRET, "inventory-service"));
+
+    assertThat(response.statusCode()).isEqualTo(200);
+    Map<String, Object> body = objectMapper.readValue(response.body(), Map.class);
+    assertThat(body.get("tokenType")).isEqualTo("Bearer");
+    assertThat(body.get("audience")).isEqualTo("inventory-service");
+    assertThat(body.get("serviceId")).isEqualTo("order-service");
+
+    // Verify bằng đúng public key mà service khác dùng (JWKS) — không tin chuỗi trả về.
+    Jwt jwt =
+        NimbusJwtDecoder.withPublicKey(jwtService.publicKey())
+            .build()
+            .decode((String) body.get("accessToken"));
+    assertThat(jwt.getClaimAsString("role")).isEqualTo("SERVICE");
+    assertThat(jwt.getAudience()).containsExactly("inventory-service");
+    assertThat(jwt.getSubject()).isEqualTo("svc:order-service");
+    assertThat(jwt.getExpiresAt().getEpochSecond() - jwt.getIssuedAt().getEpochSecond())
+        .isEqualTo(300); // 5 phút, cấu hình qua SHOPLAB_SERVICE_TOKEN_TTL
+  }
+
+  @Test
+  @DisplayName("SL-3.11: sai secret ⇒ 401; audience ngoài allowlist ⇒ 400; thiếu field ⇒ 400")
+  void serviceTokenShouldRejectInvalidRequests() throws Exception {
+    assertThat(
+            post(
+                    "/v1/auth/service-token",
+                    serviceTokenBody("order-service", "sai-secret", "inventory-service"))
+                .statusCode())
+        .isEqualTo(401);
+
+    HttpResponse<String> badAudience =
+        post(
+            "/v1/auth/service-token",
+            serviceTokenBody("order-service", ORDER_CLIENT_SECRET, "payment-service"));
+    assertThat(badAudience.statusCode()).isEqualTo(400);
+    assertThat(badAudience.body()).contains("VALIDATION_ERROR");
+
+    assertThat(
+            post(
+                    "/v1/auth/service-token",
+                    Map.of("clientId", "order-service", "clientSecret", ORDER_CLIENT_SECRET))
+                .statusCode())
+        .isEqualTo(400);
   }
 }

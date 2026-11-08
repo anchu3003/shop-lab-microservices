@@ -1,6 +1,7 @@
 package com.shoplab.inventory.config;
 
 import com.shoplab.commons.error.ErrorCode;
+import com.shoplab.commons.serviceauth.ServiceTokenRules;
 import com.shoplab.commons.web.ApiError;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -18,7 +19,6 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -64,7 +64,10 @@ public class SecurityConfig {
   @Bean
   public JwtDecoder jwtDecoder(JwtProperties properties) {
     NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(properties.jwksUri()).build();
-    decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(properties.issuer()));
+    // SL-3.11: issuer + kiểm `aud` cho SERVICE token (token người dùng không có `aud` nên không bị
+    // ảnh
+    // hưởng). Nhờ vậy service token cấp cho service khác KHÔNG gọi được service này.
+    decoder.setJwtValidator(ServiceTokenRules.validator(properties.issuer(), "inventory-service"));
     return decoder;
   }
 

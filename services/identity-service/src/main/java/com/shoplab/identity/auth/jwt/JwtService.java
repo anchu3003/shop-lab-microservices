@@ -18,6 +18,7 @@ import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
@@ -43,6 +44,17 @@ public class JwtService {
 
   /** Tên claim chứa vai trò — gateway/catalog đọc claim này để phân quyền. */
   public static final String ROLE_CLAIM = "role";
+
+  /**
+   * Role của <b>service</b> (SL-3.11) — không phải role của người dùng, và **không** nằm trong enum
+   * {@link Role} (bảng `users` chỉ có role người). Nhờ vậy không tồn tại đường nào để một user có
+   * `ROLE_SERVICE`; ngược lại, service token không có `sub` là userId nên endpoint nào lỡ coi `sub`
+   * là user sẽ **nổ ngay**.
+   */
+  public static final String SERVICE_ROLE = "SERVICE";
+
+  /** Tiền tố `sub` của service token: {@code svc:<clientId>}. */
+  public static final String SERVICE_SUBJECT_PREFIX = "svc:";
 
   private static final String PRIVATE_KEY_HEADER = "-----BEGIN PRIVATE KEY-----";
   private static final String PUBLIC_KEY_HEADER = "-----BEGIN PUBLIC KEY-----";
@@ -84,6 +96,45 @@ public class JwtService {
 
     String value = encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
     return new IssuedToken(value, expiresAt, properties.accessTokenTtl().toSeconds());
+  }
+
+  /**
+   * Phát **service token** (SL-3.11) — token của máy, không của người.
+   *
+   * <p>Khác access token người ở 4 điểm, tất cả đều có chủ ý:
+   *
+   * <ul>
+   *   <li>{@code sub = svc:<clientId>} — không phải UUID ⇒ dùng nhầm chỗ là nổ, không âm thầm ghi
+   *       sai dữ liệu.
+   *   <li>{@code role = SERVICE} — service đích phân biệt được "máy" với "người" (dùng cho kiểm
+   *       {@code aud}).
+   *   <li>{@code aud = [audience]} — token phát cho `inventory` **không** dùng được ở `promotion`.
+   *   <li>{@code exp} ngắn (5 phút, cấu hình riêng) — không có cơ chế thu hồi, nên cửa sổ rò rỉ
+   *       phải nhỏ.
+   * </ul>
+   *
+   * @param clientId service xin token (đã xác thực secret ở tầng service)
+   * @param audience service đích (đã kiểm allowlist)
+   * @param issuedAt truyền vào để test kiểm soát thời gian
+   */
+  public IssuedToken issueServiceToken(
+      String clientId, String audience, Duration ttl, Instant issuedAt) {
+    Instant expiresAt = issuedAt.plus(ttl);
+
+    JwsHeader header = JwsHeader.with(SignatureAlgorithm.RS256).keyId(keyId).build();
+    JwtClaimsSet claims =
+        JwtClaimsSet.builder()
+            .issuer(properties.issuer())
+            .subject(SERVICE_SUBJECT_PREFIX + clientId)
+            .audience(List.of(audience))
+            .issuedAt(issuedAt)
+            .expiresAt(expiresAt)
+            .id(UUID.randomUUID().toString())
+            .claim(ROLE_CLAIM, SERVICE_ROLE)
+            .build();
+
+    String value = encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
+    return new IssuedToken(value, expiresAt, ttl.toSeconds());
   }
 
   /**
