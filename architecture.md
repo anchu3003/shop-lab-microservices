@@ -585,6 +585,7 @@ outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
 | Integration | service + DB/Redis/broker thật | Testcontainers | mỗi PR |
 | Contract | đảm bảo event/API không phá consumer | schema test / Pact | mỗi PR |
 | E2E smoke | luồng chính chạy được end-to-end | script + docker compose | trước khi merge |
+| E2E nhánh fail | compensating đúng (hết hàng · provider từ chối · 5xx · timeout · dependency chết) | `tools/e2e-checkout-fail.sh` + hook `debug/faults` (guarded) + `docker stop` — assert **state thật**, không chỉ status | `SL-2.9` (dispatch/hằng tuần trong `e2e.yml`) |
 | Load test | p99, throughput, điểm vỡ | k6 | mỗi phase scale |
 | Chaos test | service/dependency chết thì hệ thế nào | script kill container / inject latency | Phase 5 |
 
