@@ -51,6 +51,19 @@
       <optional>true</optional>
     </dependency>
 
+    <!--
+      spring-boot-starter-amqp — hạ tầng event Phase 3 (SL-3.1 topology, SL-3.2 envelope/publisher).
+      Để **optional** như `webmvc`/`security`/`springdoc`: chỉ service nào thực sự publish/consume mới
+      khai (order, payment, catalog, notification, search) ⇒ identity/cart/inventory/promotion/gateway
+      KHÔNG bị kéo AMQP client + không cố kết nối broker lúc khởi động.
+      Auto-config của commons tự tắt nhờ `@ConditionalOnClass(Declarables.class)`.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+      <optional>true</optional>
+    </dependency>
+
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>

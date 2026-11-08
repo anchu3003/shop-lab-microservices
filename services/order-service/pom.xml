@@ -47,6 +47,16 @@
     </dependency>
 
     <!--
+      SL-3.1: broker của Phase 3. Cần khai từ bây giờ (chưa có publisher/consumer nghiệp vụ — đó là
+      SL-3.2/SL-3.3) để topology `shoplab.events` được KHAI THẬT trên stack: commons chỉ khai khi
+      service có AMQP trên classpath. Thiếu nó thì "topology bằng code" là code chết.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+
+    <!--
       JDBC chứ KHÔNG JPA (khác catalog): toàn bộ phần khó của service này là SQL có điều kiện
       (`UPDATE ... WHERE on_hand - reserved >= :qty`) và cần biết `rowsAffected` để biết hết hàng.
       JPA entity + dirty checking chỉ thêm tầng trung gian cho đúng loại truy vấn này.

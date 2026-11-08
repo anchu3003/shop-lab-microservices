@@ -42,6 +42,18 @@ spring:
     locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}
     baseline-on-migrate: false
 
+  # ---------------------------------------------------------------------------
+  # SL-3.1: broker event Phase 3 (ADR-0007). Chưa publish/consume — chỉ KHAI topology.
+  # `connection-timeout` ngắn: broker chết không được kéo dài khởi động service (async không nằm
+  # trên đường critical của checkout, nên chậm ở đây là không đáng).
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:shoplab}
+    password: ${RABBITMQ_PASSWORD:}
+    connection-timeout: 3s
+
 server:
   port: ${SERVER_PORT:8087}
   shutdown: graceful
@@ -50,6 +62,12 @@ shoplab:
   env: ${APP_ENV:local}
   debug-endpoints: ${SHOPLAB_DEBUG_ENDPOINTS:false}
   git-commit: ${SHOPLAB_GIT_COMMIT:unknown}
+
+  # SL-3.1: tắt nhanh việc khai topology (vd khi muốn service trỏ vào broker dùng chung mà không
+  # được tạo exchange/queue). Mặc định bật — môi trường dev/phòng lab cần topology tự có.
+  events:
+    topology:
+      enabled: ${SHOPLAB_EVENTS_TOPOLOGY_ENABLED:true}
 
   jwt:
     # order là RESOURCE SERVER: chỉ tải public key qua JWKS của identity.

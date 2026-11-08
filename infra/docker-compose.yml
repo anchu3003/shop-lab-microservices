@@ -434,12 +434,23 @@ services:
       SAGA_SWEEP_INTERVAL: ${SAGA_SWEEP_INTERVAL:-60s}
       SAGA_SWEEP_INITIAL_DELAY: ${SAGA_SWEEP_INITIAL_DELAY:-30s}
       SAGA_SWEEP_BATCH_SIZE: ${SAGA_SWEEP_BATCH_SIZE:-50}
+      # SL-3.1: broker event Phase 3 — order-service là service ĐẦU TIÊN khai topology (ADR-0007).
+      # Dùng tên service trong compose, KHÔNG `localhost` (bên trong container localhost là chính nó).
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-shoplab}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      SHOPLAB_EVENTS_TOPOLOGY_ENABLED: ${SHOPLAB_EVENTS_TOPOLOGY_ENABLED:-true}
     ports:
       - "${ORDER_SERVICE_PORT:-8087}:${ORDER_SERVICE_PORT:-8087}"
     depends_on:
       postgres:
         condition: service_healthy
       identity-service:
+        condition: service_healthy
+      # SL-3.1: khai topology cần broker sống; `service_healthy` (không phải started) để lần khai
+      # báo đầu tiên không rơi vào lúc broker còn đang boot.
+      rabbitmq:
         condition: service_healthy
       # `service_started` (không phải healthy) cho 5 dependency của saga: order-service vẫn khởi
       # động được khi chúng chưa sẵn sàng — saga trả 503 thay vì chết cả stack. Chuỗi healthy dài

@@ -1,3 +1,4 @@
 com.shoplab.commons.ShoplabCommonsAutoConfiguration
+com.shoplab.commons.events.EventTopologyAutoConfiguration
 com.shoplab.commons.openapi.OpenApiAutoConfiguration
 com.shoplab.commons.web.AccessDeniedAutoConfiguration
