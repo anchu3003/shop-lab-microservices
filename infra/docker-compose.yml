@@ -536,6 +536,63 @@ services:
       - shoplab-net
 
   # ---------------------------------------------------------------------------
+  # notification-service — consumer event đơn hàng (SL-3.4): email mock, retry + DLQ.
+  # Chỉ CONSUME (không publish) nhưng vẫn khai topology qua commons ⇒ không phụ thuộc order-service.
+  # ---------------------------------------------------------------------------
+  notification-service:
+    build:
+      context: ..
+      dockerfile: services/notification-service/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-notification-service:local
+    container_name: shoplab-notification-service
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${NOTIFICATION_SERVICE_PORT:-8089}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB_NOTIFICATION: ${POSTGRES_DB_NOTIFICATION:-notification}
+      POSTGRES_USER: ${POSTGRES_USER:-shoplab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
+      IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-shoplab}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      # Bơm lỗi để test retry/DLQ — chỉ có tác dụng khi APP_ENV=local (guard trong code, fail-closed).
+      SHOPLAB_NOTIFICATION_FAIL_MODE: ${SHOPLAB_NOTIFICATION_FAIL_MODE:-false}
+    # Probe dùng /ready (kiểm postgres + rabbitmq) — KHÔNG dùng /health: service có thể "sống" mà
+    # consumer không chạy vì broker/mất DB, đó mới là thứ cần bắt.
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --no-verbose
+        - --tries=1
+        - --spider
+        - http://localhost:${NOTIFICATION_SERVICE_PORT:-8089}/ready
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    ports:
+      - "${NOTIFICATION_SERVICE_PORT:-8089}:${NOTIFICATION_SERVICE_PORT:-8089}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - shoplab-net
+
+
+  # ---------------------------------------------------------------------------
   # cart-service — giỏ hàng (SL-2.1): Redis là source of truth (TTL 30 ngày), Lua cho read-modify-write.
   # Service DUY NHẤT không có Postgres ⇒ depends_on chỉ redis + identity (JWKS).
   # ---------------------------------------------------------------------------
@@ -614,6 +671,7 @@ services:
       ORDER_SERVICE_URL: ${ORDER_SERVICE_URL:-http://order-service:8087}
       PAYMENT_SERVICE_URL: ${PAYMENT_SERVICE_URL:-http://payment-service:8088}
       CART_SERVICE_URL: ${CART_SERVICE_URL:-http://cart-service:8083}
+      NOTIFICATION_SERVICE_URL: ${NOTIFICATION_SERVICE_URL:-http://notification-service:8089}
       GATEWAY_CONNECT_TIMEOUT: ${GATEWAY_CONNECT_TIMEOUT:-2s}
       GATEWAY_READ_TIMEOUT: ${GATEWAY_READ_TIMEOUT:-5s}
     ports:

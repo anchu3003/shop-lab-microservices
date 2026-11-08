@@ -37,6 +37,21 @@ public class EventProperties {
    */
   private boolean autoCreateSchema = true;
 
+  /**
+   * Có tự start {@code @RabbitListener} khi app khởi động không (mặc định bật).
+   *
+   * <p><b>Vì sao cần cờ này</b> (gặp thật ở SL-3.4): IT của service có consumer chạy **không có
+   * broker**. Boot có {@code spring.rabbitmq.listener.simple.auto-startup} nhưng property đó chỉ áp
+   * cho factory do Boot tạo — service này dùng {@code eventListenerContainerFactory} tự khai (cần
+   * {@code AcknowledgeMode.MANUAL}) nên **không** bị ảnh hưởng ⇒ container cố kết nối, sai
+   * credential ⇒ {@code FatalListenerStartupException: Authentication failure} ⇒ **đỏ cả 17 IT** dù
+   * lỗi không liên quan logic. Cờ riêng của commons thì áp cho đúng factory của commons.
+   *
+   * <p>Cũng dùng được khi cần "vận hành chế độ chỉ-publish": tắt consumer bằng env, không cần build
+   * lại image.
+   */
+  private boolean consumerAutoStartup = true;
+
   public boolean isEnabled() {
     return enabled;
   }
@@ -75,5 +90,13 @@ public class EventProperties {
 
   public void setAutoCreateSchema(boolean autoCreateSchema) {
     this.autoCreateSchema = autoCreateSchema;
+  }
+
+  public boolean isConsumerAutoStartup() {
+    return consumerAutoStartup;
+  }
+
+  public void setConsumerAutoStartup(boolean consumerAutoStartup) {
+    this.consumerAutoStartup = consumerAutoStartup;
   }
 }

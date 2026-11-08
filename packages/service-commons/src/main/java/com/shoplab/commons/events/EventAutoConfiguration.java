@@ -82,13 +82,15 @@ public class EventAutoConfiguration {
   @Bean
   @ConditionalOnMissingBean(name = "eventListenerContainerFactory")
   public SimpleRabbitListenerContainerFactory eventListenerContainerFactory(
-      ConnectionFactory connectionFactory) {
+      ConnectionFactory connectionFactory, EventProperties properties) {
     SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
     factory.setConnectionFactory(connectionFactory);
     factory.setAcknowledgeMode(org.springframework.amqp.core.AcknowledgeMode.MANUAL);
     factory.setPrefetchCount(1);
     factory.setConcurrentConsumers(1);
     factory.setMaxConcurrentConsumers(1);
+    // IT chạy không có broker ⇒ tắt auto-startup bằng property (xem EventProperties).
+    factory.setAutoStartup(properties.isConsumerAutoStartup());
     // Consumer tự parse JSON bằng EventEnvelopeCodec ⇒ converter chỉ chuyển byte[] nguyên bản.
     factory.setMessageConverter(new SimpleMessageConverter());
     return factory;
