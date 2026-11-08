@@ -1,5 +1,6 @@
 package com.shoplab.catalog.product;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.domain.Page;
@@ -19,6 +20,14 @@ public interface ProductRepository extends JpaRepository<Product, UUID> {
    * quên sẽ lộ ra ngay khi review.
    */
   Optional<Product> findByIdAndDeletedAtIsNull(UUID id);
+
+  /**
+   * Batch đọc product còn sống theo id (SL-2.13) — dùng cho đường tra giá nhiều SKU.
+   *
+   * <p>Cùng lý do với {@link #findByIdAndDeletedAtIsNull}: điều kiện "còn sống" nằm trong tên
+   * method, không phải trong đầu người viết.
+   */
+  List<Product> findByIdInAndDeletedAtIsNull(List<UUID> ids);
 
   /** Kiểm tra product còn sống — dùng trước khi ghi dữ liệu con (SKU). */
   boolean existsByIdAndDeletedAtIsNull(UUID id);

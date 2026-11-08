@@ -1655,6 +1655,54 @@ paths:
                 $ref: '#/components/schemas/ApiError'
       security:
       - bearerAuth: []
+  /v1/skus:
+    get:
+      tags:
+      - SkuLookup
+      operationId: lookup
+      parameters:
+      - name: ids
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/SkuLookupResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
   /v1/stock/commit:
     post:
       tags:
@@ -2872,6 +2920,33 @@ components:
           minimum: 0
       required:
       - onHand
+    SkuLine:
+      type: object
+      properties:
+        skuId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        skuCode:
+          type: string
+        title:
+          type: string
+        unitPrice:
+          type: number
+    SkuLookupResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SkuLine'
+        missingIds:
+          type: array
+          items:
+            type: string
+            format: uuid
     SkuResponse:
       type: object
       properties:

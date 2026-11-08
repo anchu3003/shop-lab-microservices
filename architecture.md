@@ -242,8 +242,9 @@ cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutt
 **Quy tắc phụ thuộc (dependency rule):**
 
 - Service **không** gọi vòng (A → B → A). Nếu cần → tách qua event.
-- `order-service` là **orchestrator** của checkout, được phép gọi sync `inventory`, `promotion`,
-  `payment` — nhưng theo một chiều, và **bắt buộc** có timeout + circuit breaker.
+- `order-service` là **orchestrator** của checkout, được phép gọi sync `cart` (đọc giỏ), `catalog` (batch giá
+  SKU), `inventory`, `promotion`, `payment` — nhưng theo một chiều, và **bắt buộc** có timeout + circuit breaker.
+  Hai phụ thuộc **đọc** (`cart`, `catalog`) không tạo vòng: chúng không biết gì về order.
 - `catalog-service` **không** biết gì về order. `inventory-service` **không** biết gì về user.
   Cần biết → nhận event.
 
@@ -313,11 +314,22 @@ sequenceDiagram
 | Sync vs async | Phase 2 **sync REST** (timeout mỗi bước 300–800 ms) + compensating | p99 mục tiêu ~125 ms; async/outbox để Phase 3 (có baseline để so sánh) |
 | `TD-12` | Soft delete product (`status = ARCHIVED` + `deleted_at`), code ở `SL-2.11` | `stock_ledger`/`reservations` còn tham chiếu được `sku_id` ⇒ reconcile được |
 
+**Nguồn dữ liệu của saga (chốt 2026-11-08 — phương án B, `SL-2.13` + `SL-2.6a`):** `order-service` **đọc giỏ** từ
+`cart-service` (`GET /v1/carts`, forward JWT của user) rồi lấy giá/tên bằng **batch** `GET /v1/skus?ids=` của
+`catalog-service`. Vì sao không đọc giá từ client: giá do client gửi là mời gọi sửa 1 field để trả ít tiền hơn. Vì sao
+cart không tự lưu giá: `TD-20` — giá là dữ liệu của `catalog`, copy sang cart là dựng nguồn sự thật thứ hai sẽ lệch.
+Batch là bắt buộc: giỏ N dòng khác product ⇒ N round-trip nếu tra từng SKU, cộng thẳng vào p99 checkout.
+
 **API của `inventory-service`** (`SL-2.2`, đã chạy thật): `PUT /v1/stock/{skuId}` (admin đặt `onHand`) ·
 `GET /v1/stock/{skuId}` → `{onHand, reserved, available}` · `POST /v1/stock/reserve` (`{orderId, items[]}` →
 `201 {reservationId, expiresAt}`; retry cùng `orderId` → `200` cùng id; thiếu hàng → `409` + `details`) ·
 `POST /v1/stock/commit` (→ `200`; quá TTL → `410`; đã release → `409`) · `POST /v1/stock/release` (→ `200`, idempotent).
 Mọi giao dịch ghi thêm 1 dòng `stock_ledger`, đối soát bằng `Σ delta_on_hand` / `Σ delta_reserved`.
+
+**API của `catalog-service` cho saga** (`SL-2.13`, đã chạy thật): `GET /v1/skus?ids=<uuid>,<uuid>…` (public, ≤ **100** id)
+→ `{items: [{skuId, productId, skuCode, title, unitPrice}], missingIds: [...]}`; `unitPrice = sku.price_override ??
+product.price`; SKU `ARCHIVED` / không tồn tại ⇒ nằm trong `missingIds` (không 404 cả request); thiếu `ids`/sai UUID/quá
+100 ⇒ `400`. Saga dùng đường này thay vì tin giá client gửi.
 
 ### 6.2. Payment callback (webhook) — idempotency
 

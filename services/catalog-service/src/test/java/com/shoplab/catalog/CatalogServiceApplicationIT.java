@@ -489,6 +489,91 @@ class CatalogServiceApplicationIT {
   }
 
   // ==========================================================================
+  // SL-2.13: GET /v1/skus?ids= — batch giá cho saga checkout + giỏ hàng
+  // ==========================================================================
+
+  @Test
+  @DisplayName(
+      "GET /v1/skus (public, không token) → 200; giá = priceOverride nếu có, ngược lại giá product")
+  void skuLookupReturnsPricesWithoutToken() {
+    String token = sellerToken();
+    UUID categoryId = createCategory(token, "Batch gia");
+    UUID productId = createProduct(token, categoryId, "Ao batch " + UUID.randomUUID(), "180000.00");
+    String overrideCode = code("BATCH-A");
+    UUID withOverride = createSkuWithPrice(token, productId, overrideCode, "150000.00");
+    UUID plain = createSku(token, productId, code("BATCH-B"));
+
+    HttpResult result = get("/v1/skus?ids=" + withOverride + "," + plain);
+
+    assertThat(result.status()).isEqualTo(200);
+    List<Map<String, Object>> items = listField(result.body(), "items");
+    assertThat(items).hasSize(2);
+    // Thứ tự = thứ tự client gửi (không phụ thuộc thứ tự DB).
+    assertThat(String.valueOf(items.get(0).get("skuId"))).isEqualTo(withOverride.toString());
+    assertThat(String.valueOf(items.get(0).get("skuCode"))).isEqualTo(overrideCode);
+    assertThat(String.valueOf(items.get(0).get("productId"))).isEqualTo(productId.toString());
+    assertThat(String.valueOf(items.get(0).get("title"))).startsWith("Ao batch");
+    // So sánh theo Number: JSON parse ra Double nên "150000.00" không bằng chuỗi "150000.0".
+    assertThat(((Number) items.get(0).get("unitPrice")).doubleValue()).isEqualTo(150000.0);
+    assertThat(((Number) items.get(1).get("unitPrice")).doubleValue()).isEqualTo(180000.0);
+    assertThat(listField(result.body(), "missingIds")).isEmpty();
+  }
+
+  @Test
+  @DisplayName("SKU của product đã xoá mềm → nằm trong missingIds, KHÔNG nằm trong items")
+  void skuLookupSkipsArchivedSku() {
+    String token = sellerToken();
+    UUID categoryId = createCategory(token, "Batch archive");
+    UUID productId = createProduct(token, categoryId, "Sap xoa " + UUID.randomUUID(), "90000.00");
+    UUID skuId = createSku(token, productId, code("GONE-1"));
+
+    assertThat(delete("/v1/products/" + productId, token).status()).isEqualTo(204);
+
+    HttpResult result = get("/v1/skus?ids=" + skuId);
+
+    assertThat(result.status()).isEqualTo(200);
+    assertThat(listField(result.body(), "items")).isEmpty();
+    assertThat(String.valueOf(listField(result.body(), "missingIds").get(0)))
+        .isEqualTo(skuId.toString());
+  }
+
+  @Test
+  @DisplayName("id không tồn tại + id trùng lặp ⇒ missingIds đúng, items không nhân bản")
+  void skuLookupHandlesUnknownAndDuplicateIds() {
+    String token = sellerToken();
+    UUID categoryId = createCategory(token, "Batch dedupe");
+    UUID productId = createProduct(token, categoryId, "Trung " + UUID.randomUUID(), "10000.00");
+    UUID skuId = createSku(token, productId, code("DUP-1"));
+    UUID unknown = UUID.randomUUID();
+
+    HttpResult result = get("/v1/skus?ids=" + skuId + "," + unknown + "," + skuId);
+
+    assertThat(result.status()).isEqualTo(200);
+    assertThat(listField(result.body(), "items")).hasSize(1);
+    assertThat(listField(result.body(), "missingIds")).hasSize(1);
+    assertThat(String.valueOf(listField(result.body(), "missingIds").get(0)))
+        .isEqualTo(unknown.toString());
+  }
+
+  @Test
+  @DisplayName("ids rỗng / sai UUID / quá 100 id → 400 VALIDATION_ERROR")
+  void skuLookupRejectsInvalidIds() {
+    HttpResult missing = get("/v1/skus");
+    assertThat(missing.status()).isEqualTo(400);
+    assertThat(missing.body()).contains("VALIDATION_ERROR").contains("ids");
+
+    assertThat(get("/v1/skus?ids=khong-phai-uuid").status()).isEqualTo(400);
+
+    String tooMany =
+        java.util.stream.IntStream.range(0, 101)
+            .mapToObj(i -> UUID.randomUUID().toString())
+            .collect(java.util.stream.Collectors.joining(","));
+    HttpResult overLimit = get("/v1/skus?ids=" + tooMany);
+    assertThat(overLimit.status()).isEqualTo(400);
+    assertThat(overLimit.body()).contains("tối đa 100");
+  }
+
+  // ==========================================================================
   // Helpers
   // ==========================================================================
 
@@ -526,6 +611,25 @@ class CatalogServiceApplicationIT {
     return UUID.fromString(field(created.body(), "id"));
   }
 
+  /** Tạo SKU có giá riêng ({@code priceOverride}) — dùng cho test batch giá (SL-2.13). */
+  private UUID createSkuWithPrice(String token, UUID productId, String code, String price) {
+    HttpResult created =
+        post(
+            "/v1/products/" + productId + "/skus",
+            token,
+            Map.of("code", code, "priceOverride", price));
+    assertThat(created.status()).as("tạo SKU '%s' phải thành công", code).isEqualTo(201);
+    return UUID.fromString(field(created.body(), "id"));
+  }
+
+  /**
+   * Mã SKU unique theo từng lần chạy: {@code ux_sku_code} là UNIQUE toàn hệ, mã cố định sẽ đụng
+   * nhau khi test chạy lại trên cùng container / khi nhiều test dùng cùng tiền tố.
+   */
+  private static String code(String prefix) {
+    return prefix + "-" + UUID.randomUUID().toString().substring(0, 8);
+  }
+
   @SuppressWarnings("unchecked")
   private String field(String json, String name) {
     Map<String, Object> parsed = objectMapper.readValue(json, Map.class);
@@ -538,6 +642,14 @@ class CatalogServiceApplicationIT {
     Map<String, Object> parsed = objectMapper.readValue(json, Map.class);
     List<Map<String, Object>> content = (List<Map<String, Object>>) parsed.get("content");
     return content.stream().map(item -> String.valueOf(item.get("id"))).toList();
+  }
+
+  /** Một field dạng mảng (vd {@code items}/{@code missingIds}) — dùng cho test batch giá. */
+  @SuppressWarnings("unchecked")
+  private <T> List<T> listField(String json, String name) {
+    Map<String, Object> parsed = objectMapper.readValue(json, Map.class);
+    List<T> values = (List<T>) parsed.get(name);
+    return values == null ? List.of() : values;
   }
 
   /** Danh sách giá (theo thứ tự trả về) để assert sort. */

@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-2.1` ✅ **Done** — cart service đã lên `main`) |
-| **Ticket tiếp theo** | `SL-2.6` — **Checkout Saga** (orchestration + compensating, `L` → tách 2) · `SL-2.8` — E2E checkout |
-| **Số ticket chi tiết hiện có** | 31 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 8) |
+| **Ticket đang làm** | — (`SL-2.13` ✅ **Done** — batch giá SKU đã lên `main`) |
+| **Ticket tiếp theo** | `SL-2.6a` — Checkout Saga **start** (đọc cart + giá batch → lock voucher → reserve → order → payment intent) · `SL-2.6b` — Checkout Saga **hoàn tất** (confirm/cancel/sweeper) |
+| **Số ticket chi tiết hiện có** | 33 (Phase 0: 8 — archive · Phase 1: 15 — archive · Phase 2: 10) |
 
 ---
 
@@ -210,18 +210,20 @@ $ md5sum docs/api/openapi.yaml
 | 4 | `SL-2.3` | inventory: **test đồng thời** (100 request cùng SKU) + reservation **TTL** & giải phóng hết hạn | M | ✅ Done |
 | 5 | `SL-2.4` | `promotion-service` (8086, DB `promotion`): voucher + rule giảm giá + `lock`/`commit`/`release` voucher | M | ✅ Done |
 | 6 | `SL-2.5` | `order-service` (8087, DB `order`): tạo order **idempotent** (idempotency key) + state machine + `order_items` **snapshot** giá | M | ✅ Done |
-| 7 | `SL-2.6` | **Checkout Saga** (orchestration): cart → reserve → lock voucher → payment → confirm; **compensating** cho mọi nhánh fail; lưu saga state | L → tách 2 | Todo |
-| 8 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | ✅ Done |
-| 9 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M | Todo |
-| 10 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M | Todo |
-| 11 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S | Todo |
-| 12 | `SL-2.11` | *(phát sinh từ `SL-2.0`)* `catalog-service`: **soft delete** product — `status = ARCHIVED` + `deleted_at`, `DELETE` không xoá row, list/get ẩn product đã xoá, `reserve` từ chối SKU archived | S | ✅ Done |
-| 13 | `SL-2.12` | *(phát sinh từ `SL-2.2`)* `service-commons`: chuyển `AccessDeniedApiExceptionHandler` (403 cho `@PreAuthorize`) vào commons — xoá 2 bản copy ở catalog/inventory (**trả `TD-3`**) | S | Todo |
+| 7 | `SL-2.6a` | **Checkout Saga — start** (`order-service`): `POST /v1/checkout` đọc **cart** → lấy giá bằng **batch SKU** của catalog → lock voucher → reserve stock → tạo order → payment intent; lưu **saga state**; compensating cho nhánh fail lúc start | M | Todo |
+| 8 | `SL-2.6b` | **Checkout Saga — hoàn tất**: `confirm` (commit stock + voucher ⇒ `CONFIRMED`), `cancel` + **sweeper hết hạn 15′** (⇒ `EXPIRED`), idempotent theo saga state | M | Todo |
+| 9 | `SL-2.7` | `payment-service` (8088, DB `payment`): payment intent + **mock provider** + webhook **idempotent** (`idempotency_keys`) | M | ✅ Done |
+| 10 | `SL-2.8` | E2E checkout happy path (mở rộng smoke/script riêng) + OpenAPI + compose/CI matrix cho 5 service mới | M | Todo |
+| 11 | `SL-2.9` | **Test nhánh fail**: hết hàng giữa chừng · payment fail · timeout ⇒ compensating chạy đúng (assert state thật) | M | Todo |
+| 12 | `SL-2.10` | `docs/runbook-phase-2.md` + DoD Phase 2 (archive + tag `phase-2` + release) | S | Todo |
+| 13 | `SL-2.11` | *(phát sinh từ `SL-2.0`)* `catalog-service`: **soft delete** product — `status = ARCHIVED` + `deleted_at`, `DELETE` không xoá row, list/get ẩn product đã xoá, `reserve` từ chối SKU archived | S | ✅ Done |
+| 14 | `SL-2.12` | *(phát sinh từ `SL-2.2`)* `service-commons`: chuyển `AccessDeniedApiExceptionHandler` (403 cho `@PreAuthorize`) vào commons — xoá 2 bản copy ở catalog/inventory (**trả `TD-3`**) | S | Todo |
+| 15 | `SL-2.13` | *(phát sinh từ `SL-2.6`, chốt phương án **B**)* `catalog-service`: `GET /v1/skus?ids=` — **batch** giá/tên SKU cho saga + cart (**điều kiện tiên quyết của `SL-2.6a`**) | S | ✅ Done |
 
-**Phụ thuộc & thứ tự** (cập nhật sau `SL-2.0`): `SL-2.0` ✅ chốt mô hình → **`SL-2.11`** (soft delete — `catalog` phải
+**Phụ thuộc & thứ tự** (cập nhật sau `SL-2.1`): `SL-2.0` ✅ chốt mô hình → **`SL-2.11`** (soft delete — `catalog` phải
 xong trước để inventory biết "SKU archived" nghĩa là gì) → `SL-2.2` + `SL-2.3` (inventory — chỗ dễ oversell nhất,
-làm sớm) song song được với `SL-2.1`/`SL-2.4` → `SL-2.7` (payment) → `SL-2.5`/`SL-2.6` (order + saga, phụ thuộc tất
-cả) → `SL-2.8`/`SL-2.9` → `SL-2.10`.
+làm sớm) song song được với `SL-2.1`/`SL-2.4` → `SL-2.7` (payment) → `SL-2.5` (order) → **`SL-2.13`** (batch giá SKU —
+điều kiện của saga) → `SL-2.6a` → `SL-2.6b` → `SL-2.8`/`SL-2.9` → `SL-2.10`.
 
 **Debt sẽ trả trong phase này**: `TD-12` (soft delete product — **✅ đã trả ở `SL-2.11`**), `TD-4` (đưa
 smoke vào CI khi đã có compose nhiều service — cân nhắc ở `SL-2.8`), `TD-3` (handler 403 → `commons` khi có service
@@ -1379,6 +1381,263 @@ $ bash tools/export-openapi.sh   VALIDATE PASS · 36 path · 45 operation · 41 
   không còn là chốt 401 cho prefix này.
 - **Service không có Postgres là chuyện bình thường nếu dữ liệu chịu mất**: cart bỏ Flyway/datasource, readiness chỉ check
   Redis. Ngược lại, không có DB nghĩa là **không có ràng buộc DB canh bất biến** ⇒ phải dồn hết vào Lua và test đồng thời.
+### SL-2.13 — `catalog-service`: `GET /v1/skus?ids=` (batch giá + tên SKU)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done (2026-11-08) |
+| **Phase** | 2 — Core commerce flow *(phát sinh từ `SL-2.6`, chốt phương án **B**: saga đọc cart + giá từ catalog)* |
+| **Phụ thuộc** | `SL-2.11` (SKU `ARCHIVED` không được bán); **chặn** `SL-2.6a` (saga cần giá thật để tính tiền) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Saga checkout phải biết **giá thật** của từng dòng để tính subtotal → lock voucher → tạo payment intent. Nhưng
+`cart-service` cố ý **không** lưu giá (`TD-20`), còn `catalog` chỉ có 2 đường đọc: `GET /v1/products` (list) và
+`GET /v1/products/{id}` (kèm SKU của **một** product). **Không có đường đọc theo `skuId`** ⇒ hoặc order-service phải tin
+giá do client gửi, hoặc gọi N lần cho giỏ N dòng khác product.
+
+Đây là chỗ chặn thật của `SL-2.6a`: phương án B (saga đọc cart + giá từ catalog) chỉ khả thi khi có endpoint tra **nhiều
+SKU trong 1 request**.
+
+**Mục tiêu**
+
+`GET /v1/skus?ids=a,b,c` trả giá bán thật + tên + mã SKU cho tối đa 100 SKU trong **1 request**, và nói rõ SKU nào
+**không mua được** (không tồn tại / đã archive).
+
+**In scope**
+
+- Endpoint public `GET /v1/skus?ids=<uuid>,<uuid>...` (giá là thông tin công khai — guest xem giỏ cũng cần, giống
+  `GET /v1/products`).
+- `SkuLookupQuery`: parse + validate `ids` (bắt buộc, ≤ 100, UUID hợp lệ, **dedupe**, giữ thứ tự client gửi).
+- `SkuLookupService`: `unitPrice = sku.priceOverride ?? product.price`, `title = product.name`; **loại** SKU `ARCHIVED` và
+  SKU của product đã xoá mềm.
+- Response `{items[], missingIds[]}` — caller biết chính xác SKU nào không mua được (để trả 409/422 đúng chỗ).
+- Gateway: route `/v1/skus` → `CATALOG_SERVICE_URL` + public-path; catalog `SecurityConfig` mở `GET /v1/skus`.
+- Test: unit (query parse + service) · IT (HTTP thật + Postgres). Export lại `docs/api/openapi.yaml`.
+
+**Out of scope**
+
+- Không trả tồn kho (inventory là nguồn sự thật duy nhất), không biến `stockHint` thành tồn thật.
+- Không sửa `cart-service` để lưu giá (giữ `TD-20` — UI gọi endpoint này khi cần hiển thị giá, việc đó ở `SL-2.8`).
+- Không thêm `currency`: catalog Phase 2 chưa có khái niệm tiền tệ, `order-service` mặc định `VND`
+  (`CreateOrderRequest.currencyOrDefault()`). Thêm khi làm multi-currency.
+- Không cache Redis (cache-aside để Phase 4).
+
+**Acceptance Criteria**
+
+- [ ] `GET /v1/skus?ids=<2 SKU hợp lệ>` → **200**, `items` có `skuId/productId/skuCode/title/unitPrice`; giá =
+      `price_override` nếu có, ngược lại = giá product.
+- [ ] SKU `ARCHIVED` (product bị xoá mềm) → **không** có trong `items`, **có** trong `missingIds`.
+- [ ] `skuId` không tồn tại → `missingIds` (không 500, không 404 cả request).
+- [ ] `ids` trùng lặp → 1 dòng/SKU, thứ tự = thứ tự client gửi.
+- [ ] Thiếu `ids` / rỗng / > 100 id / id sai định dạng UUID → **400** `VALIDATION_ERROR` nêu rõ field.
+- [ ] Public: không token vẫn **200**; qua gateway cũng 200.
+- [ ] Unit + IT xanh; `mvn -B -ntp verify` toàn repo **BUILD SUCCESS**; `e2e-smoke` không regress.
+
+**Ghi chú kỹ thuật**
+
+- **Batch thay vì N+1**: giỏ 10 dòng khác product = 10 round-trip nếu không có endpoint này; cộng vào p99 checkout
+  (< 500 ms theo NFR) thì đó là chi phí thật, không phải tối ưu sớm.
+- **2 câu query, không join**: `SkuRepository.findByIdInAndStatus` rồi `ProductRepository.findByIdInAndDeletedAtIsNull`
+  — giữ nguyên tắc "mỗi repository một aggregate", và cả hai đường đều đi index sẵn có (PK + `ix_sku_product_id`).
+- **`missingIds` thay vì 404 cả request**: một SKU chết không nên làm hỏng cả giỏ; caller cần biết *cái nào* để báo user.
+- **Giá = `priceOverride ?? product.price`**: đúng bất biến của `Sku` ("null = dùng giá product", cố ý không copy giá) ⇒
+  không sinh nguồn sự thật thứ hai.
+- **Không trả `status`**: endpoint chỉ trả SKU **mua được**; trả thêm trạng thái là mời client tự quyết điều server đã
+  quyết.
+
+**Kết quả verify** *(chạy thật 2026-11-08 — Docker compose 10 container healthy, không phải suy luận)*
+
+**1) `mvn -B -ntp verify` toàn repo — BUILD SUCCESS (10 module)**
+
+```text
+[INFO] ShopLab :: Service Commons ......................... SUCCESS [  2.278 s]
+[INFO] ShopLab :: Service Template ........................ SUCCESS [  6.872 s]
+[INFO] ShopLab :: Identity Service ........................ SUCCESS [ 19.790 s]
+[INFO] ShopLab :: Catalog Service ......................... SUCCESS [ 16.297 s]
+[INFO] ShopLab :: Inventory Service ....................... SUCCESS [ 16.240 s]
+[INFO] ShopLab :: Promotion Service ....................... SUCCESS [ 15.889 s]
+[INFO] ShopLab :: Order Service ........................... SUCCESS [ 13.850 s]
+[INFO] ShopLab :: Payment Service ......................... SUCCESS [ 13.983 s]
+[INFO] ShopLab :: Cart Service ............................ SUCCESS [ 16.821 s]
+[INFO] ShopLab :: API Gateway ............................. SUCCESS [  7.986 s]
+[INFO] BUILD SUCCESS
+```
+
+`catalog` unit **79** (+13: `SkuLookupQueryTest` 7 · `SkuLookupServiceTest` 6) · IT **25** (+4) · checkstyle **0 violation**,
+jacoco gate pass.
+
+**2) Batch giá thật qua gateway, KHÔNG token** (`bash /tmp/verify-sku.sh`)
+
+```text
+== 1) Batch 2 SKU (public, KHÔNG token) qua gateway ==
+{"items":[
+   {"skuId":"0ca7ab7a-…","productId":"d2717762-…","skuCode":"BATCH-A-1794109819",
+    "title":"Ao batch SL-2.13","unitPrice":150000.00},      ← SKU có priceOverride
+   {"skuId":"21bbfc8f-…","skuCode":"BATCH-B-1794109819","unitPrice":180000.00}],  ← giá product
+ "missingIds":[]}
+   HTTP 200 · 0.031111s
+== 2) Gọi THẲNG catalog :8082, không token (service tự mở, không nhờ gateway) ==
+   HTTP 200
+== 3) Trùng lặp + id không tồn tại ⇒ items không nhân bản, missingIds đúng ==
+{"items":[{"skuId":"0ca7ab7a-…"}],"missingIds":["56050635-8262-4c86-83f2-fdf5f6f468ef"]}
+   HTTP 200
+== 4) Xoá mềm product ⇒ SKU vào missingIds (HTTP vẫn 200) ==
+   DELETE product → HTTP 204
+{"items":[],"missingIds":["0ca7ab7a-…","21bbfc8f-…"]}
+   HTTP 200
+== 5) Validate → 400 ==
+   thiếu ids      → HTTP 400 ids là bắt buộc, dạng ?ids=<uuid>,<uuid>
+   sai UUID       → HTTP 400 ids phải là UUID, không đọc được: khong-phai-uuid
+   101 id         → HTTP 400 ids tối đa 100 phần tử, nhận: 101
+== 6) 100 id (biên trên) ⇒ HTTP 200
+```
+
+**3) Regression + contract**
+
+```text
+$ bash tools/e2e-smoke.sh       17 PASS / 0 FAIL · 13 request · 669 ms
+$ bash tools/export-openapi.sh  VALIDATE PASS · 37 path · 46 operation · 43 schema  (trước: 36 path)
+```
+
+**Sự cố trong lúc verify (1 lỗi thật — không thuộc ticket này)**
+
+- **CI run `42444551383` đỏ** ở `inventory-service` IT `commitAfterExpiryReturnsGone` — **không phải** do thay đổi của
+  `SL-2.13` (catalog/gateway): test đẩy `expires_at` về quá khứ rồi gọi `commit`, nhưng IT cấu hình sweeper chạy mỗi
+  **300 ms** nên trên runner chậm sweeper expire trước ⇒ `commit` trả **409** thay vì **410**. Local xanh, CI đỏ ⇒
+  **flaky test**, ghi `TD-23` (không sửa trong ticket này — `AGENTS.md` §3.1: sửa code ngoài scope phải là ticket riêng).
+
+**Learning note**
+
+- **Endpoint batch phải nằm ở service sở hữu dữ liệu, không phải ở nơi cần dùng**: nếu `order-service` tự cache giá thì
+  nó phải có job làm mới + tự xử lý "giá đã đổi" — tức dựng nguồn sự thật thứ hai. `catalog` trả lời 1 câu, đúng chỗ.
+- **`missingIds` rẻ hơn và đúng hơn 404**: một SKU chết không nên làm hỏng cả giỏ; 404 cả request buộc caller phải
+  tự đoán *cái nào* hỏng (hoặc gọi lại từng id ⇒ mất luôn ý nghĩa batch).
+- **Giá là `priceOverride ?? product.price`, không copy**: đúng bất biến của `Sku` — null nghĩa là "dùng giá product".
+  Copy giá sang SKU sẽ tạo 2 nguồn sự thật cho 1 con số, kiểu gì cũng lệch.
+- **Tên DTO lồng phải dài, đừng đặt `Item`/`Line`**: spec OpenAPI merge toàn hệ; `Item` đã bị inventory chiếm, `Line` bị
+  order chiếm (sự cố thật ở `SL-2.5`/`SL-2.1`) ⇒ dùng `SkuLine`.
+- **`String.valueOf` trên số JSON là bẫy**: `ObjectMapper.readValue(..., Map.class)` cho `Double` ⇒ `150000.00` đọc ra
+  `"150000.0"` và assertion kiểu chuỗi fail dù API trả đúng. So sánh theo `Number.doubleValue()`.
+- **Đếm phần tử trước khi dedupe**: gửi 500 id trùng nhau vẫn là 500 phần tử phải parse — chặn `> MAX_IDS` ở bước dedupe
+  là chặn sai chỗ (client lách được bằng cách lặp id).
+- **Mở public + batch 100 id = bề mặt tấn công mới** ⇒ ghi `TD-22` (chưa rate limit, chưa cache) thay vì coi như xong.
+
+
+### SL-2.6a — Checkout Saga **start**: `POST /v1/checkout` (orchestration + saga state + compensating)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 2 — Core commerce flow *(tách từ `SL-2.6` — `L` → 2 × `M`)* |
+| **Phụ thuộc** | `SL-2.1` (đọc giỏ) · `SL-2.13` (**batch giá SKU**) · `SL-2.2`/`SL-2.3` (reserve) · `SL-2.4` (lock voucher) · `SL-2.5` (order) · `SL-2.7` (payment intent); **chặn** `SL-2.6b`, `SL-2.8`, `SL-2.9` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+5 service mảnh đã có nhưng **chưa ai nối chúng lại**: hiện client phải tự gọi lock voucher → reserve → tạo order → tạo
+payment intent và tự bù khi fail. Đó là orchestration đặt sai chỗ (client không thể biết cần release cái gì), và là lý do
+`order-service` được giao vai **orchestrator** (architecture.md §5, §6.1).
+
+**Mục tiêu**
+
+`POST /v1/checkout` (`Idempotency-Key`) trong `order-service` chạy trọn bước **start**: đọc giỏ → lấy giá thật → lock
+voucher → reserve stock → tạo order `PENDING_PAYMENT` → tạo payment intent; lưu **saga state**; fail ở bất kỳ bước nào thì
+**bù** (release những gì đã giữ) trước khi trả lỗi.
+
+**In scope**
+
+- `RestClient` (forward `Authorization`, timeout connect/read cấu hình được) + `SagaProperties` (URL 3 service).
+- Migration `V2__create_checkout_saga.sql`: `checkout_sagas` (`order_id` PK, `user_id`, `state`, `lock_id`,
+  `reservation_id`, `payment_intent_id`, `failure_code`, timestamps) + `checkout_saga_steps` (audit từng bước: tên, trạng
+  thái, http status, thời gian).
+- `POST /v1/checkout` + `GET /v1/checkout/{orderId}` (trạng thái saga) · gateway route `/v1/checkout`.
+- Compensating: reserve fail ⇒ release voucher; tạo order fail ⇒ release stock + voucher; payment fail ⇒ release stock +
+  voucher + order `CANCELLED`.
+- Test: unit (bảng compensating từng nhánh) · IT (Postgres thật cho saga state + 10 request song song cùng key ⇒ 1 saga).
+
+**Out of scope**
+
+- Confirm/cancel/sweeper hết hạn → **`SL-2.6b`**; test nhánh fail sâu (fault injection: timeout, 500) → `SL-2.9`.
+- Không retry/circuit breaker (Phase 5) — Phase 2 chỉ **fail-fast + timeout**.
+- Không outbox/event (Phase 3).
+
+**Acceptance Criteria**
+
+- [ ] `POST /v1/checkout` (body chỉ có `voucherCode` **tuỳ chọn** — dòng hàng lấy từ giỏ) đọc giỏ của user từ
+      `cart-service`; giỏ rỗng → **422**.
+- [ ] Happy path → **201** `{orderId, paymentIntentId, paymentUrl, status: PENDING_PAYMENT}`; `checkout_sagas.state =
+      COMPLETED_START`; `checkout_saga_steps` có đủ 4 bước.
+- [ ] Giỏ có SKU đã archive/không tồn tại → **409** + `details` nêu `skuId`; **không** tạo order, **không** giữ chỗ voucher.
+- [ ] Hết hàng ở bước reserve → **409**; voucher đã lock được **release** (DB promotion: `status = RELEASED`).
+- [ ] Payment-service lỗi/timeout ⇒ release stock + voucher, order `CANCELLED`, trả **503**; saga ghi `FAILED_PAYMENT` +
+      `failure_code`.
+- [ ] Retry cùng `Idempotency-Key` ⇒ **200** + cùng `orderId` (không tạo order/intent thứ hai).
+- [ ] 10 request song song cùng key ⇒ **1** order, **1** reservation, **1** voucher lock.
+- [ ] Unit + IT xanh; OpenAPI + `docs/api/openapi.yaml` cập nhật; `e2e-smoke` không regress.
+
+**Ghi chú kỹ thuật**
+
+- **Saga state ở `order-service`** (không phải service riêng): nó là orchestrator và đã sở hữu `orders`; thêm 1 service
+  saga ở Phase 2 là over-engineer (§3.4).
+- **Ghi saga row TRƯỚC khi gọi service ngoài** (`STARTED`) rồi update sau mỗi bước: crash giữa chừng vẫn biết đã giữ gì để
+  bù — nếu chỉ ghi sau khi xong thì compensating không có dữ liệu.
+- **Compensating gọi lại endpoint idempotent** của service đích (`release` idempotent) ⇒ bù 2 lần không phá dữ liệu.
+- **Forward JWT của user** cho service đích (chúng tự verify — defense in depth); service token để Phase 3.
+- **`orderId` sinh trước bước reserve** vì nó là khoá idempotency của inventory/promotion.
+
+### SL-2.6b — Checkout Saga **hoàn tất**: confirm · cancel · sweeper hết hạn
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 2 — Core commerce flow *(tách từ `SL-2.6`)* |
+| **Phụ thuộc** | `SL-2.6a` (saga state + HTTP client tới service khác); **chặn** `SL-2.8`/`SL-2.9` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Sau `POST /v1/checkout`, hàng và voucher mới chỉ **giữ chỗ**. Tiền về qua webhook provider, nhưng Phase 2 chưa có broker
+nên `payment-service` **không** gọi ngược `order-service` (`TD-17`) ⇒ phải có đường do saga điều khiển để chốt (`commit`)
+hoặc bù (`release`) khi user bỏ ngang.
+
+**Mục tiêu**
+
+Hoàn tất vòng đời checkout: `confirm` (tiền đã về ⇒ commit stock + voucher ⇒ order `CONFIRMED`), `cancel` (bù ngay), và
+**sweeper** dọn saga quá hạn 15′ (⇒ `EXPIRED` + release) — tất cả **idempotent** theo saga state.
+
+**In scope**
+
+- `POST /v1/checkout/{orderId}/confirm` — **xác minh với `payment-service`** rằng intent `SUCCEEDED` **rồi** mới `commit`
+  stock + voucher + order `CONFIRMED`; gọi lại ⇒ **200**, không commit lần 2.
+- `POST /v1/checkout/{orderId}/cancel` — release stock + voucher + order `CANCELLED` (idempotent).
+- `@Scheduled` sweeper: saga đã start, order còn `PENDING_PAYMENT`, quá `payment-window` (15′) ⇒ release + `EXPIRED`;
+  `FOR UPDATE SKIP LOCKED` + conditional update (khuôn `SL-2.3`) để nhiều instance không bù 2 lần.
+- Test: unit (state machine saga + sweeper) · IT (confirm 2 lần ⇒ 1 commit; sweep ⇒ `EXPIRED` + stock về).
+
+**Out of scope**
+
+- Refund khi tiền đã vào mà đơn hết hạn → `TD-17` (Phase 6 mới có `refunds`).
+- Test nhánh fail đầy đủ (payment fail, timeout, hết hàng giữa chừng) → `SL-2.9`.
+
+**Acceptance Criteria**
+
+- [ ] `confirm` khi payment `SUCCEEDED` ⇒ **200**, order `CONFIRMED`, reservation `COMMITTED`, voucher lock `COMMITTED`.
+- [ ] `confirm` khi payment **chưa** `SUCCEEDED` ⇒ **409**, **không** commit gì (không tin lời client).
+- [ ] `confirm` lần 2 ⇒ **200**, `stock_ledger`/voucher **không** thêm dòng commit thứ hai.
+- [ ] `cancel` ⇒ reservation/voucher `RELEASED`, order `CANCELLED`; `cancel` sau `confirm` ⇒ **409**.
+- [ ] Sweeper: saga quá 15′ ⇒ order `EXPIRED`, `reserved` giảm đúng `qty`, voucher trả lượt; chạy 2 vòng không bù 2 lần.
+- [ ] Unit + IT xanh; `e2e-smoke` không regress.
+
+**Ghi chú kỹ thuật**
+
+- **Verify payment ở server, không tin client**: client gọi `/confirm` sau khi thanh toán, nhưng "đã trả tiền" phải đọc từ
+  `payment-service` — nếu không, ai cũng confirm được đơn mà không trả đồng nào.
+- **Commit theo thứ tự stock → voucher**: stock là tài nguyên khan hiếm (hết hàng = mất đơn), voucher sai thì sửa được.
+- **Idempotent theo trạng thái saga**, không theo `Idempotency-Key`: confirm/cancel là thao tác trên **cùng** một đơn nên
+  khoá tự nhiên là `orderId` + state hiện tại.
+
 ### Phase 3 — Async & event-driven
 Mục tiêu: phần không critical chạy async, event không bị mất.
 
@@ -1583,6 +1842,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | SL-2.1 | **Merge phải nguyên tử cả cộng-dồn và xoá-giỏ-guest**: tách 2 bước thì N request song song cộng N lần. Verify thật: 10 merge song song → `{200: 2, 401: 8}`, qty = 5 (không phải 50). |
 | 2026-11-07 | SL-2.1 | **Public path ở gateway ⇒ authorization chuyển vào service**: gateway chỉ public theo path, mà `/v1/carts/**` vừa guest vừa user ⇒ service tự phân xử (JWT thắng, không JWT thì bắt buộc token hợp lệ). |
 | 2026-11-07 | SL-2.1 | **Service không Postgres là hợp lý khi dữ liệu chịu mất** — nhưng cũng mất luôn ràng buộc DB canh bất biến ⇒ dồn hết vào Lua + test đồng thời. |
+| 2026-11-08 | SL-2.13 | **Endpoint batch thuộc về service sở hữu dữ liệu, không phải nơi cần dùng**: `catalog` trả giá, `order` không cache giá. `missingIds` đúng hơn 404 cả request — một SKU chết không nên làm hỏng cả giỏ. Đếm kích thước request **trước** khi dedupe, không thì client lách trần bằng cách lặp id. Tên DTO lồng phải dài (`SkuLine`) vì spec OpenAPI merge toàn hệ. Và: `String.valueOf` trên số JSON (`Double`) là bẫy assertion. |
 
 ---
 
@@ -1613,7 +1873,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-17` | Webhook `payment.succeeded` **không** cập nhật order (Phase 2 chưa có broker) ⇒ nếu saga không chạy, tiền đã thu mà đơn vẫn `PENDING_PAYMENT`; chưa có `refund`/`transactions` để hoàn tiền ca này | SL-2.7 | Khi làm `SL-2.6`/`SL-2.9` (test compensating thấy ca này) **hoặc** khi Phase 3 có event `payment.succeeded` | cao |
 | `TD-18` | Webhook dùng **một** HMAC secret tĩnh, không key id/rotation; không lưu raw body (chỉ sha256) nên điều tra tranh chấp phải xin lại provider | SL-2.7 | Khi nối provider thật (Stripe/VNPay) — họ có key id + rotation riêng | thấp |
 | `TD-19` | Idempotency store (`idempotency_keys` + `IdempotencyService`) **copy lần 2** (order, payment) chưa có module chung ở `packages/` | SL-2.7 | Khi có service thứ 3 cần idempotency (dự kiến không có ở Phase 2 ⇒ quyết ở `SL-2.12` hoặc Phase 3) | thấp |
-| `TD-20` | Cart **không** lưu `price_snapshot` và không gọi catalog (quyết định `SL-2.1`) ⇒ hiển thị giá trong giỏ phải gọi catalog riêng; giỏ không phát hiện được SKU đã archive/đổi giá | SL-2.1 | Khi catalog có `GET /v1/skus?ids=` (batch) **hoặc** khi UI cần hiển thị giá trong giỏ ở `SL-2.8` | trung bình |
+| `TD-20` | Cart **không** lưu `price_snapshot` và không gọi catalog (quyết định `SL-2.1`) ⇒ hiển thị giá trong giỏ phải gọi catalog riêng; giỏ không phát hiện được SKU đã archive/đổi giá | SL-2.1 | **`SL-2.13` đã có `GET /v1/skus?ids=` (batch)** ⇒ phần còn lại chỉ là UI/gateway gọi endpoint đó (làm ở `SL-2.8`) | trung bình |
+| `TD-22` | `GET /v1/skus?ids=` là **public**, nhận tới 100 id, **chưa rate limit** và **chưa cache** ⇒ 1 client có thể dội tải catalog (100 id/request) hoặc dùng làm đòn bộc phát | SL-2.13 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi đo được p99 list/get của catalog tăng do traffic `/v1/skus` (Phase 4 — cache-aside) | thấp |
+| `TD-23` | IT `inventory`: `commitAfterExpiryReturnsGone` **flaky** — test đẩy `expires_at` về quá khứ rồi `commit`, nhưng sweeper trong IT chạy mỗi **300 ms** nên có lúc nó expire trước ⇒ `commit` trả **409** thay vì **410** (đỏ trên CI chậm, xanh ở máy local) | SL-2.13 (CI run `42444551383`) | Lần tới khi sửa test của inventory: tắt sweeper (`sweep-interval-ms` rất lớn) cho test lazy-expire, hoặc assert `status ∈ {410, 409}` + kiểm `reserved = 0` (điều thực sự quan trọng) | trung bình |
 | `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
 
 ## 8. Changelog
@@ -1689,3 +1951,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-07 | `SL-2.5` → `Done`: thêm **`order-service`** (8087, DB `order`) — tạo đơn **idempotent** (`Idempotency-Key`: 201 · 200 replay + header · 422 key dùng lại · 409 đang chạy · 400 thiếu header), `order_items` **snapshot** giá/tên, state machine `PENDING_PAYMENT → CONFIRMED|CANCELLED|EXPIRED` + history, bất biến tiền bằng CHECK ở DB; job dọn `idempotency_keys` (**trả `TD-14`**); `commons` thêm `422`. Verify: `mvn verify` **BUILD SUCCESS** (order 43 unit + 10 IT, toàn repo xanh) · flow thật: 201 → retry 200 cùng id → 422 → 400 · confirm 200 · confirm#2 không ghi history · cancel sau confirm 409 · cancel/expire 200 + reason · **20 request song song cùng key ⇒ 1 đơn** · job dọn xoá row 48h trong 3 s · `e2e-smoke` 17/17 · OpenAPI 28 path. **Sự cố thật**: deadlock pool do `REQUIRES_NEW` lồng transaction (đã fix bằng `OrderWriter`). |
 | 2026-11-07 | `SL-2.7` → `Done`: thêm **`payment-service`** (8088, DB `payment`) — payment intent **idempotent** (`Idempotency-Key`: 201/200 replay/422/409/400, mỗi đơn 1 intent sống), **mock provider** (fail-closed ngoài local), webhook **idempotent** theo khoá tự nhiên (`provider_event_id` PK + `provider_txn_id` UNIQUE) + **HMAC-SHA256 trên raw body** & timestamp window (chống replay), bất biến tiền bằng CHECK (`amount > 0`, `SUCCEEDED ⇔ paid_at`); gateway public-path `/v1/webhooks/**` + `/mock-provider/**`. Verify: `mvn verify` **BUILD SUCCESS** (payment 59 unit + 12 IT, toàn repo xanh, jacoco 88.6 %) · flow thật: 201 → retry 200 cùng id → 422 → 400 → 409 khác tiền · mock-pay → SUCCEEDED · **webhook gửi lại 5 lần + 20 request song song ⇒ 1 event row** · chữ ký sai/timestamp cũ 401 · sai tiền 409 không đổi trạng thái · `?fail=true` → FAILED · `e2e-smoke` 17/17 · OpenAPI 32 path/39 operation. **Sự cố**: `Types.TIMESTAMP_WITH_TIMEZONE` + `Timestamp` ⇒ 500 (chỉ IT bắt được); checkstyle `MethodLength` + jacoco gate ⇒ tách method + viết test cho phần fail-closed. Debt mới: `TD-17`…`TD-19`. |
 | 2026-11-07 | `SL-2.1` → `Done`: thêm **`cart-service`** (8083) — service **đầu tiên không có Postgres**: Redis HASH `cart:<owner>` (owner = `u:<userId>` | `g:<guestToken>`), TTL **30 ngày** refresh mỗi lần ghi; mọi phép ghi chạy **Lua** (read-modify-write nguyên tử + bất biến `qty 1..999`/`maxLines` trong script); **guest cart** với token do **server** cấp (marker `cart:guest:<token>`); **merge khi login** cộng dồn + cap + xoá giỏ guest trong cùng script; gateway để `/v1/carts/**` public và cart tự phân xử danh tính. Verify: `mvn verify` **BUILD SUCCESS** (cart 34 unit + 6 IT, toàn repo xanh, jacoco 80.8 %) · flow thật: guest 201 → PUT idempotent → 422 biên → 401 không token/token bịa → merge cộng dồn 1+2=3 → token bị thu hồi → **10 merge song song ⇒ qty 5** · Redis: type=hash, TTL 2592000s · `e2e-smoke` 17/17 · OpenAPI 36 path/45 operation. **Sự cố**: Dockerfile mất `COPY payment pom` (bẫy copy-service lần 3); OpenAPI trùng schema `Line` ⇒ đổi `LineItem`. Debt mới: `TD-20`, `TD-21`. |
+| 2026-11-08 | `SL-2.13` → `Done`: `catalog-service` có **`GET /v1/skus?ids=`** — **batch** giá/tên cho ≤ 100 SKU trong 1 request để saga `SL-2.6a` + giỏ hàng lấy giá **thật** thay vì tin giá client gửi; `unitPrice = price_override ?? product.price`; SKU archived/không tồn tại → `missingIds` (không 404 cả request); public như `GET /v1/products` (catalog tự mở `GET /v1/skus` + gateway thêm route & public-path `/v1/skus/**`). Verify: `mvn -B -ntp verify` **BUILD SUCCESS** toàn repo (catalog **79 unit** (+13) · **25 IT** (+4) · checkstyle 0 · jacoco pass) · flow thật qua gateway **không token**: 200 + giá đúng (`150000.00` override / `180000.00` giá product) trong **31 ms** · gọi thẳng `:8082` cũng 200 · trùng lặp ⇒ 1 dòng · xoá mềm product ⇒ `missingIds` (HTTP vẫn 200) · **400** cho thiếu ids / sai UUID / 101 id, **200** cho 100 id · `e2e-smoke` **17/17** · OpenAPI 36 → **37 path**. **Tách ticket**: `SL-2.6` (`L`) → **`SL-2.6a`** (saga start) + **`SL-2.6b`** (confirm/cancel/sweeper) — chốt **phương án B** (saga đọc cart + giá batch từ catalog), cập nhật `architecture.md` §5 + §6.1. Debt: **`TD-22`** (endpoint public chưa rate limit/cache) · `TD-20` cập nhật điều kiện revisit. |

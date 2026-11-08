@@ -424,6 +424,7 @@ Service **read-heavy đầu tiên**: guest xem được sản phẩm, chỉ `sel
 | `POST /v1/categories` | `seller`/`admin` | 201 + `Location`; trùng slug → **409** |
 | `GET /v1/products` | **public** | list phân trang: `page` · `size` (1..100) · `categoryId` · `q` (không phân biệt hoa/thường) · `sort` (`price,asc\|desc` · `createdAt,asc\|desc`) |
 | `GET /v1/products/{id}` | **public** | 200 · không tồn tại **hoặc đã xoá mềm** → **404**; trả kèm danh sách `skus` |
+| `GET /v1/skus?ids=` | **public** | **batch** giá/tên cho ≤ **100** SKU (1 request) — `SL-2.13`; SKU đã archive/không tồn tại → nằm trong `missingIds` (không 404 cả request); thiếu `ids` / sai UUID / > 100 → **400** |
 | `POST /v1/products` | `seller`/`admin` | 201; `categoryId` không tồn tại → **404** |
 | `POST /v1/products/{id}/skus` | `seller`/`admin` | 201; `code` trùng → **409**; product đã xoá mềm → **404** |
 | `PUT /v1/products/{id}` | `seller`/`admin` | thay toàn bộ field sửa được; `version` +1; product đã xoá mềm → **404** |
@@ -467,6 +468,9 @@ có dữ liệu demo; seed viết **idempotent** (`ON CONFLICT`) nên `up -d` nh
 curl -s "localhost:8080/v1/products?page=0&size=5"                       # trang đầu (public)
 curl -s "localhost:8080/v1/products?categoryId=<uuid>&sort=price,desc"   # filter + sort
 curl -s "localhost:8080/v1/products?q=iphone"                            # tìm theo tên (không phân biệt hoa/thường)
+# Tra giá nhiều SKU trong 1 request (SL-2.13) — saga checkout + giỏ hàng dùng đường này,
+# KHÔNG tin giá do client gửi. Trả {items:[{skuId,productId,skuCode,title,unitPrice}],missingIds:[]}.
+curl -s "localhost:8080/v1/skus?ids=<sku-uuid>,<sku-uuid>"
 ```
 
 Tham số sai (`size` ngoài 1..100 · `page` âm · `sort` lạ) → **400** `VALIDATION_ERROR` — cố ý **không
