@@ -75,6 +75,22 @@ shoplab:
     sweep-interval-ms: ${SHOPLAB_ORDER_SWEEP_INTERVAL_MS:3600000}
     sweep-initial-delay-ms: ${SHOPLAB_ORDER_SWEEP_INITIAL_DELAY_MS:600000}
 
+  # --- SL-2.6a: checkout saga gọi các service khác (sync REST, ADR-0006 D4) ---
+  # URL phải cấu hình được: compose dùng hostname nội bộ, máy dev dùng localhost, IT dùng stub HTTP.
+  # Timeout là BẮT BUỘC: sync mà không có timeout thì một service chậm giữ connection của
+  # order-service tới khi client bỏ đi (cạn pool của chính mình).
+  saga:
+    cart-url: ${SAGA_CART_URL:http://localhost:8083}
+    catalog-url: ${SAGA_CATALOG_URL:http://localhost:8082}
+    inventory-url: ${SAGA_INVENTORY_URL:http://localhost:8084}
+    promotion-url: ${SAGA_PROMOTION_URL:http://localhost:8086}
+    payment-url: ${SAGA_PAYMENT_URL:http://localhost:8088}
+    connect-timeout: ${SAGA_CONNECT_TIMEOUT:2s}
+    # 800 ms/bước: ADR-0006 chốt 300–800 ms để tổng 4-5 bước vẫn nằm dưới NFR p99 < 500 ms khi
+    # mọi thứ khoẻ; chậm hơn nghĩa là fail-fast chứ không kéo lê.
+    read-timeout: ${SAGA_READ_TIMEOUT:800ms}
+    currency: ${SAGA_CURRENCY:VND}
+
 logging:
   level:
     root: INFO

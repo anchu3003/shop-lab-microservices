@@ -99,4 +99,12 @@ public class JdbcIdempotencyRepository implements IdempotencyRepository {
         .param("limit", limit)
         .update();
   }
+
+  @Override
+  public void delete(String scope, String key) {
+    jdbc.sql("delete from idempotency_keys where scope = :scope and key = :key")
+        .param("scope", scope)
+        .param("key", key)
+        .update();
+  }
 }

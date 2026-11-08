@@ -257,6 +257,29 @@ Chọn A: `products.deleted_at timestamptz NULL` + `status` mở rộng (`ACTIVE
 - `SL-2.2` (schema/API inventory), `SL-2.5` (order + idempotency), `SL-2.7` (payment webhook) phải bám đúng bảng dưới đây.
 - `SL-2.11` (mới): soft delete product ở `catalog-service`.
 
+## Bổ sung D6 — đơn 0 đồng (chốt 2026-11-08 khi làm `SL-2.6a`)
+
+**Vấn đề**: voucher giảm 100% ⇒ `total = 0`, nhưng `payment-service` yêu cầu `amount ≥ 0.01`
+(`CreatePaymentIntentRequest`). Phải chọn: chặn đơn 0 đồng, hay cho phép đơn 0 đồng không qua thanh toán.
+
+**Chốt (phương án B)**: **cho phép đơn 0 đồng**, cố ý **không** tạo payment intent.
+
+| Điểm | Chốt | Hệ quả |
+|---|---|---|
+| Cờ trong saga | `checkout_sagas.payment_required` (bất biến của saga, **không** suy ra từ `orders.total`) | `SL-2.6b` đọc cờ này để chốt đơn mà không verify payment |
+| Response | `CheckoutResponse.paymentRequired = false`, `paymentIntentId = null` | Client biết "không cần redirect đi thanh toán" |
+| Audit | bước `PAYMENT_INTENT` = `SKIPPED` (không phải `OK`) | Nhìn bảng step là biết đơn 0 đồng, không phải payment bị bỏ quên |
+| Ràng buộc DB | `CHECK (state <> 'COMPLETED_START' OR payment_intent_id IS NOT NULL OR NOT payment_required)` | DB không cho tồn tại saga "xong bước start cần thanh toán nhưng không có intent" |
+
+**Vì sao không chặn đơn 0 đồng**: chặn thì một voucher 100% (hoàn tiền, đền bù, khuyến mãi) trở thành **không dùng
+được** — tức là cấm một nghiệp vụ hợp lệ bằng một ràng buộc kỹ thuật của payment-service. Cờ `payment_required` rẻ hơn
+nhiều và giữ nguyên ý nghĩa cho `SL-2.6b`.
+
+**Mất / chấp nhận**: có thêm một nhánh trạng thái (`payment_required = false`) phải xử lý ở confirm/cancel/sweeper —
+`SL-2.6b` đã ghi vào AC.
+
+---
+
 ## Revisit
 
 | Điều kiện (định lượng được) | Chuyển sang | Vì sao |

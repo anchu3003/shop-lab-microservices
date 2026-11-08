@@ -114,6 +114,19 @@ public class JdbcOrderRepository implements OrderRepository {
   }
 
   @Override
+  public void attachPaymentIntent(UUID orderId, UUID paymentIntentId, Instant now) {
+    jdbc.sql(
+            """
+            update orders set payment_intent_id = :paymentIntentId, updated_at = :now
+             where id = :id
+            """)
+        .param("paymentIntentId", paymentIntentId)
+        .param("now", Timestamp.from(now))
+        .param("id", orderId)
+        .update();
+  }
+
+  @Override
   public void insertHistory(
       UUID orderId, OrderStatus from, OrderStatus to, String reason, Instant now) {
     jdbc.sql(
