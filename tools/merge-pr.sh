@@ -9,6 +9,10 @@
 #      phát sinh phải là **docs-only**, nếu không → từ chối merge.
 #   3. (SL-1.14) PR **chỉ-docs** bị `paths-ignore` bỏ hết run ⇒ **0 run là hợp lệ**, nhưng chỉ cho
 #      merge khi TOÀN BỘ diff của PR là docs-only. 0 run mà có file không phải docs ⇒ vẫn CHẶN.
+#   3b. (SL-3.10) `--skip-ci-check`: bỏ qua bước đòi CI xanh — dùng khi CI đang TẮT TẠM THỜI
+#      (`gh variable set CI_ENABLED --body false`) để tăng tốc. Vẫn bắt buộc: PR mở/không draft +
+#      có comment tóm tắt. Script in CẢNH BÁO và ghi "CI: BỎ QUA" vào comment evidence hậu merge,
+#      để người đọc PR sau biết PR này **không** qua CI. Mặc định KHÔNG bật cờ này.
 #   4. Merge kiểu SQUASH + xoá nhánh feature (cả remote).
 #   5. (SL-1.14) Sau merge, post **comment evidence hậu merge** (merge sha · run CI trên `main` ·
 #      token skip) — vì theo rule "1 ticket = 1 commit", evidence sinh sau merge không còn chỗ ghi
@@ -17,6 +21,7 @@
 # Dùng:
 #   bash tools/merge-pr.sh 10 --summary-file /tmp/pr-summary.md
 #   bash tools/merge-pr.sh 10 --summary-file /tmp/pr-summary.md --dry-run
+#   bash tools/merge-pr.sh 10 --summary-file /tmp/pr-summary.md --skip-ci-check   # CI đang tắt
 # ==============================================================================
 
 set -euo pipefail
@@ -32,17 +37,19 @@ pr="${1:-}"
 shift || true
 summary_file=""
 dry_run="false"
+skip_ci_check="false"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --summary-file) summary_file="${2:-}"; shift 2 ;;
     --dry-run) dry_run="true"; shift ;;
+    --skip-ci-check) skip_ci_check="true"; shift ;;
     *) echo "merge-pr: tham số lạ: $1" >&2; exit 2 ;;
   esac
 done
 
 if [ -z "$pr" ]; then
-  echo "Dùng: bash tools/merge-pr.sh <pr-number> --summary-file <file> [--dry-run]" >&2
+  echo "Dùng: bash tools/merge-pr.sh <pr-number> --summary-file <file> [--dry-run] [--skip-ci-check]" >&2
   exit 2
 fi
 if [ -z "$summary_file" ] || [ ! -s "$summary_file" ]; then
@@ -60,16 +67,35 @@ read -r state is_draft branch head_sha mergeable pr_url < <(
 [ "$is_draft" = "false" ] || { echo "merge-pr: PR #$pr đang là draft — bấm Ready for review trước." >&2; exit 1; }
 
 # --- 2) CI phải xanh (run mới nhất của nhánh PR) ------------------------------
-read -r conclusion verified_sha < <(
-  gh run list --branch "$branch" --limit 1 --json conclusion,headSha --jq '.[0] | "\(.conclusion) \(.headSha)"'
-)
+docs_only_pr="false"
+ci_skipped="false"
+if [ "$skip_ci_check" = "true" ]; then
+  # SL-3.10: CI đang tắt tạm thời (CI_ENABLED=false) ⇒ không có run nào để chờ. Bỏ qua bước kiểm,
+  # nhưng nói TO và ghi vào evidence — người đọc PR sau phải biết PR này **không** qua CI.
+  ci_skipped="true"
+  echo "merge-pr: ⚠️  CẢNH BÁO — BỎ QUA kiểm tra CI (--skip-ci-check)." >&2
+  echo "merge-pr:    Chỉ dùng khi CI đang tắt (gh variable get CI_ENABLED = false)." >&2
+  echo "merge-pr:    Trách nhiệm verify chuyển về ticket: phải có output 'mvn verify' + e2e local." >&2
+  conclusion=""; verified_sha="$head_sha"
+else
+  read -r conclusion verified_sha < <(
+    gh run list --branch "$branch" --limit 1 --json conclusion,headSha --jq '.[0] | "\(.conclusion) \(.headSha)"'
+  )
+fi
 # `.[0]` trên mảng rỗng trả `null` → nói rõ "chưa có run" thay vì in 'null' (dễ bị hiểu là lỗi lạ).
 #
 # NGOẠI LỆ (SL-1.14): PR **chỉ-docs** bị `paths-ignore` bỏ hết run ⇒ 0 run là HỢP LỆ. Nhưng chỉ cho
 # merge khi **toàn bộ** diff của PR là docs-only; 0 run mà có file không phải docs ⇒ vẫn CHẶN
 # (CI bị skip/tắt không có nghĩa là code đã được kiểm).
-docs_only_pr="false"
-if [ -z "$conclusion" ] || [ "$conclusion" = "null" ]; then
+# NGOẠI LỆ (SL-3.10): `--skip-ci-check` ⇒ bỏ hẳn nhánh kiểm này (CI đang tắt), nhưng chỉ khi cờ được
+# truyền tường minh; vẫn kiểm diff rỗng để tránh merge nhầm nhánh không có gì.
+if [ "$ci_skipped" = "true" ]; then
+  git fetch -q origin main "$branch"
+  if [ -z "$(git diff --name-only "origin/main...$head_sha")" ]; then
+    echo "merge-pr: nhánh '$branch' không có thay đổi nào so với 'main' — dừng để an toàn." >&2
+    exit 1
+  fi
+elif [ -z "$conclusion" ] || [ "$conclusion" = "null" ]; then
   git fetch -q origin main "$branch"
   pr_changed="$(git diff --name-only "origin/main...$head_sha")"
   if [ -z "$pr_changed" ]; then
@@ -87,7 +113,7 @@ if [ -z "$conclusion" ] || [ "$conclusion" = "null" ]; then
   echo "  ✓ $(echo "$pr_changed" | tr '\n' ' ')"
   docs_only_pr="true"
   verified_sha="$head_sha"
-elif [ "$conclusion" != "success" ]; then
+elif [ "$ci_skipped" != "true" ] && [ "$conclusion" != "success" ]; then
   echo "merge-pr: run CI mới nhất của '$branch' là '$conclusion' (cần 'success'). Không merge." >&2
   exit 1
 fi
@@ -110,7 +136,9 @@ if [ "$docs_only_pr" = "false" ] && [ "$verified_sha" != "$head_sha" ]; then
   echo "  ✓ phần phát sinh là docs-only (không cần CI): $(echo "$changed" | tr '\n' ' ')"
 fi
 
-if [ "$docs_only_pr" = "true" ]; then
+if [ "$ci_skipped" = "true" ]; then
+  echo "merge-pr: PR #$pr ($branch) — ⚠️ CI BỎ QUA (--skip-ci-check) · HEAD $head_sha"
+elif [ "$docs_only_pr" = "true" ]; then
   echo "merge-pr: PR #$pr ($branch) — PR chỉ-docs (không có run CI) · HEAD $head_sha"
 else
   echo "merge-pr: PR #$pr ($branch) — CI xanh tại $verified_sha · HEAD $head_sha"
@@ -155,7 +183,9 @@ for _ in $(seq 1 18); do
   fi
   sleep 5
 done
-if [ "$docs_only_pr" = "true" ]; then
+if [ "$ci_skipped" = "true" ]; then
+  run_expect="⚠️ **CI: BỎ QUA** — PR này merge bằng \`--skip-ci-check\` (CI đang tắt, \`vars.CI_ENABLED=false\`). Verify là \`mvn verify\` + e2e **local**, dán trong ticket. Bật lại: \`gh variable delete CI_ENABLED\`"
+elif [ "$docs_only_pr" = "true" ]; then
   run_expect="PR chỉ-docs ⇒ push lên \`main\` KHÔNG chạy CI (\`paths-ignore\`) — không thấy run là ĐÚNG, không phải lỗi"
 else
   run_expect="mong đợi 1 run \`push\` trên \`main\` (không thấy ⇒ kiểm token skip ở dòng trên)"

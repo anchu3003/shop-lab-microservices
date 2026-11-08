@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-3.2` ✅ **Done** — envelope · publisher confirm · consumer base · dedupe) |
-| **Ticket tiếp theo** | `SL-3.3` — `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` |
+| **Ticket đang làm** | — (`SL-3.10` ✅ **Done** — CI tắt tạm thời + `merge-pr.sh --skip-ci-check`) |
+| **Ticket tiếp theo** | `SL-3.3` — `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` *(merge bằng `--skip-ci-check` cho tới khi bật lại CI — `TD-28`)* |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -257,6 +257,7 @@ $ md5sum docs/api/openapi.yaml
 | 8 | `SL-3.7` | E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml` | S | Todo |
 | 9 | `SL-3.8` | **Báo cáo async**: latency checkout · độ trễ confirm→email · throughput relay · DLQ = 0 dưới tải | S | Todo |
 | 10 | `SL-3.9` | `docs/runbook-phase-3.md` + **DoD Phase 3** (archive · tag `phase-3` · release) | S | Todo |
+| 11 | `SL-3.10` | *(phát sinh 2026-11-08, quyết định của human)* **process**: tắt CI tạm thời (`CI_ENABLED=false`) để tăng tốc merge Phase 3 + `merge-pr.sh --skip-ci-check` | S | ✅ Done |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-08)*:
 
@@ -1008,6 +1009,117 @@ Debug async khác debug sync ở một điểm cốt tử: **lỗi không nằm 
 
 **Learning note** *(điền khi Done)*
 
+### SL-3.10 — Process: tắt CI tạm thời + `merge-pr.sh --skip-ci-check`
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done (2026-11-08) |
+| **Phase** | 3 — Async & event-driven *(phát sinh — quyết định của human 2026-11-08)* |
+| **Phụ thuộc** | — (áp dụng từ `SL-3.2` xong trở đi); **chặn** không ticket nào, nhưng đổi cách mọi ticket sau được merge |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Đo thật: mỗi PR tốn **~5–6 phút** CI (`test` ~5 min là phần lớn) + thêm ~5 phút run trên `main` ⇒ ~10 phút/ticket chỉ để
+chờ. Trong khi đó `mvn verify` local chạy **đúng nội dung job `test`** (unit + IT Testcontainers + JaCoCo gate). Phase 3
+còn 7 ticket ⇒ ~70 phút chờ. Quyết định: **tắt CI tạm thời** để đẩy tốc độ, chấp nhận mất hàng rào tự động — nhưng phải
+tắt **có ghi chép và có đường bật lại**, không để rule "CI xanh mới merge" mục âm thầm.
+
+**Mục tiêu**
+
+1. CI tắt bằng **kill-switch có sẵn** (`vars.CI_ENABLED=false`) — không sửa file workflow, bật lại bằng 1 lệnh.
+2. `tools/merge-pr.sh` có cờ `--skip-ci-check` để merge được khi không có run CI, **kèm cảnh báo rõ** trong output và
+   trong comment evidence hậu merge (người đọc PR sau vẫn biết PR này **không** qua CI).
+3. Rule + nợ kỹ thuật được ghi lại: `AGENTS.md` §9, `.clinerules/10-git-workflow.md`, `Backlog.md` §7 (`TD`).
+
+**In scope**
+
+- `tools/merge-pr.sh`: thêm `--skip-ci-check` (bỏ qua bước đòi CI xanh; vẫn **bắt buộc** PR mở/không draft + có comment
+  tóm tắt; in `CẢNH BÁO` + ghi vào evidence `CI: bỏ qua (--skip-ci-check)`).
+- `gh variable set CI_ENABLED --body false` (và hướng dẫn bật lại).
+- `AGENTS.md` §9 + `.clinerules/10-git-workflow.md` + `README.md` (mục CI): ghi trạng thái đang tắt + điều kiện bật lại.
+- `Backlog.md` §7: `TD-28` — "CI đang tắt" với **điều kiện revisit verify được**.
+
+**Out of scope**
+
+- Không sửa `.github/workflows/ci.yml` (kill-switch đã có từ `SL-1.0`; sửa workflow lúc này là thêm rủi ro vô ích).
+- Không bỏ hẳn rule "CI xanh mới merge" — đây là **ngoại lệ tạm thời**, hết Phase 3 phải bật lại.
+- Không đổi `e2e.yml` (vốn chỉ chạy `schedule`/`dispatch`).
+
+**Acceptance Criteria**
+
+- [x] `gh variable list` cho thấy `CI_ENABLED=false`.
+- [x] Push 1 nhánh bất kỳ ⇒ **0 run** CI mới (kiểm bằng `gh run list --branch <branch>`).
+- [x] `bash tools/merge-pr.sh <pr> --summary-file f --skip-ci-check` merge được PR **không có run**, in cảnh báo, và
+      comment evidence có dòng `CI: BỎ QUA`.
+- [x] Không có `--skip-ci-check` ⇒ script **vẫn chặn** PR code không có run CI (hành vi cũ giữ nguyên).
+- [x] `AGENTS.md` §9 + `.clinerules/10-git-workflow.md` + README + `TD-28` đã ghi, kèm câu lệnh bật lại.
+- [x] Mỗi ticket còn lại của Phase 3 vẫn **dán output `mvn verify` + e2e local** vào ticket (thay cho CI).
+      *(ràng buộc quy trình — áp dụng từ `SL-3.3`; đã ghi vào header "Ticket tiếp theo" + `AGENTS.md` §9)*
+
+**Ghi chú kỹ thuật**
+
+- Kill-switch nằm ở `if:` của cả 3 job (`vars.CI_ENABLED != 'false'`) ⇒ job bị **skip**, không đốt phút. Đổi lại: PR không
+  có check nào ⇒ GitHub UI không có dấu hiệu gì; vì vậy **comment evidence** là chỗ duy nhất còn dấu vết.
+- `--skip-ci-check` **không** được là mặc định: mặc định vẫn chặn, phải gõ cờ mới bỏ qua — tránh việc "quên bật lại CI"
+  mà vẫn merge ầm ầm.
+- Rủi ro đã chấp nhận: `build-image` matrix (9 image) là chốt duy nhất bắt lỗi Dockerfile/COPY pom khi thêm module ⇒
+  trong giai đoạn này, service nào đổi thì **tự build image local** (đã làm ở `SL-3.1`/`SL-3.2`).
+
+**Kết quả verify** *(2026-11-08 — đo thật trên repo này)*
+
+**1) Kill-switch đã tắt đúng — job `skipping`, 0 phút:**
+
+```console
+$ gh variable list
+CI_ENABLED  false  less than a minute ago
+
+$ git push -u origin chore/sl-3.10-ci-off-burst        # push 1 nhánh mới
+$ gh run list --branch chore/sl-3.10-ci-off-burst
+(empty)                                                ← không có run mới
+
+$ gh pr checks 55
+build-image (${{ matrix.service }})   skipping   0
+lint (checkstyle + spotless)          skipping   0
+test (unit + jacoco gate)             skipping   0
+```
+
+**2) `merge-pr.sh` giữ đúng hàng rào khi KHÔNG truyền cờ:**
+
+```console
+$ bash tools/merge-pr.sh 55 --summary-file /tmp/pr-310.md
+merge-pr: run CI mới nhất của 'chore/sl-3.10-ci-off-burst' là 'skipped' (cần 'success'). Không merge.
+```
+
+**3) Có cờ ⇒ cảnh báo rõ + đi tiếp (dry-run):**
+
+```console
+$ bash tools/merge-pr.sh 55 --summary-file /tmp/pr-310.md --skip-ci-check --dry-run
+merge-pr: ⚠️  CẢNH BÁO — BỎ QUA kiểm tra CI (--skip-ci-check).
+merge-pr:    Chỉ dùng khi CI đang tắt (gh variable get CI_ENABLED = false).
+merge-pr:    Trách nhiệm verify chuyển về ticket: phải có output 'mvn verify' + e2e local.
+merge-pr: PR #55 (chore/sl-3.10-ci-off-burst) — ⚠️ CI BỎ QUA (--skip-ci-check) · HEAD 92ff2b9c…
+merge-pr: --dry-run → không comment, không merge.
+```
+
+**4) Rule + nợ đã ghi:** `AGENTS.md` §9 (ngoại lệ + lệnh bật lại) · `.clinerules/10-git-workflow.md` (điều kiện merge
+thay thế) · `README.md` mục CI · `Backlog.md` §7 **`TD-28`** (mức `cao`, điều kiện revisit = **bắt buộc** bật lại khi
+đóng Phase 3).
+
+**Learning note**
+
+- **Tắt CI không phải "không ảnh hưởng"**: mất 3 hàng rào (test độc lập + JaCoCo gate, lint môi trường sạch,
+  `build-image` matrix — chốt duy nhất bắt lỗi Dockerfile/COPY pom khi thêm module). Đổi lại được ~5–6 phút/PR.
+  Cách đúng: tắt bằng **kill-switch có sẵn** (`vars.CI_ENABLED`) + **ghi nợ có điều kiện bật lại**, không sửa workflow.
+- **Một cờ "bỏ qua hàng rào" phải mặc định TẮT và phải nói to**: `--skip-ci-check` chỉ chạy khi gõ tường minh; script in
+  cảnh báo + ghi `CI: BỎ QUA` vào comment evidence hậu merge ⇒ người đọc PR 3 tháng sau vẫn biết PR đó **không** qua CI.
+  Nếu ghi ở nơi dễ mất (chat, trí nhớ) thì "tạm thời" sẽ thành vĩnh viễn mà không ai biết.
+- **Kill-switch để lại một khoảng trống quan sát**: PR không có check nào ⇒ GitHub UI **không** hiện dấu hiệu gì. Bù lại bằng
+  kỷ luật *dán output local vào ticket*; đây là chỗ dễ trượt nhất khi vội — nên ghi thẳng vào AC của mọi ticket còn lại.
+- **Verify tắt-xong-phải-thử-cả-hai-nhánh**: kiểm "có cờ thì chạy" thôi là chưa đủ; phải kiểm **"không cờ vẫn chặn"** —
+  nếu không, một lần refactor sau có thể làm bỏ qua kiểm CI trở thành mặc định.
+
+
 ### Phase 4 — Scale & performance
 Mục tiêu: có số liệu chứng minh mỗi pattern giúp gì.
 
@@ -1253,7 +1365,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | thấp |
 | `TD-26` | `build-image` (CI) **flaky** khi Maven Central tạm thời không trả artifact: mỗi image `mvn package` từ đầu KHÔNG cache Maven ⇒ gặp hiccup là đỏ oan (gặp thật ở `SL-2.8`: `spring-boot-dependencies:4.1.2 … absent in central`, rerun thì xanh) | SL-2.8 (run `42451712993`) | Phase 7: registry + **cache layer Maven** (`--mount=type=cache` hoặc image builder có `.m2` ấm) ⇒ build nhanh và bớt phụ thuộc Central | thấp |
 | `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
-| `TD-27` | `e2e-checkout-fail.sh` **flaky ngay sau khi rebuild container**: lần chạy đầu sau `up -d --force-recreate` → **38 PASS / 3 FAIL**, 2 lần ngay sau đó **41 PASS / 0 FAIL**. Script không chờ `healthy` và không retry nhánh `docker stop`/`start` (F5) | SL-2.12 | Lần tới flaky (hoặc khi thêm kịch bản F7) → thêm bước chờ `healthy` + retry 1 lần cho F5 | thấp |
+| `TD-28` | **CI đang TẮT tạm thời** (`vars.CI_ENABLED=false`, từ `SL-3.10`) để tăng tốc merge Phase 3 ⇒ mất 3 hàng rào tự động: `test` + JaCoCo gate độc lập, `lint` trong môi trường sạch, và **`build-image` matrix** (chốt duy nhất bắt lỗi Dockerfile/COPY pom khi thêm module/service). Verify chuyển sang **local** (`mvn verify` + e2e) do người/AI tự khai | SL-3.10 | **Bắt buộc** bật lại khi đóng Phase 3 (`gh variable delete CI_ENABLED`) — hoặc sớm hơn nếu có ≥ 1 lần `main` đỏ mà local xanh | cao |
 
 
 ## 8. Changelog
