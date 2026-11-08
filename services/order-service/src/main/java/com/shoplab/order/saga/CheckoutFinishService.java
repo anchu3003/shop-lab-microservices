@@ -7,6 +7,7 @@ import com.shoplab.order.order.OrderRecord;
 import com.shoplab.order.order.OrderRepository;
 import com.shoplab.order.order.OrderStatus;
 import com.shoplab.order.order.OrderWriter;
+import com.shoplab.order.outbox.CheckoutOutbox;
 import com.shoplab.order.saga.downstream.DownstreamGateway;
 import com.shoplab.order.saga.downstream.DownstreamResult;
 import com.shoplab.order.saga.downstream.PaymentStatusResponse;
@@ -44,6 +45,7 @@ public class CheckoutFinishService {
   private final CheckoutSagaRepository sagas;
   private final OrderRepository orders;
   private final OrderWriter writer;
+  private final CheckoutOutbox finalizer;
   private final Clock clock;
 
   public CheckoutFinishService(
@@ -51,11 +53,13 @@ public class CheckoutFinishService {
       CheckoutSagaRepository sagas,
       OrderRepository orders,
       OrderWriter writer,
+      CheckoutOutbox finalizer,
       Clock clock) {
     this.downstream = downstream;
     this.sagas = sagas;
     this.orders = orders;
     this.writer = writer;
+    this.finalizer = finalizer;
     this.clock = clock;
   }
 
@@ -79,8 +83,9 @@ public class CheckoutFinishService {
     commitVoucher(saga, bearer);
 
     Instant now = Instant.now(clock);
-    writer.confirmPending(orderId, "thanh toán đã xác nhận", now);
-    sagas.markState(orderId, CheckoutSagaState.CONFIRMED, null, now);
+    // SL-3.3: chốt đơn + đánh saga + GHI OUTBOX trong MỘT transaction (bean riêng
+    // `CheckoutOutbox` — self-invocation sẽ bỏ qua @Transactional).
+    finalizer.confirm(orderId, "thanh toán đã xác nhận", now);
     LOG.info("checkout confirmed: order={} paymentRequired={}", orderId, saga.paymentRequired());
     return reloaded(orderId);
   }
@@ -114,8 +119,8 @@ public class CheckoutFinishService {
 
     Instant now = Instant.now(clock);
     String why = reason == null || reason.isBlank() ? "khách huỷ" : reason;
-    writer.cancelPending(orderId, why, now);
-    sagas.markState(orderId, CheckoutSagaState.CANCELLED, null, now);
+    // SL-3.3: huỷ + ghi outbox cùng transaction (như confirm).
+    finalizer.cancel(orderId, why, now);
     LOG.info("checkout cancelled: order={} reason={}", orderId, why);
     return reloaded(orderId);
   }
