@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.shoplab.commons.error.AppException;
 import com.shoplab.commons.error.ErrorCode;
 import com.shoplab.order.config.SagaProperties;
+import com.shoplab.order.config.SagaPropertiesTest;
 import com.shoplab.order.idempotency.IdempotencyRecord;
 import com.shoplab.order.idempotency.IdempotencyService;
 import com.shoplab.order.idempotency.IdempotencyStatus;
@@ -27,7 +28,6 @@ import com.shoplab.order.saga.downstream.StockReservation;
 import com.shoplab.order.saga.downstream.VoucherLock;
 import java.math.BigDecimal;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -57,16 +57,7 @@ class CheckoutServiceTest {
   private final IdempotencyService idempotency = mock(IdempotencyService.class);
   private final ObjectMapper objectMapper = new ObjectMapper();
 
-  private final SagaProperties properties =
-      new SagaProperties(
-          "http://cart:8083",
-          "http://catalog:8082",
-          "http://inventory:8084",
-          "http://promotion:8086",
-          "http://payment:8088",
-          Duration.ofSeconds(2),
-          Duration.ofMillis(800),
-          "VND");
+  private final SagaProperties properties = SagaPropertiesTest.defaults();
 
   private final CheckoutService service =
       new CheckoutService(

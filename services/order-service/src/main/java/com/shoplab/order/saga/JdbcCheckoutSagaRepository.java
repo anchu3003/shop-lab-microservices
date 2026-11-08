@@ -115,6 +115,41 @@ public class JdbcCheckoutSagaRepository implements CheckoutSagaRepository {
   }
 
   @Override
+  public void markState(UUID orderId, CheckoutSagaState state, String failureCode, Instant now) {
+    jdbc.sql(
+            """
+            update checkout_sagas
+               set state = :state, failure_code = :failureCode, updated_at = :now
+             where order_id = :id
+            """)
+        .param("state", state.name())
+        .param("failureCode", failureCode, Types.VARCHAR)
+        .param("now", Timestamp.from(now))
+        .param("id", orderId)
+        .update();
+  }
+
+  @Override
+  public List<CheckoutSagaRecord> findExpirable(Instant createdBefore, int limit) {
+    return jdbc.sql(
+            """
+            select s.order_id, s.user_id, s.state, s.payment_required, s.lock_id, s.reservation_id,
+                   s.payment_intent_id, s.payment_url, s.failure_code, s.created_at, s.updated_at
+              from checkout_sagas s
+              join orders o on o.id = s.order_id
+             where s.state = 'COMPLETED_START'
+               and o.status = 'PENDING_PAYMENT'
+               and s.created_at < :before
+             order by s.created_at
+             limit :limit
+            """)
+        .param("before", Timestamp.from(createdBefore))
+        .param("limit", limit)
+        .query(this::mapSaga)
+        .list();
+  }
+
+  @Override
   public Optional<CheckoutSagaRecord> findById(UUID orderId) {
     return jdbc.sql(SELECT_SAGA + " where order_id = :id")
         .param("id", orderId)

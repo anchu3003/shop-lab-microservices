@@ -280,6 +280,26 @@ nhiều và giữ nguyên ý nghĩa cho `SL-2.6b`.
 
 ---
 
+## Bổ sung D7 — sweeper hết hạn không có token user (chốt 2026-11-08 khi làm `SL-2.6b`)
+
+**Vấn đề**: `CheckoutSagaSweeper` (đơn quá `payment-window` chưa thanh toán) chạy **nền**, không có JWT của user,
+nhưng `POST /v1/stock/release` và `POST /v1/vouchers/release` đều yêu cầu token (defense in depth) ⇒ gọi thẳng sẽ 401.
+
+**Chốt (phương án A)**: sweeper **chỉ ghi DB** (order + saga → `EXPIRED`); hàng/voucher được **TTL sweeper của chính
+`inventory`/`promotion`** trả (cùng mốc 15′, đã verify ở `SL-2.3`/`SL-2.4`).
+
+| Điểm | Chốt | Hệ quả |
+|---|---|---|
+| `payment-window` | **= TTL reservation của inventory = TTL voucher lock** (15′) | Không tồn tại cửa sổ "đơn đã `EXPIRED` mà tiền vẫn vào được"; sửa 1 trong 3 phải xem lại cả 3 |
+| Sweeper | chỉ `UPDATE` order + saga | Không cần token, không cần sửa service khác; hàng về kho **trễ ≤ 1 nhịp** (60 s) |
+| Verify | `SL-2.6b`: sau 20 s (window demo) order `EXPIRED` mà `reserved` **vẫn 2**; sau TTL 45 s `reserved → 0`, voucher `EXPIRED` | Đúng hành vi đã chốt, không phải suy đoán |
+
+**Vì sao không chọn internal auth ngay**: thêm shared-secret/service-token cho 2 endpoint release là **hạ tầng
+service-to-service** (Phase 3) và phải sửa inventory + promotion + compose. Nợ ghi ở `TD-25`: khi Phase 3 có auth thì
+sweeper gọi `release` ngay trong cùng nhịp (hàng về kho tức thì, không phụ thuộc TTL của service khác).
+
+---
+
 ## Revisit
 
 | Điều kiện (định lượng được) | Chuyển sang | Vì sao |

@@ -80,6 +80,7 @@ class CheckoutSagaIT {
 
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ObjectMapper objectMapper;
+  @Autowired private CheckoutSagaSweeper sweeper;
 
   private final HttpClient httpClient =
       HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
@@ -106,6 +107,11 @@ class CheckoutSagaIT {
     registry.add("shoplab.saga.payment-url", DOWNSTREAM::url);
     registry.add("shoplab.saga.connect-timeout", () -> "1s");
     registry.add("shoplab.saga.read-timeout", () -> "1s");
+    // Sweeper: cửa sổ thanh toán ngắn để test expire được ngay; delay/interval dài để scheduler
+    // KHÔNG tự chạy giữa test (test gọi `expireDue()` trực tiếp ⇒ tất định).
+    registry.add("shoplab.saga.payment-window", () -> "1s");
+    registry.add("shoplab.saga.sweep-interval", () -> "1h");
+    registry.add("shoplab.saga.sweep-initial-delay", () -> "1h");
   }
 
   @AfterAll
@@ -291,7 +297,7 @@ class CheckoutSagaIT {
 
     String orderStatus =
         jdbc.queryForObject(
-            "select status from orders where id = ?", String.class, saga.get("order_id"));
+            "select status from orders where id = ?::uuid", String.class, saga.get("order_id"));
     assertThat(orderStatus).isEqualTo("CANCELLED");
     // Bù xong thì khoá idempotency bị trả ⇒ client retry lại được ngay với cùng key.
     assertThat(jdbc.queryForObject("select count(*) from idempotency_keys", Integer.class))
@@ -360,6 +366,170 @@ class CheckoutSagaIT {
   /** Một buyer cho mỗi test (mỗi test = 1 instance) ⇒ scope idempotency nhất quán trong test. */
   private final String buyer = MINTER.token(UUID.randomUUID(), "BUYER");
 
+  // ==========================================================================
+  // SL-2.6b: confirm · cancel · sweeper
+  // ==========================================================================
+
+  @Test
+  @DisplayName(
+      "confirm khi payment SUCCEEDED → 200 CONFIRMED + commit stock/voucher + order CONFIRMED")
+  void confirmAfterPayment() {
+    DOWNSTREAM.cartItems = List.of(Map.of("skuId", UUID.randomUUID().toString(), "qty", 1));
+    DOWNSTREAM.discount = new BigDecimal("10000.00");
+    UUID orderId = checkoutOrder("VOUCHER10");
+    DOWNSTREAM.paymentIntentStatus = "SUCCEEDED";
+
+    HttpResult result = postJson("/v1/checkout/" + orderId + "/confirm", Map.of());
+
+    assertThat(result.status()).isEqualTo(200);
+    assertThat(result.body()).contains("\"state\":\"CONFIRMED\"");
+    assertThat(DOWNSTREAM.count("stock/commit")).isEqualTo(1);
+    assertThat(DOWNSTREAM.count("vouchers/commit")).isEqualTo(1);
+    assertThat(
+            jdbc.queryForObject(
+                "select status from orders where id = ?::uuid", String.class, orderId.toString()))
+        .isEqualTo("CONFIRMED");
+    List<String> steps =
+        jdbc.queryForList(
+            "select step || ':' || status from checkout_saga_steps"
+                + " where order_id = ?::uuid order by created_at, id",
+            String.class,
+            orderId.toString());
+    assertThat(steps).contains("PAYMENT_VERIFY:OK", "STOCK_COMMIT:OK", "VOUCHER_COMMIT:OK");
+  }
+
+  @Test
+  @DisplayName("confirm khi payment CHƯA SUCCEEDED → 409, không commit gì")
+  void confirmBeforePaymentIsConflict() {
+    DOWNSTREAM.cartItems = List.of(Map.of("skuId", UUID.randomUUID().toString(), "qty", 1));
+    DOWNSTREAM.discount = new BigDecimal("10000.00");
+    UUID orderId = checkoutOrder("VOUCHER10");
+
+    HttpResult result = postJson("/v1/checkout/" + orderId + "/confirm", Map.of());
+
+    assertThat(result.status()).isEqualTo(409);
+    assertThat(result.body()).contains("CONFLICT");
+    assertThat(DOWNSTREAM.count("stock/commit")).isZero();
+    assertThat(
+            jdbc.queryForObject(
+                "select status from orders where id = ?::uuid", String.class, orderId.toString()))
+        .isEqualTo("PENDING_PAYMENT");
+  }
+
+  @Test
+  @DisplayName("confirm 2 lần → 200 cả hai, history chỉ 2 dòng (create + confirm)")
+  void confirmIsIdempotent() {
+    DOWNSTREAM.cartItems = List.of(Map.of("skuId", UUID.randomUUID().toString(), "qty", 1));
+    DOWNSTREAM.discount = new BigDecimal("10000.00");
+    UUID orderId = checkoutOrder("VOUCHER10");
+    DOWNSTREAM.paymentIntentStatus = "SUCCEEDED";
+
+    assertThat(postJson("/v1/checkout/" + orderId + "/confirm", Map.of()).status()).isEqualTo(200);
+    assertThat(postJson("/v1/checkout/" + orderId + "/confirm", Map.of()).status()).isEqualTo(200);
+
+    assertThat(
+            jdbc.queryForObject(
+                "select count(*) from order_status_history where order_id = ?::uuid",
+                Integer.class,
+                orderId.toString()))
+        .isEqualTo(2);
+  }
+
+  // __FINISH_IT2__
+
+  @Test
+  @DisplayName("đơn 0 đồng: confirm KHÔNG gọi payment-service, vẫn commit + CONFIRMED")
+  void confirmZeroTotalSkipsPayment() {
+    DOWNSTREAM.cartItems = List.of(Map.of("skuId", UUID.randomUUID().toString(), "qty", 1));
+    DOWNSTREAM.unitPrice = new BigDecimal("50000.00");
+    DOWNSTREAM.discount = new BigDecimal("50000.00");
+    UUID orderId = checkoutOrder("FREE100");
+    int paymentReadsBefore = DOWNSTREAM.count("/v1/payment-intents/");
+
+    HttpResult result = postJson("/v1/checkout/" + orderId + "/confirm", Map.of());
+
+    assertThat(result.status()).isEqualTo(200);
+    assertThat(result.body()).contains("\"state\":\"CONFIRMED\"");
+    assertThat(DOWNSTREAM.count("/v1/payment-intents/")).isEqualTo(paymentReadsBefore);
+    String verifyStep =
+        jdbc.queryForObject(
+            "select status from checkout_saga_steps where order_id = ?::uuid"
+                + " and step = 'PAYMENT_VERIFY'",
+            String.class,
+            orderId.toString());
+    assertThat(verifyStep).isEqualTo("SKIPPED");
+  }
+
+  @Test
+  @DisplayName(
+      "cancel → release stock + voucher, order CANCELLED; cancel 2 lần vẫn 200; confirm sau đó 409")
+  void cancelReleasesAndBlocksConfirm() {
+    DOWNSTREAM.cartItems = List.of(Map.of("skuId", UUID.randomUUID().toString(), "qty", 1));
+    DOWNSTREAM.discount = new BigDecimal("10000.00");
+    UUID orderId = checkoutOrder("VOUCHER10");
+
+    HttpResult cancelled =
+        postJson("/v1/checkout/" + orderId + "/cancel", Map.of("reason", "đổi ý"));
+
+    assertThat(cancelled.status()).isEqualTo(200);
+    assertThat(cancelled.body()).contains("\"state\":\"CANCELLED\"");
+    assertThat(DOWNSTREAM.count("stock/release")).isEqualTo(1);
+    assertThat(DOWNSTREAM.count("vouchers/release")).isEqualTo(1);
+    assertThat(
+            jdbc.queryForObject(
+                "select status from orders where id = ?::uuid", String.class, orderId.toString()))
+        .isEqualTo("CANCELLED");
+
+    assertThat(postJson("/v1/checkout/" + orderId + "/cancel", Map.of()).status()).isEqualTo(200);
+    DOWNSTREAM.paymentIntentStatus = "SUCCEEDED";
+    assertThat(postJson("/v1/checkout/" + orderId + "/confirm", Map.of()).status()).isEqualTo(409);
+  }
+
+  @Test
+  @DisplayName("cancel sau confirm → 409 (tiền đã về, huỷ cần hoàn tiền)")
+  void cancelAfterConfirmIsConflict() {
+    DOWNSTREAM.cartItems = List.of(Map.of("skuId", UUID.randomUUID().toString(), "qty", 1));
+    DOWNSTREAM.discount = new BigDecimal("10000.00");
+    UUID orderId = checkoutOrder("VOUCHER10");
+    DOWNSTREAM.paymentIntentStatus = "SUCCEEDED";
+    assertThat(postJson("/v1/checkout/" + orderId + "/confirm", Map.of()).status()).isEqualTo(200);
+
+    assertThat(postJson("/v1/checkout/" + orderId + "/cancel", Map.of()).status()).isEqualTo(409);
+  }
+
+  @Test
+  @DisplayName(
+      "sweeper: saga quá payment-window ⇒ order EXPIRED + saga EXPIRED; vòng 2 không làm gì")
+  void sweeperExpiresOverdueOrder() {
+    DOWNSTREAM.cartItems = List.of(Map.of("skuId", UUID.randomUUID().toString(), "qty", 1));
+    DOWNSTREAM.discount = new BigDecimal("10000.00");
+    UUID orderId = checkoutOrder("VOUCHER10");
+    // Đẩy saga về quá khứ để vượt payment-window (1 s trong IT) mà không phải chờ.
+    jdbc.update(
+        "update checkout_sagas set created_at = now() - interval '2 minutes'"
+            + " where order_id = ?::uuid",
+        orderId.toString());
+
+    int first = sweeper.expireDue();
+    int second = sweeper.expireDue();
+
+    assertThat(first).isEqualTo(1);
+    assertThat(second).isZero();
+    assertThat(
+            jdbc.queryForObject(
+                "select status from orders where id = ?::uuid", String.class, orderId.toString()))
+        .isEqualTo("EXPIRED");
+    assertThat(
+            jdbc.queryForObject(
+                "select state from checkout_sagas where order_id = ?::uuid",
+                String.class,
+                orderId.toString()))
+        .isEqualTo("EXPIRED");
+    // Sweeper không gọi release (không có token user) — hàng/voucher về theo TTL sweeper.
+    assertThat(DOWNSTREAM.count("stock/release")).isZero();
+    assertThat(DOWNSTREAM.count("vouchers/release")).isZero();
+  }
+
   private HttpResult checkout(String voucherCode, String idempotencyKey) {
     Map<String, Object> body = voucherCode == null ? Map.of() : Map.of("voucherCode", voucherCode);
     return send(HttpMethod.POST, "/v1/checkout", body, Map.of("Idempotency-Key", idempotencyKey));
@@ -368,6 +538,18 @@ class CheckoutSagaIT {
   private int countOrders() {
     Integer count = jdbc.queryForObject("select count(*) from orders", Integer.class);
     return count == null ? 0 : count;
+  }
+
+  /** `SL-2.6b`: confirm/cancel dùng token của buyer (đã set trong `send`). */
+  private HttpResult postJson(String path, Object body) {
+    return send(HttpMethod.POST, path, body, Map.of());
+  }
+
+  /** Checkout xong rồi trả về `orderId` — dùng chung cho các test bước finish. */
+  private UUID checkoutOrder(String voucherCode) {
+    HttpResult result = checkout(voucherCode, "key-" + UUID.randomUUID());
+    assertThat(result.status()).isEqualTo(201);
+    return objectMapper.readValue(result.body(), CheckoutResponse.class).orderId();
   }
 
   private HttpResult send(
@@ -420,6 +602,9 @@ class CheckoutSagaIT {
     volatile int reserveStatus = 201;
     volatile int paymentStatus = 201;
 
+    /** Trạng thái mà `GET /v1/payment-intents/{id}` trả về (`SL-2.6b`). */
+    volatile String paymentIntentStatus = "REQUIRES_PAYMENT";
+
     private Downstream(HttpServer server) {
       this.server = server;
     }
@@ -456,6 +641,7 @@ class CheckoutSagaIT {
       discount = BigDecimal.ZERO;
       reserveStatus = 201;
       paymentStatus = 201;
+      paymentIntentStatus = "REQUIRES_PAYMENT";
     }
 
     /** Số request đã tới stub (path kết thúc bằng {@code pathSuffix}). */
@@ -476,6 +662,12 @@ class CheckoutSagaIT {
     }
 
     private void route(HttpExchange exchange, String path) throws IOException {
+      // `SL-2.6b`: saga đọc lại payment intent để tự xác minh "đã trả tiền chưa".
+      if (path.startsWith("/v1/payment-intents/")) {
+        String id = path.substring("/v1/payment-intents/".length());
+        write(exchange, 200, "{\"id\":\"" + id + "\",\"status\":\"" + paymentIntentStatus + "\"}");
+        return;
+      }
       switch (path) {
         case "/v1/carts" -> write(exchange, 200, cartJson());
         case "/v1/skus" -> write(exchange, 200, skuJson(exchange));
@@ -490,6 +682,8 @@ class CheckoutSagaIT {
                     + "}");
         case "/v1/vouchers/release", "/v1/stock/release" ->
             write(exchange, 200, "{\"status\":\"RELEASED\"}");
+        case "/v1/vouchers/commit", "/v1/stock/commit" ->
+            write(exchange, 200, "{\"status\":\"COMMITTED\"}");
         case "/v1/stock/reserve" -> reserve(exchange);
         case "/v1/payment-intents" -> payment(exchange);
         default ->

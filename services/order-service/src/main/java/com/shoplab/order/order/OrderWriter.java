@@ -77,10 +77,31 @@ public class OrderWriter {
    */
   @Transactional
   public boolean cancelPending(UUID orderId, String reason, Instant now) {
-    if (orders.markStatus(orderId, OrderStatus.PENDING_PAYMENT, OrderStatus.CANCELLED, now) != 1) {
+    return transitionPending(orderId, OrderStatus.CANCELLED, reason, now);
+  }
+
+  /**
+   * Chốt đơn (tiền đã về / đơn 0 đồng): `PENDING_PAYMENT → CONFIRMED` (`SL-2.6b`).
+   *
+   * @return {@code false} nếu đơn không còn `PENDING_PAYMENT` (đã confirm/huỷ/hết hạn ở nơi khác) —
+   *     caller đọc lại trạng thái để trả kết quả đúng, và history không bị ghi 2 lần
+   */
+  @Transactional
+  public boolean confirmPending(UUID orderId, String reason, Instant now) {
+    return transitionPending(orderId, OrderStatus.CONFIRMED, reason, now);
+  }
+
+  /** Đánh dấu đơn hết hạn (`PENDING_PAYMENT → EXPIRED`) — dùng cho sweeper `SL-2.6b`. */
+  @Transactional
+  public boolean expirePending(UUID orderId, String reason, Instant now) {
+    return transitionPending(orderId, OrderStatus.EXPIRED, reason, now);
+  }
+
+  private boolean transitionPending(UUID orderId, OrderStatus to, String reason, Instant now) {
+    if (orders.markStatus(orderId, OrderStatus.PENDING_PAYMENT, to, now) != 1) {
       return false;
     }
-    orders.insertHistory(orderId, OrderStatus.PENDING_PAYMENT, OrderStatus.CANCELLED, reason, now);
+    orders.insertHistory(orderId, OrderStatus.PENDING_PAYMENT, to, reason, now);
     return true;
   }
 }

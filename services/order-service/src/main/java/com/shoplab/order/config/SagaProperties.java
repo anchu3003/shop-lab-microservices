@@ -1,5 +1,7 @@
 package com.shoplab.order.config;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import java.time.Duration;
 import java.util.Locale;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -36,7 +38,16 @@ public record SagaProperties(
     @DefaultValue("http://localhost:8088") String paymentUrl,
     @DefaultValue("2s") Duration connectTimeout,
     @DefaultValue("800ms") Duration readTimeout,
-    @DefaultValue("VND") String currency) {
+    @DefaultValue("VND") String currency,
+    /**
+     * Bao lâu không thanh toán thì coi là bỏ ngang (`SL-2.6b`). Mặc định **15m** — phải bằng TTL
+     * reservation của inventory và TTL voucher lock của promotion, nếu dài hơn thì tồn tại cửa sổ
+     * "đơn đã EXPIRED nhưng tiền vẫn vào được".
+     */
+    @DefaultValue("15m") Duration paymentWindow,
+    @DefaultValue("60s") Duration sweepInterval,
+    @DefaultValue("30s") Duration sweepInitialDelay,
+    @DefaultValue("50") @Min(1) @Max(1000) int sweepBatchSize) {
 
   public SagaProperties {
     cartUrl = requireUrl(cartUrl, "cart-url");
@@ -46,6 +57,9 @@ public record SagaProperties(
     paymentUrl = requireUrl(paymentUrl, "payment-url");
     connectTimeout = requirePositive(connectTimeout, "connect-timeout");
     readTimeout = requirePositive(readTimeout, "read-timeout");
+    paymentWindow = requirePositive(paymentWindow, "payment-window");
+    sweepInterval = requirePositive(sweepInterval, "sweep-interval");
+    sweepInitialDelay = requirePositive(sweepInitialDelay, "sweep-initial-delay");
     if (currency == null || !currency.matches("[A-Za-z]{3}")) {
       throw new IllegalArgumentException(
           "shoplab.saga.currency phải là 3 ký tự (vd VND), nhận: " + currency);

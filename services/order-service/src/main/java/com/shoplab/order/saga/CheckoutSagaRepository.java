@@ -32,6 +32,23 @@ public interface CheckoutSagaRepository {
 
   void markFailed(UUID orderId, CheckoutSagaState state, String failureCode, Instant now);
 
+  /**
+   * Chuyển saga sang trạng thái kết thúc (`CONFIRMED` / `CANCELLED` / `EXPIRED`).
+   *
+   * <p>Không dùng CAS ở đây vì chốt chặn thật nằm ở {@code orders.markStatus} (chỉ 1 lần chuyển, 1
+   * dòng history); saga chỉ phản ánh kết quả đó.
+   */
+  void markState(UUID orderId, CheckoutSagaState state, String failureCode, Instant now);
+
+  /**
+   * Saga còn `COMPLETED_START` + order còn `PENDING_PAYMENT` + tạo trước {@code createdBefore}
+   * (`SL-2.6b` sweeper).
+   *
+   * <p>Join sang {@code orders} được vì **cùng một database** của service này (không phải join
+   * xuyên service — điều bị cấm ở `AGENTS.md` §6).
+   */
+  List<CheckoutSagaRecord> findExpirable(Instant createdBefore, int limit);
+
   Optional<CheckoutSagaRecord> findById(UUID orderId);
 
   void addStep(SagaStepRecord step);

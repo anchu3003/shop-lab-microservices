@@ -13,5 +13,17 @@ public enum CheckoutStep {
   VOUCHER_LOCK,
   STOCK_RESERVE,
   ORDER_CREATE,
-  PAYMENT_INTENT
+  PAYMENT_INTENT,
+  /** `SL-2.6b`: xác minh payment intent đã `SUCCEEDED` (bỏ qua nếu đơn 0 đồng). */
+  PAYMENT_VERIFY,
+  /** `SL-2.6b`: chốt hàng thật (trừ `on_hand`). */
+  STOCK_COMMIT,
+  /** `SL-2.6b`: chốt lượt voucher (`used + 1`). */
+  VOUCHER_COMMIT,
+  /** `SL-2.6b` (cancel): trả hàng theo `reservationId`. */
+  STOCK_RELEASE,
+  /** `SL-2.6b` (cancel): trả lượt voucher. */
+  VOUCHER_RELEASE,
+  /** `SL-2.6b` (sweeper): đơn quá `payment-window` chưa thanh toán ⇒ `EXPIRED`. */
+  EXPIRE
 }

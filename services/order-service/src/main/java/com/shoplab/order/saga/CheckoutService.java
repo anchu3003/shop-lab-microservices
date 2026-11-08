@@ -435,6 +435,9 @@ public class CheckoutService {
       case CART, PRICE, VOUCHER_LOCK, STOCK_RESERVE -> CheckoutSagaState.FAILED_STOCK;
       case ORDER_CREATE -> CheckoutSagaState.FAILED_ORDER;
       case PAYMENT_INTENT -> CheckoutSagaState.FAILED_PAYMENT;
+      // Bước của bước finish (`SL-2.6b`) không bao giờ rơi vào đây: nó không bù bằng cách đổi state
+      // của lần start, mà để saga giữ `COMPLETED_START` cho retry confirm.
+      default -> throw new IllegalStateException("fail() chỉ dùng cho bước start, nhận: " + step);
     };
   }
 
