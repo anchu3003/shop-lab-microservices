@@ -540,6 +540,7 @@ outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
 | Hạng mục | Quyết định | Phase |
 |---|---|---|
 | Authn | JWT access token (TTL 15 phút) + refresh token (TTL 7 ngày), verify ở gateway | 1 |
+| Authn (service-to-service) | **Service token** `client_credentials` (`POST /v1/auth/service-token`, `role=SERVICE`, `aud=<service đích>`, `exp=5m`), client cache tới `exp-30s`, service đích kiểm `aud` — **ADR-0008** (`SL-3.11`) | 3 |
 | Authz | RBAC theo `role` + resource ownership (buyer chỉ thấy đơn của mình) | 1–2 |
 | Password | Hash bằng bcrypt/argon2, không bao giờ log | 1 |
 | Secret | Đọc từ env / secret manager, không commit; `.env.example` chỉ có placeholder | 1 |

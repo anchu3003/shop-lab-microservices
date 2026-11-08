@@ -65,6 +65,22 @@
     </dependency>
 
     <!--
+      spring-security-oauth2-core/jose — CHỈ để compile `ServiceTokenRules` (validator kiểm `aud` của
+      service token, SL-3.11). Optional như các dependency hạ tầng khác: service không dùng JWT
+      (vd `service-template`) không bị kéo thêm.
+    -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-core</artifactId>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-oauth2-jose</artifactId>
+      <optional>true</optional>
+    </dependency>
+
+    <!--
       spring-jdbc — CHỈ để compile `JdbcProcessedEventStore` (dedupe theo `processed_events`, SL-3.2).
       Optional như các dependency hạ tầng khác: service nào không có DB (vd cart) không bị kéo JDBC,
       và bean store tự tắt nhờ `@ConditionalOnClass(JdbcTemplate.class)`.

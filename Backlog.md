@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-3.4` ✅ **Done** — `notification-service` + DLQ + `tools/dlq.sh`) |
-| **Ticket tiếp theo** | `SL-3.5` — `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`**) *(merge bằng `--skip-ci-check` — `TD-28`)* |
+| **Ticket đang làm** | — (`SL-3.11` ✅ **Done** — service token `client_credentials` + `aud`/`exp`) |
+| **Ticket tiếp theo** | `SL-3.5` — `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`** + `TD-25`; dùng service token của `SL-3.11`) *(merge bằng `--skip-ci-check` — `TD-28`)* |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -252,11 +252,12 @@ $ md5sum docs/api/openapi.yaml
 | 3 | `SL-3.2` | `service-commons`: `EventEnvelope` + publisher (confirm) + consumer base (retry → DLQ) + dedupe `processed_events` | M | ✅ Done |
 | 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | ✅ Done |
 | 5 | `SL-3.4` | **`notification-service`** (8089): consumer `order.confirmed` → email mock + retry + **DLQ** + `tools/dlq.sh` | M | ✅ Done |
-| 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`**) | M | Todo |
+| 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`** + `TD-25`) | M | Todo (`SL-3.11` ✅) |
 | 7 | `SL-3.6` | `catalog-service` outbox product event + **`search-service`** (8090, Postgres **FTS**) index + reconcile + `GET /v1/search` | M | Todo |
 | 8 | `SL-3.7` | E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml` | S | Todo |
 | 9 | `SL-3.8` | **Báo cáo async**: latency checkout · độ trễ confirm→email · throughput relay · DLQ = 0 dưới tải | S | Todo |
 | 10 | `SL-3.9` | `docs/runbook-phase-3.md` + **DoD Phase 3** (archive · tag `phase-3` · release) | S | Todo |
+| 12 | `SL-3.11` | **Service-to-service auth**: `client_credentials` (identity) + `aud`/`exp` + validator ở commons (**tách từ `SL-3.5`**) | M | ✅ Done |
 | 11 | `SL-3.10` | *(phát sinh 2026-11-08, quyết định của human)* **process**: tắt CI tạm thời (`CI_ENABLED=false`) để tăng tốc merge Phase 3 + `merge-pr.sh --skip-ci-check` | S | ✅ Done |
 
 **Quyết định đã chốt khi breakdown** *(2026-11-08)*:
@@ -907,9 +908,9 @@ bật lại → notification_logs có thêm: 1     <-- message chờ trong queue
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Todo (đã đủ điều kiện: `SL-3.11` cung cấp service token) |
 | **Phase** | 3 — Async & event-driven |
-| **Phụ thuộc** | `SL-3.2` · `SL-3.3` (khuôn outbox) · `SL-3.4` (khuôn consumer); chặn `SL-3.7`/`SL-3.8` |
+| **Phụ thuộc** | `SL-3.2` · `SL-3.3` (khuôn outbox) · `SL-3.4` (khuôn consumer) · **`SL-3.11`** (token để gọi `commit` không cần user); chặn `SL-3.7`/`SL-3.8` |
 | **Ước lượng** | M |
 
 **Bối cảnh**
@@ -958,6 +959,150 @@ dù tiền đã vào**. Phase 3 là lúc trả món nợ này đúng như điề
 **Kết quả verify** *(điền khi Done)*
 
 **Learning note** *(điền khi Done)*
+
+### SL-3.11 — Service-to-service auth: `client_credentials` + `aud`/`exp` (tách từ `SL-3.5`)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Done ✅ (2026-11-08) |
+| **Phase** | 3 — Async & event-driven |
+| **Phụ thuộc** | `SL-1.4` (JWT/JWKS của identity) · `SL-3.2` (commons); chặn `SL-3.5` · trả một phần `TD-25` |
+| **Ước lượng** | M (tách ra từ `SL-3.5` vì `SL-3.5` + phần auth = `L` — `AGENTS.md` §7) |
+
+**Bối cảnh**
+
+`SL-3.5` cần `order-service` gọi `inventory`/`promotion` `commit` **từ consumer** — nhưng consumer không có token
+người dùng (token 15 phút, khách đã đóng tab). Cùng vấn đề với `checkout` sweeper (`TD-25`: không có token ⇒ không
+gọi được `release`, phải nhờ TTL của service khác). Hệ hiện **chỉ** có 1 loại caller: user cuối. Ba lựa chọn đã
+được so sánh trong phiên plan: internal token dùng chung (A) · endpoint internal riêng (B) · **service token thật
+qua identity, `client_credentials` + `aud`/`exp` (C)** → chốt **C** vì repo là learning lab, ưu tiên hiểu đúng
+(`AGENTS.md` §1): token có hạn, có audience, thu hồi/rotate được, và log biết **service nào** đang gọi.
+
+**Mục tiêu**
+
+Service (không có user) xin được **token ngắn hạn** từ `identity-service`, mang `role=SERVICE` + `aud=<service
+đích>`, và mỗi service đích **từ chối** token phát cho service khác — mà **không** đổi hành vi của token user hiện
+tại.
+
+**In scope**
+
+- `identity-service`: `POST /v1/auth/service-token` (`clientId` + `clientSecret` + `audience`) → JWT RS256
+  `role=SERVICE`, `aud=[audience]`, `exp=5m`, `sub=svc:<clientId>`; registry client theo cấu hình
+  (`shoplab.service-auth.clients.<id>.secret` + `.allowed-audiences`), secret so sánh **hằng thời gian**.
+- `service-commons`: `ServiceTokenClient` (cache token tới `exp - skew`, không xin lại mỗi request) +
+  `ServiceTokenRules.validator(issuer, serviceName)` (kiểm `aud` **chỉ khi** `role=SERVICE`).
+- `inventory-service` + `promotion-service`: dùng validator đó ⇒ token của `order-service` gọi `inventory` bị
+  `promotion` từ chối và ngược lại.
+- `ADR-0008` (quyết định + trade-off + điều kiện revisit) + `architecture.md` §bảo mật.
+- Env/compose cho client secret (12-factor, không hard-code).
+
+**Out of scope**
+
+- Chưa nối `order-service` dùng token này (việc của `SL-3.5`), chưa cho sweeper gọi `release` (chỉ đổi khi
+  `SL-3.5` xong — `TD-25` đóng ở đó).
+- Không dùng Spring Authorization Server, không mTLS (Phase 7), không refresh token cho service, không UI quản lý
+  client.
+
+**Acceptance Criteria**
+
+- [x] `POST /v1/auth/service-token` đúng client + audience ⇒ **200**, token decode được: `role=SERVICE`,
+      `aud=[audience]`, `exp-iat = 5m`, `iss` = issuer của hệ.
+- [x] Sai secret / client lạ ⇒ **401**; `audience` không nằm trong `allowed-audiences` của client ⇒ **400**; thiếu
+      field ⇒ **400**.
+- [x] Gọi `inventory-service` bằng token `aud=inventory-service` ⇒ **404** (auth qua, chỉ thiếu resource — chứng minh
+      token được chấp nhận); bằng token `aud=promotion-service` ⇒ **401 `invalid_token`** (chuẩn OAuth2: token không hợp
+      lệ cho resource này là *invalid token*, không phải 403); token user thường vẫn hoạt động như cũ (không hồi quy).
+- [x] `ServiceTokenClient` cache: 2 lần gọi liên tiếp chỉ **1** request tới identity; token gần hết hạn ⇒ xin mới.
+- [x] `mvn -B -ntp verify` xanh toàn repo + e2e local 3 script không hồi quy.
+
+**Ghi chú kỹ thuật**
+
+- `aud` chỉ kiểm **khi** `role=SERVICE` — token user hiện chưa có `aud`; thêm `aud` cho token user là thay đổi hợp
+  đồng token với 8 service ⇒ tách ticket riêng khi cần.
+- Registry client để **trong config** (không thêm bảng DB): Phase 3 chỉ có 1–2 client; bảng + API quản lý client là
+  hạ tầng của Phase 6/7 (`AGENTS.md` §3.4).
+- `sub=svc:<clientId>` (không phải UUID) ⇒ service nào lỡ coi `sub` là userId sẽ **nổ ngay** chứ không âm thầm ghi
+  dữ liệu sai.
+- **Sai `aud` trả 401, không phải 403** (đo thật trên stack): Spring resource server map lỗi validator thành
+  `invalid_token` ⇒ 401. Đúng chuẩn OAuth2 (token không hợp lệ cho resource này), và 403 để dành cho "đã xác thực nhưng
+  thiếu quyền". Ghi lại vì AC ban đầu mình đoán 403 — đoán sai thì sửa AC, không uốn code cho khớp giấy.
+
+**Kết quả verify** *(điền khi Done)*
+
+CI **đang tắt** (`SL-3.10`/`TD-28`) ⇒ bằng chứng là `mvn verify` + e2e **chạy local** + curl trên stack thật.
+
+**1. Test tự động** — `mvn -B -ntp verify` (12 module):
+
+```
+[INFO] BUILD SUCCESS
+TOTAL: Tests run: 746, Failures: 0, Errors: 0   (614 unit + 132 IT)   <-- +16 so với baseline SL-3.4 (730)
+  · commons: ServiceTokenClientTest (5) + ServiceTokenRulesTest (5)
+  · identity: ServiceAuthServiceTest (4) + IT +2 (claims của service token · reject sai secret/audience/thiếu field)
+```
+
+**2. Cấp token (stack thật)**
+
+```
+POST /v1/auth/service-token {order-service, <secret>, inventory-service}
+tokenType= Bearer expiresIn= 300 audience= inventory-service
+claims: role= SERVICE aud= inventory-service sub= svc:order-service iss= https://identity.shoplab.local
+```
+
+**3. Sai secret / audience ngoài allowlist**
+
+```
+sai secret            → status=401  {"code":"UNAUTHORIZED","message":"clientId hoặc clientSecret không đúng"}
+aud=payment-service   → status=400  {"code":"VALIDATION_ERROR","message":"client order-service không được phép xin
+                                    token cho audience 'payment-service' (cho phép: [inventory-service, promotion-service])"}
+```
+
+**4. Service đích kiểm `aud`**
+
+```
+inventory  + token aud=inventory-service   → 404   (qua auth, chỉ thiếu resource — token ĐƯỢC chấp nhận)
+inventory  + token aud=promotion-service   → 401   {"code":"UNAUTHORIZED"}  (WWW-Authenticate: invalid_token)
+promotion  + token aud=promotion-service   → 403   (qua auth, thiếu role ADMIN — token hợp lệ)
+promotion  + token aud=inventory-service   → 401   (sai audience)
+```
+
+**5. Không hồi quy token người**
+
+```
+admin (token user) + inventory  → 404   ·   admin (token user) + promotion → 404      <-- vẫn qua auth như trước
+```
+
+**6. Regression e2e**
+
+```
+== 17 PASS / 0 FAIL · 13 request · 657 ms      (e2e-smoke)
+== 27 PASS / 0 FAIL · 14 request · 1343 ms     (e2e-checkout)
+== 41 PASS / 0 FAIL / 0 SKIP · 37 request      (e2e-checkout-fail)
+```
+
+**Learning note** *(điền khi Done)*
+
+- **"Biết ai đang gọi" mới là phần khó của service-to-service auth**, không phải "làm sao để gọi được". Bản A (shared
+  secret) mất 30 phút là xong nhưng hệ quả là *mọi* service dùng chung một danh tính: log không phân biệt được ai gọi,
+  và một chỗ rò rỉ = toàn bộ endpoint chỉ-cần-`authenticated()` bị mở. `aud` + `sub=svc:<name>` biến sự kiện "có
+  request nội bộ" thành "**order-service** gọi **inventory** trong 5 phút tới" — đó mới là thứ debug được lúc 3h sáng.
+- **`@ConfigurationProperties` record lồng record = sai đường dẫn bind, và triệu chứng rất dối**: mình bọc
+  `record Clients(Map<String, Client> clients)` trong `ServiceAuthProperties` ⇒ path thật thành
+  `clients.clients.<id>` ⇒ map **rỗng** ⇒ mọi request trả 401 "clientId hoặc clientSecret không đúng". Nhìn log thì
+  tưởng sai secret, thực ra là bind sai. Map phải là **field trực tiếp** của record (hoặc dùng `@Name`). Bài học kèm:
+  với map key có dấu `-`, đặt bằng property phẳng phải dùng `clients[order-service].secret`.
+- **Kiểm `exp`/`aud` trong test phải dùng đồng hồ thật**: `JwtValidators.createDefaultWithIssuer` so `exp` với
+  *now*, nên token dựng bằng mốc cố định (`Instant.parse("2026-11-08T14:00:00Z")`) **hết hạn ngay khi tạo** ⇒ 3 test đỏ
+  mà thông báo chỉ nói "Jwt expired" — đọc dễ tưởng lỗi logic. Mốc thời gian trong test JWT phải là `Instant.now()`.
+- **Chuẩn thắng kỳ vọng của mình**: mình viết AC là "sai audience ⇒ 403", đo thật thì Spring trả **401
+  `invalid_token`** — và nó **đúng** (token không hợp lệ cho resource này; 403 dành cho "đã xác thực nhưng thiếu
+  quyền"). Sửa AC theo thực tế, không uốn code cho khớp giấy. Đo được cả hai ca trên cùng endpoint `promotion`
+  (`hasRole('ADMIN')`): token đúng `aud` ⇒ 403, token sai `aud` ⇒ 401.
+- **Token không bao giờ được gửi kèm message**: nhét bearer vào payload event là biến broker thành kho token và biến
+  mọi consumer thành "có quyền của user". Event chỉ mang `paymentIntentId`/`orderId`; consumer tự xin token của
+  **chính nó**.
+- **Fail-closed ở config rẻ hơn fail-closed ở code**: `secret: ${ORDER_SERVICE_CLIENT_SECRET}` **không có default** ⇒
+  thiếu env là identity không khởi động. Đổi lại phải thêm biến vào `.env.example` + compose; nếu để default
+  `dev-secret` thì mọi máy dev chạy được nhưng production có thể vô tình dùng secret ai cũng biết.
 
 ### SL-3.6 — `catalog` outbox + `search-service` (8090) Postgres FTS + reconcile
 
@@ -1488,6 +1633,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 | 2026-11-08 | SL-3.2 | **`@ConditionalOnBean` là điều kiện *theo thời điểm*, không phải "bean này sẽ có"**: auto-config chạy theo thứ tự, điều kiện chỉ thấy bean đã đăng ký **trước** nó. Thiếu `after`/`afterName` ⇒ điều kiện âm thầm `false` ⇒ store dedupe không được tạo, bảng `processed_events` không xuất hiện, **không một dòng lỗi** — cùng họ với `SL-3.1` (`RabbitAdmin` khai lazy): code đúng, hệ không làm gì, log sạch. Cách phát hiện duy nhất: kiểm **trạng thái của hệ ngoài** (bảng trong DB, exchange trên broker), không kiểm "service healthy". Phụ: Boot 4 đặt `JdbcTemplateAutoConfiguration` ở module `spring-boot-jdbc` ⇒ dùng `afterName` (string) để commons không phải kéo dependency chỉ vì một cái tên. Hai bài học thiết kế: (1) **marker dedupe phải xoá khi xử lý fail** — nếu chỉ `insert` trước handler thì DLQ replay bị chính marker chặn, message nằm trong DLQ mà không bao giờ chạy lại; (2) **`AcknowledgeMode.MANUAL` là điều kiện của DLQ** — auto-ack nghĩa là message "xong" ngay khi listener trả về ⇒ không còn cơ hội `nack` khi fail ⇒ mất message im lặng. |
 
+| 2026-11-08 | SL-3.11 | **Service-to-service auth: phần khó là *biết ai gọi*, không phải *gọi được*** — shared secret (phương án A) xong trong 30 phút nhưng mọi service dùng chung một danh tính: log không phân biệt được ai, và một chỗ rò rỉ mở toàn bộ endpoint chỉ-cần-`authenticated()`. `aud` + `sub=svc:<name>` biến "có request nội bộ" thành "**order-service** gọi **inventory** trong 5 phút tới". Hai bug thật: (1) `@ConfigurationProperties` **record lồng record** (`record Clients(Map…)`) làm path bind thành `clients.clients.<id>` ⇒ map rỗng ⇒ mọi request 401 "sai secret" (triệu chứng dối, đọc log tưởng sai secret); map phải là field trực tiếp, và map key có `-` đặt bằng property phẳng phải viết `clients[order-service].secret`. (2) Test JWT dùng mốc thời gian cố định ⇒ `JwtValidators` so `exp` với *now* ⇒ token "hết hạn ngay khi tạo", 3 test đỏ với thông báo chỉ nói "Jwt expired" ⇒ mốc phải là `Instant.now()`. Và: **chuẩn thắng kỳ vọng** — AC mình viết "sai audience ⇒ 403", đo thật Spring trả **401 `invalid_token`** (đúng: 403 dành cho "đã xác thực thiếu quyền") ⇒ sửa AC, không uốn code cho khớp giấy. |
+
 | 2026-11-08 | SL-3.4 | **Replay DLQ không phải "publish lại payload"** — trong DLQ, `routing_key` của message là **tên queue** (`q.notification`) vì DLX đặt routing key = tên queue (ADR-0007 D2); routing key gốc nằm ở header `x-death[0].routing-keys`. Bản đầu `tools/dlq.sh move` publish lại bằng `routing_key` hiện tại ⇒ `routed=false` ⇒ message **bị ack khỏi DLQ rồi rơi vào hư không**, không một lỗi nào (đúng họ "lỗi im lặng" của `SL-3.1`/`SL-3.2`). Nguyên tắc cho tool vận hành: **peek trước, consume sau** — validate xong mới `ack`, và parse lỗi phải là **no-op**. Kèm bài học bash: `python3 -c "…nhiều dòng…"` trong `"$( … )"` là bẫy thật — parse trả rỗng *sau khi* message đã bị `get` mất; chuyển sang **file python tạm + heredoc quoted** là hết lớp lỗi này. Thứ hai: **property của Boot chỉ áp cho bean của Boot** — `spring.rabbitmq.listener.simple.auto-startup=false` không chạm tới `eventListenerContainerFactory` tự khai (cần `AcknowledgeMode.MANUAL`) ⇒ IT không có broker chết với `FatalListenerStartupException: Authentication failure`, **đỏ cả 17 test** dù logic đúng; phải tự khai công tắc (`shoplab.events.consumer-auto-startup`). Thứ ba, về thiết kế: **dedupe là điều kiện của retry** (marker phải bị xoá khi handler fail, nếu không DLQ replay bị chính marker chặn) và **async đổi "chặn" lấy "im lặng"** — service chết thì confirm vẫn 200 (đúng), message chờ trong queue rồi xử lý khi consumer sống lại, nhưng consumer chết **mãi** thì không ai biết ⇒ phải có metric queue depth (§`SL-3.8`/`SL-3.9`). |
 
 | 2026-11-08 | SL-3.3 | **`eventId` phải ổn định qua các lần thử** — chi tiết quyết định cả pattern: relay sinh `eventId` mới mỗi lần publish lại thì dedupe của consumer **không chặn được gì** (mỗi lần là event "mới") ⇒ gửi email 2 lần. Dùng `outbox.id` làm `eventId` thì mọi lần retry mang cùng id. Hai điều nữa: (1) **claim ≠ publish trong cùng transaction** — claim là transaction ngắn (`UPDATE … SKIP LOCKED` + `claimed_at`) rồi publish **ngoài** transaction, nếu không broker chậm sẽ giữ row lock Postgres (biến sự cố broker thành sự cố DB); (2) **`@Transactional` phải đi qua proxy** — tách `CheckoutOutbox` thành bean riêng vì gọi method `@Transactional` cùng class là **không có transaction nào**, outbox ghi ngoài transaction và mất toàn bộ ý nghĩa. Bug thật đáng nhớ: **thiếu `publisher-confirm-type: correlated`** ⇒ `CorrelationData.getFuture()` không bao giờ complete ⇒ mỗi publish treo đúng 5 s rồi fail; outbox đã biến "mất event" thành "trễ event" (21 lần thử, 0 message mất) — đúng thứ pattern này mua được, nhưng `attempts` cao phải được đọc là **cấu hình sai**. |
@@ -1620,3 +1767,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | `SL-3.10` → `Done`: **tắt CI tạm thời** để tăng tốc merge Phase 3 — kill-switch có sẵn `gh variable set CI_ENABLED --body false` (3 job `skipping`, 0 phút) + **`tools/merge-pr.sh --skip-ci-check`** (mặc định vẫn chặn; có cờ ⇒ in CẢNH BÁO + ghi `CI: BỎ QUA` vào comment evidence hậu merge; vẫn bắt buộc PR mở/không draft + comment tóm tắt + diff không rỗng). Ghi rule: `AGENTS.md` §9 (ngoại lệ + lệnh bật lại) · `.clinerules/10-git-workflow.md` (điều kiện merge thay thế) · `README.md` mục CI · **`TD-28`** (mức `cao`, revisit = **bắt buộc** bật lại khi đóng Phase 3). Verify: `gh variable list` → `CI_ENABLED=false` · push nhánh mới ⇒ **0 run** · `gh pr checks` → 3 job `skipping` · không cờ ⇒ script **chặn** (`run … là 'skipped' (cần 'success')`) · có cờ ⇒ merge được + cảnh báo. |
 | 2026-11-08 | `SL-3.3` → `Done`: **transactional outbox ở `order-service`** — migration `V4__create_outbox.sql` (`outbox` + `status PENDING/SENT` + CHECK `SENT ⇒ sent_at` + index riêng cho `PENDING` + `claimed_at` để 2 relay không gửi trùng) · `OutboxRepository`/`JdbcOutboxRepository` (`claimPending` = 1 câu `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING`, `markSent`, `markFailed` trả claim) · **`CheckoutOutbox`** (bean riêng `@Transactional`: `confirm`/`cancel` ghi order + saga + outbox **cùng transaction** — self-invocation sẽ bỏ qua proxy) · **`OutboxRelay`** (`@Scheduled` 1 s, batch 100, **`eventId = outbox.id`** để retry giữ nguyên id cho dedupe của consumer, lỗi 1 row không chặn row khác) · `OutboxProperties` + env compose. **2 bug thật**: (a) thiếu `spring.rabbitmq.publisher-confirm-type=correlated` ⇒ `getFuture()` không bao giờ complete ⇒ mỗi publish treo 5 s (outbox cứu: event không mất, chỉ trễ); (b) `JdbcOutboxRepository` đòi bean `ObjectMapper` ⇒ IT đỏ 28/28 ⇒ tự tạo mapper. Verify: **mvn verify BUILD SUCCESS · 687 test (566 unit + 121 IT)** · stack thật: confirm ⇒ `PENDING|0` → `SENT|1` + message `q.notification` · **broker chết ⇒ order vẫn `CONFIRMED`**, row `PENDING` `attempts=11`, bật lại ⇒ `SENT` · cancel ⇒ `order.cancelled.v1|SENT` · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-29` (chưa có job dọn row `SENT`). |
 | 2026-11-08 | `SL-3.4` → `Done`: **`notification-service` (8089)** — service mới (`notification` DB riêng, Flyway `V1`: `notification_logs` + `notification_templates` seed 2 mẫu + `processed_events`) · consumer `q.notification` (`order.confirmed.v1` / `order.cancelled.v1`) **không viết lại hạ tầng**: chỉ override `consumerName()`/`handledEventTypes()`/`handleEvent()` trên `AbstractEventConsumer` (~60 dòng, 0 dòng retry/DLQ/dedupe) · `TemplateRenderer` placeholder `{{var}}` (không engine) · `GET /v1/notifications/me` (userId từ claim `sub`, `?limit` bị chặn bởi trần cấu hình) · `SHOPLAB_NOTIFICATION_FAIL_MODE` **fail-closed** (chỉ `env=local`) để test retry/DLQ · **`tools/dlq.sh`** `list|peek|move|purge` — replay đọc **routing key gốc từ `x-death`**, `peek` trước rồi mới `ack`. Hạ tầng: commons thêm cờ `shoplab.events.consumer-auto-startup` (property `spring.rabbitmq.listener.simple.auto-startup` của Boot **không** áp cho container factory tự khai ⇒ IT đỏ 17 test), compose + gateway route + CI matrix + `.env.example`. **Bug thật**: `dlq.sh move` bản đầu publish bằng `routing_key` hiện tại = tên queue ⇒ `routed=false` ⇒ **mất message**; parse `python3 -c` nhiều dòng trong `$( )` cũng làm rơi 1 message (chuyển sang file python tạm). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 730 test (600 unit + 130 IT)** · async thật: publish → row sau **239 ms** · dedupe: cùng `eventId` 2 lần ⇒ **1 row** · fail-mode ⇒ `ready=0 unacked=0` + `q.notification.dlq ready=1`, `dlq.sh move` ⇒ DLQ `1→0` + `notification_logs` +1 · `docker stop` notification ⇒ confirm vẫn **200**, bật lại ⇒ message được xử lý · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-30` (retention `notification_logs` + `processed_events`).
+| 2026-11-08 | `SL-3.11` → `Done`: **service-to-service auth** (`client_credentials` + `aud`/`exp`, **ADR-0008**) — `identity-service`: `POST /v1/auth/service-token` (`clientId`+`clientSecret`+`audience`) ⇒ JWT RS256 `role=SERVICE`, `aud=[service đích]`, `exp=5m`, `sub=svc:<client>`, `jti`; registry client trong config (`shoplab.service-auth.clients[<id>].secret` từ env + `allowed-audiences`), secret so sánh **hằng thời gian**, client lạ/sai secret trả **cùng** 401; `service-commons`: `ServiceTokenClient` (cache tới `exp-30s`, một khoá cho lần nạp, **không cache lỗi**, `invalidate` khi 401) + `HttpServiceTokenSource` (JDK `HttpClient`) + `ServiceTokenRules.validator(issuer, serviceName)` (kiểm `aud` **chỉ khi** `role=SERVICE`); `inventory` + `promotion` dùng validator đó. Compose/`.env.example`: `ORDER_SERVICE_CLIENT_SECRET` (**không default** ⇒ thiếu env là identity không khởi động). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 746 test (614 unit + 132 IT)** · stack thật: token `expiresIn=300 role=SERVICE aud=inventory-service sub=svc:order-service` · sai secret **401**, `aud=payment-service` **400** (allowlist) · `inventory` + đúng `aud` **404** (qua auth) vs sai `aud` **401 `invalid_token`** · `promotion` + đúng `aud` **403** (thiếu role ADMIN) vs sai `aud` **401** · token user không hồi quy (404) · e2e 17/17 · 27/27 · 41/41. **2 bug thật**: record lồng record làm bind `clients.clients.*` ⇒ map rỗng ⇒ 401 "sai secret"; test JWT mốc cố định ⇒ token hết hạn ngay khi tạo. |

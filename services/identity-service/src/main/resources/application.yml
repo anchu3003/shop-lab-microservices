@@ -70,6 +70,20 @@ shoplab:
     private-key-path: ${IDENTITY_JWT_PRIVATE_KEY_PATH:infra/keys/dev-private.pem}
     public-key-path: ${IDENTITY_JWT_PUBLIC_KEY_PATH:infra/keys/dev-public.pem}
 
+  # SL-3.11: registry client service-to-service (client_credentials). Secret CHỈ đọc từ env
+  # (AGENTS.md §9 — không commit secret). Thêm client mới = thêm block ở đây + restart.
+  service-auth:
+    service-token-ttl: ${SHOPLAB_SERVICE_TOKEN_TTL:5m}
+    clients:
+      order-service:
+        # Không có default: thiếu env ⇒ app fail lúc khởi động (fail-closed), không âm thầm dùng secret
+        # mặc định ai cũng biết.
+        secret: ${ORDER_SERVICE_CLIENT_SECRET}
+        # order-service cần gọi đúng 2 service này khi auto-confirm đơn (SL-3.5) và release (TD-25).
+        allowed-audiences:
+          - inventory-service
+          - promotion-service
+
   readiness:
     dependencies:
       # Phase 1 giữ check mức TCP (như template). Check sâu (SELECT 1) để SL-1.5 — khi có
