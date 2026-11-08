@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-3.0` ✅ **Done** — ADR-0007 contract event) |
-| **Ticket tiếp theo** | `SL-3.1` — RabbitMQ: topology (exchange/queue/DLQ) + `tools/rabbit-topology.sh` |
+| **Ticket đang làm** | — (`SL-3.1` ✅ **Done** — RabbitMQ topology + `tools/rabbit-topology.sh`) |
+| **Ticket tiếp theo** | `SL-3.2` — `service-commons`: `EventEnvelope` + publisher + consumer base + dedupe |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -19,7 +19,7 @@
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
-| 3 | Async & event-driven | 🟡 Đang làm (breakdown xong 10 ticket) | 1 / 10 |
+| 3 | Async & event-driven | 🟡 Đang làm (breakdown xong 10 ticket) | 2 / 10 |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
@@ -248,7 +248,7 @@ $ md5sum docs/api/openapi.yaml
 | # | Ticket | Nội dung | Ước lượng | Trạng thái |
 |---|---|---|---|---|
 | 1 | `SL-3.0` | **ADR-0007** — contract event: envelope · đặt tên · **outbox relay** (polling) · **DLQ policy** · dedupe | S | ✅ Done |
-| 2 | `SL-3.1` | **RabbitMQ**: topology (exchange/queue/DLQ) + healthcheck + `tools/rabbit-topology.sh` | S | Todo |
+| 2 | `SL-3.1` | **RabbitMQ**: topology (exchange/queue/DLQ) + healthcheck + `tools/rabbit-topology.sh` | S | ✅ Done |
 | 3 | `SL-3.2` | `service-commons`: `EventEnvelope` + publisher (confirm) + consumer base (retry → DLQ) + dedupe `processed_events` | M | Todo |
 | 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | Todo |
 | 5 | `SL-3.4` | **`notification-service`** (8089): consumer `order.confirmed` → email mock + retry + **DLQ** + `tools/dlq.sh` | M | Todo |
@@ -392,7 +392,7 @@ $ grep -c '| **A\.' docs/adr/0007-event-contract.md     # mỗi D có phương �
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done (2026-11-08) |
 | **Phase** | 3 — Async & event-driven |
 | **Phụ thuộc** | `SL-3.0` (tên exchange/queue chốt ở ADR-0007); chặn `SL-3.2`+ |
 | **Ước lượng** | S |
@@ -423,11 +423,11 @@ Broker chạy được, có topology khai báo bằng code, và có **một lệ
 
 **Acceptance Criteria**
 
-- [ ] `docker compose ps` → `shoplab-rabbitmq` **healthy**; `docker restart` xong queue + binding **vẫn còn**.
-- [ ] `bash tools/rabbit-topology.sh` in ra: 1 exchange `shoplab.events` · 1 `shoplab.dlx` · 3 queue + 3 DLQ · binding đúng routing key.
-- [ ] Publish 1 message test (không có consumer) → `ready = 1`; consume bằng UI/script → `ready = 0`, `ack` thành công.
-- [ ] Message vào queue khi **không** có consumer vẫn còn sau `docker restart` broker (durable + persistent).
-- [ ] `mvn verify` không đổi (chưa có code nghiệp vụ); `e2e-smoke`/`e2e-checkout` không regress.
+- [x] `docker compose ps` → `shoplab-rabbitmq` **healthy**; `docker restart` xong queue + binding **vẫn còn**.
+- [x] `bash tools/rabbit-topology.sh` in ra: 1 exchange `shoplab.events` · 1 `shoplab.dlx` · 3 queue + 3 DLQ · binding đúng routing key.
+- [x] Publish 1 message test (không có consumer) → `ready = 1`; consume bằng UI/script → `ready = 0`, `ack` thành công.
+- [x] Message vào queue khi **không** có consumer vẫn còn sau `docker restart` broker (durable + persistent).
+- [x] `mvn verify` không đổi (chưa có code nghiệp vụ); `e2e-smoke`/`e2e-checkout` không regress.
 
 **Ghi chú kỹ thuật**
 
@@ -436,9 +436,81 @@ Broker chạy được, có topology khai báo bằng code, và có **một lệ
 - `unacked` là chỉ số hay bị bỏ qua: nó là **consumer đang giữ message** (đang retry) — DLQ chỉ tăng khi message bị
   `nack` hẳn.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(chạy thật 2026-11-08 — 12 container healthy)*
 
-**Learning note** *(điền khi Done)*
+**1) Topology có thật trên broker** (`bash tools/rabbit-topology.sh`):
+
+```console
+== Exchanges (shoplab.*)
+  shoplab.dlx          type=direct   durable=True
+  shoplab.events       type=topic    durable=True
+== Queues (ready · unacked · consumers)
+  q.notification / q.notification.dlq / q.order / q.order.dlq / q.search / q.search.dlq   (6 queue, ready=0)
+== Bindings
+  shoplab.dlx    --q.notification       --> q.notification.dlq
+  shoplab.dlx    --q.order              --> q.order.dlq
+  shoplab.dlx    --q.search             --> q.search.dlq
+  shoplab.events --order.cancelled.v1   --> q.notification
+  shoplab.events --order.confirmed.v1   --> q.notification
+  shoplab.events --payment.succeeded.v1 --> q.order
+  shoplab.events --product.archived.v1  --> q.search
+  shoplab.events --product.updated.v1   --> q.search
+```
+
+**2) Publish → restart broker → message vẫn còn → drain ack:**
+
+```console
+$ bash tools/rabbit-topology.sh publish product.updated.v1
+publish product.updated.v1 -> {"routed":true}          →  q.search ready=1
+$ docker restart shoplab-rabbitmq                      # → healthy lại sau ~15 s
+$ curl …/api/queues/%2F/q.search | …                   # messages=2 ready=2  ← KHÔNG mất
+$ bash tools/rabbit-topology.sh drain q.search 2
+  ack  routing_key=product.updated.v1  payload={"ping": true}
+  ack  routing_key=product.updated.v1  payload={"ping": true}
+$ bash tools/rabbit-topology.sh | grep 'q.search '     # ready=0  (ack xong)
+```
+
+**3) Bẫy im lặng `routed=false`** (gõ sai routing key) — tool in cảnh báo ngay:
+
+```console
+$ bash tools/rabbit-topology.sh publish product.updated.v9
+publish product.updated.v9 -> {"routed":false}
+  (routed=false nghĩa là KHÔNG queue nào bind routing key đó — sai tên key!)
+```
+
+**4) Test + không regress:**
+
+```text
+$ mvn -B -ntp verify          BUILD SUCCESS · 11 module · 662 test (544 unit + 118 IT) · 0 fail
+                              service-commons 54 unit (+7: EventTopologyAutoConfigurationTest 5 · EventTopologyDeclarerTest 2)
+$ e2e-smoke 17/17 · e2e-checkout 27/27 · e2e-checkout-fail 41/41
+```
+
+**Sự cố trong lúc verify (1 lỗi thiết kế + 2 lỗi phụ)**
+
+1. **Topology KHÔNG xuất hiện dù code đã khai** — image có đủ `spring-rabbit`, nhưng script in rỗng. Nguyên nhân:
+   `RabbitAdmin` khai **lazy**, chỉ khi có connection đầu tiên; SL-3.1 chưa có publisher/consumer ⇒ **không ai mở
+   connection** ⇒ không khai. → Thêm `EventTopologyDeclarer` gọi `amqpAdmin.initialize()` lúc `SmartInitializingSingleton`.
+2. **Message "mất" sau restart** (đọc `ready=0` ngay sau khi broker healthy): thực ra **không mất** — `/api/queues`
+   tổng hợp số liệu ~5 s/lần nên trả số cũ. Kiểm bằng `messages` + `drain` mới đúng.
+3. **Tool sai escaping**: `python3 -c '…'` trong single quote làm `\"` thành literal ⇒ `SyntaxError`; chuyển sang
+   `.format()` + double quote, `publish` nhận body qua heredoc.
+
+**Learning note**
+
+- **"Khai bằng code" không có nghĩa là "đã khai"**: `Declarables` chỉ là *ý định*; việc khai thật do `RabbitAdmin`
+  làm **lazy** khi mở connection. Service chỉ-khai-topology (chưa publish/consume) sẽ im lặng không có queue nào ⇒
+  phải kiểm bằng **trạng thái của hệ ngoài** (management API), không kiểm bằng "code đã chạy".
+- **Fail mềm là quyết định, không phải tiện tay**: broker chết lúc start **không** được làm service chết (async không
+  nằm trên đường critical — ADR-0007). Nhưng fail mềm có giá: lỗi chỉ còn 1 dòng `WARN` ⇒ phải có tool để *nhìn thấy*
+  hậu quả.
+- **Monitoring có độ trễ riêng**: `ready/unacked` lag ~5 s sau restart ⇒ đọc "0 message" **không** chứng minh mất dữ
+  liệu. Trước khi kết luận, kiểm bằng đường thứ hai (`messages` hoặc `drain` để ack thật).
+- **Tool vận hành phải tự bảo vệ người dùng**: `routed=false` của RabbitMQ là lỗi **im lặng** (message rơi vào hư
+  không, không exception) ⇒ tool in cảnh báo ngay cạnh kết quả và có `dlq`/`drain`/`purge` để không phải mở UI làm tay.
+- **Test topology không cần broker**: `Declarables` là dữ liệu thuần ⇒ unit test khẳng định tên/durability/DLX-args/
+  binding. Đây là test **hợp đồng** với ADR-0007 — routing key sai 1 ký tự đỏ ngay trong CI thay vì lặng lẽ mất message.
+
 
 ### SL-3.2 — `service-commons`: envelope + publisher + consumer base + dedupe
 
@@ -1081,6 +1153,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 | 2026-11-08 | SL-3.0 | **ADR là chỗ *loại* phương án, không phải chỗ khoe phương án đã chọn**: 4/5 hạng mục có phương án ghi rõ “❌ Không dùng” kèm lý do (publish-trong-transaction: broker **không** tham gia transaction DB ⇒ hoặc mất event, hoặc bịa event). Mỗi quyết định phải kéo theo một **điều kiện bỏ định lượng được** (p95 > 5 s · > 30% CPU · > 500 msg/s · > 20 event · > 50 msg DLQ/tuần) — không có số thì “khi cần” = không bao giờ. Chốt contract trước khi code là rẻ nhất: ~185 dòng ADR khoá 6 ticket phía sau; đổi routing key hay bỏ outbox sau khi có code = migrate message + sửa 3 service + sửa E2E. Và: **doc cũ có thể mâu thuẫn với chính nó** (§9.4 ghi “schema registry từ Phase 3” trong khi quyết định là không dùng) ⇒ sửa ngay trong ticket, không để “lát nữa”. Cuối cùng: soạn doc cũng cần verify — 2 lỗi (chèn section vào giữa bảng, lọt 1 từ tiếng Trung) **không** bị lint/CI bắt, chỉ `grep -n '^## '` + đọc lại mới thấy ⇒ PR docs-only không có CI thì bước tự đọc lại là **bắt buộc**. |
 
+| 2026-11-08 | SL-3.1 | **"Khai bằng code" không có nghĩa là "đã khai"**: `Declarables` chỉ là *ý định*, `RabbitAdmin` khai **lazy** — chỉ khi có connection đầu tiên. Service chưa publish/consume (đúng trạng thái SL-3.1) ⇒ không ai mở connection ⇒ **không có queue nào**, log sạch, app healthy. Phải kiểm bằng **trạng thái của hệ ngoài** (management API), không kiểm bằng "code đã chạy". Fix: gọi `amqpAdmin.initialize()` ở `SmartInitializingSingleton` — nhưng **fail mềm** (broker chết không làm service chết, ADR-0007), và cái giá của fail mềm là lỗi chỉ còn 1 dòng WARN ⇒ bắt buộc phải có tool để *nhìn thấy* hậu quả. Thêm nữa: **monitoring có độ trễ riêng của nó** — `ready/unacked` của RabbitMQ management API lag ~5 s sau restart, nên đọc "0 message" ngay sau restart **không** chứng minh mất dữ liệu; phải kiểm bằng đường thứ hai (`messages`, hoặc `drain` để ack thật). Và: `routed=false` khi publish sai routing key là lỗi **im lặng** (message rơi vào hư không, không exception) ⇒ tool phải cảnh báo ngay cạnh kết quả. |
+
 ## 7. Technical debt register
 
 > Quy tắc ghi nhận: [`.clinerules/20-tech-debt.md`](.clinerules/20-tech-debt.md). Mỗi món nợ **phải có
@@ -1202,3 +1276,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 | 2026-11-08 | `SL-2.8` → `Done`: **E2E checkout** — `tools/e2e-checkout.sh` (27 check: tiền · saga · idempotency · mock-pay · confirm · order · tồn kho) + workflow **`e2e.yml`** (compose 10 thành phần + 2 script; `workflow_dispatch` + `schedule` hằng tuần, **không** chạy mỗi PR vì ≈30 phút/run) ⇒ **trả `TD-4`**; verify OpenAPI **41 path/50 operation** + matrix `build-image` **9 service** (đã có, chỉ kiểm). Verify: `e2e-checkout` **27 PASS / 0 FAIL** (931 ms) · `e2e-smoke` 17/17 · `e2e.yml` parse OK · `compose config` OK. **Sự cố**: fail giả do Python đổi số tiền thành float ⇒ `parse_float=str`; CI `build-image` flaky do Maven Central hiccup (rerun xanh) ⇒ `TD-26`. |
 | 2026-11-08 | `SL-3.0` → `Done`: **ADR-0007 — contract event Phase 3** (`docs/adr/0007-event-contract.md`, 185 dòng): chốt **5 quyết định** — (D1) envelope JSON 7 field (`eventId · eventType · version · occurredAt · producer · traceId · payload`, không field nghiệp vụ) · (D2) exchange topic `shoplab.events` + `shoplab.dlx`, queue **theo consumer** (`q.notification`/`q.order`/`q.search`) + `<queue>.dlq`, routing key `<aggregate>.<event>.v<N>` · (D3) **at-least-once** + consumer **bắt buộc** dedupe `eventId` (`processed_events` PK `(event_id, consumer)`) · (D4) outbox **polling relay** (`@Scheduled` 1 s, batch 100, `FOR UPDATE SKIP LOCKED`, `SENT` chỉ sau publisher confirm, lỗi giữ `PENDING`) · (D5) retry 3 lần trong consumer (200 ms/1 s/3 s) → DLQ, **không auto-replay**, replay tay qua `tools/dlq.sh` có 3 điều kiện kiểm trước. Kèm **bảng 5 event** (`order.confirmed.v1` · `order.cancelled.v1` · `payment.succeeded.v1` · `product.updated.v1` · `product.archived.v1`) + chính sách versioning (không sửa `.v1`, phát `.v2` song song). Mỗi hạng mục có bảng Options ≥ 3 phương án **có loại** + Revisit định lượng. Update `architecture.md`: **§9.4** (bỏ “schema registry từ Phase 3” → version trong envelope + link ADR), §11.2 (link ADR-0007), header `DRAFT v0.5`, Changelog. Verify: ADR 5 mục đúng template · 5/5 hạng mục có bảng trade-off · link check 0 broken. Không code. |
+| 2026-11-08 | `SL-3.1` → `Done`: **RabbitMQ topology bằng code** — `service-commons` thêm `spring-boot-starter-amqp` (**optional**) + `events/EventTopology` (tên exchange/queue/routing key = nguồn sự thật duy nhất, lấy từ ADR-0007) + `EventTopologyAutoConfiguration` (`@ConditionalOnClass(Declarables)` · `@ConditionalOnProperty(shoplab.events.topology.enabled)`) khai `shoplab.events` (topic) + `shoplab.dlx` (direct) + 3 queue (`q.notification`/`q.order`/`q.search`, durable, DLX `shoplab.dlx` routing key = tên queue) + 3 `.dlq` + **5 binding**; thêm `EventTopologyDeclarer` gọi `amqpAdmin.initialize()` lúc startup (**bug thật**: `RabbitAdmin` khai lazy, không có consumer/publisher ⇒ không khai gì). `order-service` là service đầu tiên khai (`spring.rabbitmq.*` + env compose + `depends_on: rabbitmq healthy`). Tool mới **`tools/rabbit-topology.sh`** (`show` · `dlq` · `publish` · `drain` · `purge`, curl + python3). README thêm mục **Broker (RabbitMQ)** + bảng đọc `ready`/`unacked`/`consumers` + **4 bẫy**. Verify: topology đúng ADR (2 exchange · 6 queue · 8 binding) · publish → `ready=1` → `docker restart` broker → `messages=2` **không mất** → `drain` ack → `ready=0` · `routed=false` khi sai key · `mvn verify` **BUILD SUCCESS · 662 test (544 unit + 118 IT)** · `e2e-smoke` 17/17 · `e2e-checkout` 27/27 · `e2e-checkout-fail` 41/41. |

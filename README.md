@@ -278,6 +278,43 @@ docker run --rm -it --network host redis:7-alpine \
 
 Muốn dùng client native: `sudo apt install -y postgresql-client redis-tools`.
 
+
+### Broker (RabbitMQ) — `SL-3.1`
+
+`rabbitmq` chạy từ Phase 0 nhưng **chỉ từ `SL-3.1`** mới thật sự có topology (exchange/queue/DLQ). Topology
+được **khai bằng code** trong `service-commons` (`EventTopologyAutoConfiguration`, tên lấy từ
+[ADR-0007](docs/adr/0007-event-contract.md)) — service nào có `spring-boot-starter-amqp` + bật
+`shoplab.events.topology.enabled` (mặc định bật) thì khai; hiện `order-service` là service đầu tiên.
+
+```bash
+bash tools/rabbit-topology.sh                     # exchange + queue (ready/unacked/consumers) + binding
+bash tools/rabbit-topology.sh dlq                 # chỉ xem các queue .dlq
+bash tools/rabbit-topology.sh publish order.confirmed.v1       # gửi 1 message test
+bash tools/rabbit-topology.sh drain q.notification 1           # lấy & ack 1 message (kiểm tra consume được)
+bash tools/rabbit-topology.sh purge q.notification             # xoá sạch message trong queue
+# UI (chỉ local): http://localhost:15672 — user `shoplab`, password trong .env
+```
+
+**Đọc 3 con số** (bảng `queues`):
+
+| Số | Nghĩa | Khi nào đáng lo |
+|---|---|---|
+| `ready` | message đang chờ consumer | tăng liên tục ⇒ consumer chết/chậm |
+| `unacked` | consumer **đang giữ** (đang xử lý hoặc đang retry) | > 0 lâu ⇒ consumer treo (giữ message không `ack`) |
+| `consumers` | số consumer đang attach | `0` trên queue nghiệp vụ ⇒ service tương ứng chưa chạy |
+
+**Bốn bẫy đã gặp** (đừng mất thời gian tìm lại):
+
+1. **Topology không xuất hiện dù code đã khai**: `RabbitAdmin` khai **lazy** — chỉ khi có connection đầu tiên.
+   Service chưa publish/consume ⇒ không ai mở connection ⇒ không có queue. Fix: `EventTopologyDeclarer` gọi
+   `amqpAdmin.initialize()` lúc khởi động (fail mềm, broker chết không làm service chết).
+2. **Số liệu `/api/queues` lag ~5 s** sau restart: vừa `docker restart` xong đọc thấy `ready=0` **không** có
+   nghĩa là message mất — chờ vài giây hoặc kiểm bằng `drain`.
+3. **Đổi `durable`/argument của queue đã tồn tại** ⇒ `PRECONDITION_FAILED`. Máy dev: xoá queue (UI hoặc
+   `docker compose down -v`) rồi để service khai lại.
+4. **`routed=false` khi publish** = không queue nào bind routing key đó (thường là gõ sai routing key) —
+   message **mất im lặng**, không lỗi nào được ném ra.
+
 **RAM baseline** (đo lúc idle, `docker stats --no-stream`, WSL2/Docker 29.9.2):
 
 | Container | RAM idle |
