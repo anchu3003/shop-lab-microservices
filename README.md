@@ -870,6 +870,11 @@ q.notification`. Không có trap thì lần chạy sau thấy DLQ đầy message
 > notification-service`): property bind lúc khởi động, không có endpoint runtime để đổi. Vì vậy trong
 > `e2e.yml` bước này chạy **cuối cùng**, sau 3 script kia.
 
+**Số liệu thật của async** (latency, độ trễ event, throughput relay, DLQ): xem
+[`docs/reports/async-phase-3.md`](docs/reports/async-phase-3.md) — đo bằng
+`bash tools/bench-async.sh` (`SL-3.8`). Tóm tắt: async **không** làm checkout nhanh hơn (p50 42,7 → 43,1 ms);
+nó mua **decoupling** (consumer chết, checkout p95 vẫn 44,6 ms) và **độ trễ có trần** (~1 s/chặng).
+
 ### E2E smoke — `SL-1.3` → `SL-1.7`
 
 Bằng chứng end-to-end **cả Phase 1** bằng **1 lệnh**: `client → gateway → identity/catalog → DB`.

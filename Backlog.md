@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-3.7` ✅ **Done** — `tools/e2e-async.sh` 48 assert · 4 luồng async) |
-| **Ticket tiếp theo** | `SL-3.8` — Báo cáo before/after async (số liệu đo thật) *(merge bằng `--skip-ci-check` — `TD-28`)* |
+| **Ticket đang làm** | — (`SL-3.8` ✅ **Done** — báo cáo async `docs/reports/async-phase-3.md` + `tools/bench-async.sh`) |
+| **Ticket tiếp theo** | `SL-3.9` — `docs/runbook-phase-3.md` + DoD Phase 3 (archive · tag `phase-3` · release) *(merge bằng `--skip-ci-check` — `TD-28`)* |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -19,7 +19,7 @@
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
-| 3 | Async & event-driven | 🟡 Đang làm (12 ticket) | 9 / 12 |
+| 3 | Async & event-driven | 🟡 Đang làm (12 ticket) | 10 / 12 |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
@@ -255,7 +255,7 @@ $ md5sum docs/api/openapi.yaml
 | 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`** + `TD-25`) | M | ✅ Done |
 | 7 | `SL-3.6` | `catalog-service` outbox product event + **`search-service`** (8091, Postgres **FTS**) index + reconcile + `GET /v1/search` | M | ✅ Done |
 | 8 | `SL-3.7` | E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml` | S | ✅ Done |
-| 9 | `SL-3.8` | **Báo cáo async**: latency checkout · độ trễ confirm→email · throughput relay · DLQ = 0 dưới tải | S | Todo |
+| 9 | `SL-3.8` | **Báo cáo async**: latency checkout · độ trễ confirm→email · throughput relay · DLQ = 0 dưới tải | S | ✅ Done |
 | 10 | `SL-3.9` | `docs/runbook-phase-3.md` + **DoD Phase 3** (archive · tag `phase-3` · release) | S | Todo |
 | 12 | `SL-3.11` | **Service-to-service auth**: `client_credentials` (identity) + `aud`/`exp` + validator ở commons (**tách từ `SL-3.5`**) | M | ✅ Done |
 | 11 | `SL-3.10` | *(phát sinh 2026-11-08, quyết định của human)* **process**: tắt CI tạm thời (`CI_ENABLED=false`) để tăng tốc merge Phase 3 + `merge-pr.sh --skip-ci-check` | S | ✅ Done |
@@ -1511,7 +1511,7 @@ job name: compose up (11 thành phần) + smoke + checkout + async
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done ✅ (2026-11-09) |
 | **Phase** | 3 — Async & event-driven |
 | **Phụ thuộc** | `SL-3.3`…`SL-3.7` (phải có luồng async chạy được mới đo) |
 | **Ước lượng** | S |
@@ -1555,7 +1555,89 @@ job name: compose up (11 thành phần) + smoke + checkout + async
 
 **Kết quả verify** *(điền khi Done)*
 
+CI **đang tắt** (`SL-3.10`/`TD-28`) ⇒ bằng chứng = chạy `tools/bench-async.sh` trên stack thật + `mvn verify`.
+
+**1. Chạy đo đầy đủ** — `bash tools/bench-async.sh` (50 / 20 / 500 / 100 · cửa sổ DLQ 300 s):
+
+```
+PASS=20 FAIL=0    (M1 · M2 · M3 · M4 · M5, mỗi phép có 1–4 assert)
+raw: /tmp/bench-async-1794245983/   summary.md = bảng đã in
+commit f1aee5e · 2026-11-09T17:40:39Z · WSL2 i5-12600K 12 thread 19 GB · Docker 29.9.3
+```
+
+**2. Latency checkout (before = notification-service stopped / after = đang chạy)**
+
+```
+tuần tự   before n=50 p50=42.7 p95=48.9 max=51.9 ms   |  after p50=43.1 p95=59.6 max=63.5 ms
+đồng thời before n=20 p50=178.4 p95=197.6            |  after p50=182.2 p95=203.6           (20 buyer riêng)
+⇒ p50 +0,9% · p95 +21,9% nhưng cả hai < 60 ms  (khi consumer CHẾT p95 = 44,6 ms ⇒ chênh lệch là nhiễu tải)
+```
+
+**3. Độ trễ event (server-side)**
+
+```
+confirm → email        n=70 p50=551.9 p95=1010.6 max=1057.6 ms   (relay 1 s ⇒ trần ~1 s/chặng)
+webhook → CONFIRMED    n=70 p50=28.6  p95=45.9   max=49.9   ms
+```
+
+**4. Throughput relay**
+
+```
+500 product.updated.v1 · relay gửi hết 7,85 s ⇒ 63,7 msg/s · đuôi 0,26 s · PENDING còn 0
+producer bơm 65,7 request/s · trần lý thuyết = batch 100 × nhịp 1 s = 100 msg/s ⇒ nghẽn ở RELAY, không phải broker
+```
+
+**5. DLQ = 0 + không mất/trùng (100 checkout + 100 update, 300 s)**
+
+```
+DLQ max = 0 (q.notification.dlq · q.order.dlq · q.search.dlq)
+order.confirmed.v1    phát 100 / xử lý 100
+payment.succeeded.v1  phát 100 / xử lý 100
+product.updated.v1    phát 100 / xử lý 100
+notification_logs     100 row / 100 event_id duy nhất
+```
+
+**6. Degradation**
+
+```
+stop notification-service → 20 checkout: p50=35.8 p95=44.6 ms (KHÔNG tệ hơn lúc bình thường)
+q.notification ready=20 · unacked=0
+start lại → drain 9,3 s (gồm ~6 s Spring Boot khởi động) · email 20/20 đơn
+```
+
+**7. Script + repo**
+
+```
+bash -n tools/bench-async.sh        → OK
+smoke 20/20 với n nhỏ (5/5/20/5 · 30 s) trước khi chạy full — đã sửa 4 lỗi script (xem learning note)
+mvn -B -ntp verify                 → BUILD SUCCESS (805 test · 662 unit + 143 IT)   [nhánh chỉ thêm tools + docs]
+```
+
 **Learning note** *(điền khi Done)*
+
+- **Câu "async cho nhanh" sai về bản chất, và số đo nói đúng thế**: p50 checkout 42,7 → 43,1 ms (+0,9%). Email/index
+  chưa bao giờ nằm trên đường checkout ⇒ **không có gì để tăng tốc**. Thứ async mua được là **isolation** (consumer chết,
+  checkout p95 vẫn 44,6 ms) và **độ trễ có trần** (p95 confirm→email 1011 ms ≈ relay 1 s). Báo cáo phải viết được cả hai
+  vế này, nếu chỉ khoe "p95 < 60 ms" là báo cáo dở.
+- **Đo "before" khi không thể revert code**: chọn trạng thái *không có ai tiêu thụ event* (`docker stop
+  notification-service`) và **nói rõ định nghĩa** ngay đầu báo cáo. Đây cũng chính là phép thử decoupling — một mũi tên
+  trúng hai đích, thay vì bịa ra số "trước Phase 3".
+- **`p95` chênh +10,7 ms là nhiễu, và phải chứng minh bằng số khác**: khi consumer **chết** p95 = 44,6 ms (thấp hơn cả
+  lúc chạy) ⇒ chênh lệch đến từ tải consumer trên **cùng** Postgres, không phải phụ thuộc đồng bộ. Nếu không có phép đo
+  M5, con số +21,9% sẽ bị đọc thành "async làm chậm checkout" — sai.
+- **Nghẽn phải chỉ đúng tên**: 63,7 msg/s so với trần 100 msg/s (batch 100 × 1 s) + đuôi chỉ 0,26 s ⇒ nghẽn là **relay
+  polling**, không phải broker. Muốn nói "broker chậm" thì phải thấy `publisher confirm` treo, không phải suy đoán.
+- **Đo độ trễ event phải ghép 2 database**: `notification_logs` và `order_status_history` nằm ở 2 DB riêng (database per
+  service) ⇒ xuất `(order_id, epoch)` từ mỗi bên rồi trừ trong python. Đây là hệ quả trực tiếp của kiến trúc, phải chấp
+  nhận chứ không "JOIN cho nhanh" (không làm được).
+- **4 lỗi script tự gây ra, sửa bằng cách chạy smoke trước**: (1) `local a="$1" b=$(( ... + b ))` — `set -u` nổ vì bash
+  expand cả command trước khi chạy `local`; (2) `psql -tA` mặc định separator `|` trong khi parser tách theo dấu cách ⇒
+  M2 ra **n=0** (không lỗi, chỉ ra số vô nghĩa — nguy hiểm hơn lỗi); (3) chờ `queue ready=0` không đủ vì event còn trong
+  outbox ⇒ M2 n=1/3, phải chờ **email xuất hiện**; (4) checkout đồng thời chỉ tạo đơn mà không thanh toán ⇒ 20 đơn treo
+  `PENDING_PAYMENT` và mẫu M2 thiếu. Bài học: **script đo cũng phải có test** (chạy n với n nhỏ trước).
+- **Số liệu tự chỉ ra nợ**: sau một buổi đo, `outbox` đã 715/380/359 row và **không có job dọn** ⇒ ghi `TD-35` ngay
+  trong ticket này (cùng họ với `TD-30` cho `processed_events`/`notification_logs`). Đo không chỉ để báo cáo — nó là
+  cách tìm ra giới hạn thật.
 
 ### SL-3.9 — `docs/runbook-phase-3.md` + DoD Phase 3 (archive · tag `phase-3` · release)
 
@@ -1930,6 +2012,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | SL-3.2 | **`@ConditionalOnBean` là điều kiện *theo thời điểm*, không phải "bean này sẽ có"**: auto-config chạy theo thứ tự, điều kiện chỉ thấy bean đã đăng ký **trước** nó. Thiếu `after`/`afterName` ⇒ điều kiện âm thầm `false` ⇒ store dedupe không được tạo, bảng `processed_events` không xuất hiện, **không một dòng lỗi** — cùng họ với `SL-3.1` (`RabbitAdmin` khai lazy): code đúng, hệ không làm gì, log sạch. Cách phát hiện duy nhất: kiểm **trạng thái của hệ ngoài** (bảng trong DB, exchange trên broker), không kiểm "service healthy". Phụ: Boot 4 đặt `JdbcTemplateAutoConfiguration` ở module `spring-boot-jdbc` ⇒ dùng `afterName` (string) để commons không phải kéo dependency chỉ vì một cái tên. Hai bài học thiết kế: (1) **marker dedupe phải xoá khi xử lý fail** — nếu chỉ `insert` trước handler thì DLQ replay bị chính marker chặn, message nằm trong DLQ mà không bao giờ chạy lại; (2) **`AcknowledgeMode.MANUAL` là điều kiện của DLQ** — auto-ack nghĩa là message "xong" ngay khi listener trả về ⇒ không còn cơ hội `nack` khi fail ⇒ mất message im lặng. |
 
 | 2026-11-09 | SL-3.6 | **Index lệch là trạng thái bình thường — cái phải có là phát hiện + dựng lại**. Ba tính chất giữ cho index đáng tin: outbox ghi **cùng transaction**, consumer **idempotent** (UPSERT theo khoá tự nhiên), reconcile chạy lại bao nhiêu lần cũng ra một kết quả. `unaccent()` **không IMMUTABLE** ⇒ không dùng được generated column, phải ghi `search_vector` trong **chính câu UPSERT** (một chỗ tính, không hai); `plainto_tsquery` xoá cả lớp bug wildcard của `LIKE` nhưng **không** stem/đồng nghĩa tiếng Việt (nói thật, đừng hứa quá). UPSERT phải có **chốt thời gian** `updated_at <= EXCLUDED` (event lệch thứ tự không kéo dữ liệu cũ trở lại); reconcile cần **watermark** `updated_at < mốc bắt đầu quét` và phải **viết tay nhánh rỗng** (Spring đổi `NOT IN (:ids)` rỗng thành `NOT IN (NULL)` ⇒ "báo xong mà không làm gì"). `upserted` = số row **được ghi**, không phải số row đổi. Bẫy hạ tầng lặp lần 3: `RestClient.Builder` **không có** trong context service mới (Boot 4 tách auto-config) ⇒ JDK `HttpClient` + Jackson tường minh; và **đừng tin sort của service khác** (`sort=updatedAt` bị catalog trả 400 — chỉ e2e bắt được). |
+| 2026-11-09 | SL-3.8 | **"Async cho nhanh" sai về bản chất — và số đo chứng minh**: checkout p50 42,7 → 43,1 ms (+0,9%). Email/index chưa bao giờ nằm trên đường checkout ⇒ thứ async mua được là **isolation** (consumer chết, checkout p95 vẫn 44,6 ms; 20 event chờ trong queue rồi xử lý đủ) và **độ trễ có trần** (p95 confirm→email 1011 ms ≈ relay 1 s). `p95` chênh +10,7 ms là **nhiễu tải trên cùng Postgres**, không phải phụ thuộc đồng bộ — chứng minh bằng phép đo ngược (consumer chết ⇒ p95 44,6 ms). Relay 63,7 msg/s so với trần 100 (batch 100 × 1 s) + đuôi 0,26 s ⇒ nghẽn là **relay polling**, không phải broker. Đo độ trễ event phải **ghép 2 database** (không JOIN xuyên DB được). Và **script đo cũng phải có test**: 4 lỗi tự gây (bash `local` + `set -u`, `psql -tA` separator `|`, chờ queue rỗng thay vì chờ email, checkout đồng thời không thanh toán) — trong đó lỗi separator cho ra `n=0` **không báo lỗi**, nguy hiểm hơn crash. Số đo tự chỉ ra nợ: `outbox` 715/380/359 row không có job dọn ⇒ `TD-35`. |
 | 2026-11-09 | SL-3.7 | **Async test = poll state cuối, không assert sau khi gọi API** (xanh vì "chưa kịp chạy" là kiểu xanh nguy hiểm nhất). **Hai timeout**: 5 s cho luồng event thường, **15 s cho DLQ** vì retry `200ms,1s,3s` ≈ 4,2 s *trước khi* nack — và `/api/queues` của RabbitMQ là **metrics làm mới ~5 s** nên `messages_ready` còn `1` sau khi message đã đi (timeout phải lớn hơn chu kỳ làm mới của metrics, không chỉ thời gian xử lý). Bẫy thật: (1) xoá product ⇒ SKU `ARCHIVED` ⇒ checkout 409 hiện ra ở **bước DLQ** (tạo SKU riêng + assert cả `PUT /carts/items`); (2) `PUT /carts/items/{sku}` là **thêm** chứ không phải thay giỏ ⇒ giỏ còn SKU cũ ⇒ saga chết ở `PRICE` (`DELETE /v1/carts` đầu mỗi checkout); (3) `$RANDOM` **không** đủ làm khoá idempotency (bash lặp giá trị ⇒ 409 request-hash mismatch) ⇒ prefix + số thứ tự. Fail-mode bind lúc boot ⇒ chỉ bật bằng recreate container, **bắt buộc `trap` tắt lại**; replay **sau khi** tắt lỗi (sửa nguyên nhân rồi mới replay). Đo replay bằng **DB** (`notification_logs` có row), không bằng "DLQ rỗng" — DLQ rỗng cũng đúng khi message **mất**. |
 | 2026-11-09 | SL-3.5 | **Hai đường confirm: cái khó là *thứ tự kiểm tra*, không phải idempotency** — chốt đơn theo `payment.succeeded.v1` phải loại dần 5 khả năng (không saga · saga đã `CONFIRMED` · saga chưa `COMPLETED_START` · `paymentIntentId` lệch · đơn không còn `PENDING_PAYMENT`) trước khi chạm downstream; bỏ bước nào cũng là **chốt nhầm đơn đã trả tiền** (lỗi không sửa được bằng code). Bằng chứng thanh toán *đổi chỗ*: đường client hỏi payment (`verifyPayment`), đường event không hỏi lại (event phát ngay sau CAS `SUCCEEDED`) nhưng vẫn ghi `PAYMENT_VERIFY:SKIPPED` vào audit. `paymentIntentId` trong payload là **khoá đối chiếu**, không phải trang trí. **Ack cho kết cục nghiệp vụ, retry cho lỗi hạ tầng** (đơn `EXPIRED` + tiền đã thu = hoàn tiền tay ⇒ ack + log ERROR; inventory 503 = retry). `TD-25` release-trước-CAS mở cửa sổ bán quá tồn kho ⇒ chặn bằng kiểm `PENDING_PAYMENT` trước khi release + WARN khi CAS trả `false`. Và bài học cũ lặp lại: `@ConfigurationProperties` inject bean `ObjectMapper` (Jackson 2) không tồn tại ⇒ **context fail cả IT** — hạ tầng commons **không được giả định bean nào có mặt**. |
 
@@ -1980,6 +2063,7 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-32` | **Outbox bị copy 3 lần** (`order` SL-3.3, `payment` SL-3.5, `catalog` SL-3.6): ~500 dòng gần giống nhau (record/repository/relay/properties/DDL) ở mỗi service | SL-3.5 | ✅ **đã trả (SL-3.6)** — chấp nhận copy lần 3 có ý thức: giữ `SL-3.6` đúng scope (diff nhỏ, review được) thay vì trộn refactor 2 service cũ vào ticket service mới. Extract `OutboxAutoConfiguration` vào commons khi có **producer thứ 4** hoặc khi lên OpenSearch (Phase 8 — lúc đó hình dạng outbox có thể phải đổi, extract sớm sẽ phải làm lại) | trung bình |
 | `TD-33` | `search_product.min_price` = **giá niêm yết của product**, KHÔNG phải min qua `sku.price_override` (index chưa biết SKU) ⇒ `minPrice` filter sai lệch với SKU có override thấp hơn | SL-3.6 | Khi search cần lọc/sort theo giá SKU thật, hoặc khi có yêu cầu "từ giá X" trên UI — lúc đó thêm field SKU vào payload event + reindex theo SKU | trung bình |
 | `TD-34` | `tools/export-openapi.sh` chưa gộp spec của `notification-service` + `search-service` ⇒ `docs/api/openapi.yaml` thiếu toàn bộ API Phase 3 | SL-3.6 | Khi cần spec đầy đủ (DoD Phase 3/4 hoặc có client sinh code từ spec) — sửa 1 lần: thêm 2 nguồn vào script merge | thấp |
+| `TD-35` | Bảng `outbox` của **3 service** (catalog · order · payment) **không có job dọn row SENT** — sau một buổi đo `SL-3.8`: 715 / 380 / 359 row, chỉ để audit | SL-3.8 | Khi bảng > 10^6 row hoặc trước load test Phase 4 — thêm job archive/partition theo tháng (row SENT cũ không cần giữ nóng) | trung bình |
 
 
 ## 8. Changelog
@@ -2075,3 +2159,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-09 | `SL-3.5` → `Done` (**trả `TD-17` + `TD-25`**): **`payment.succeeded.v1` ⇒ order tự confirm** — `payment-service`: migration `V2__create_outbox.sql` (DDL chép khuôn `SL-3.3` + **unique index** `ux_outbox_payment_succeeded` để 1 intent chỉ phát 1 event), outbox package (record/repository/relay/properties/`PaymentEvents`), `PaymentWebhookService` ghi outbox **trong cùng transaction** ở nhánh transition thật sang `SUCCEEDED` (nhánh idempotent-return không ghi), `spring-boot-starter-amqp` + `publisher-confirm-type: correlated`. `order-service`: `PaymentSucceededConsumer` (`q.order`, dùng lại `AbstractEventConsumer`), `CheckoutFinishService.confirmByEvent` (**ma trận 5 nhánh** trước khi chạm downstream · `paymentIntentId` phải khớp saga · **bỏ** `verifyPayment` nhưng ghi step `PAYMENT_VERIFY:SKIPPED` · step mới `PAYMENT_EVENT_CONFIRM`), commit/release gọi bằng **service token** (`SL-3.11`) nên **sweeper release ngay** thay vì chờ TTL (`TD-25`); `CheckoutStep` + `PAYMENT_EVENT_CONFIRM`. Hạ tầng: order khai `shoplab.service-auth.*` + compose env, `outputs`; commons `HttpServiceTokenSource` **tự tạo ObjectMapper** (bài học: inject bean Jackson 2 làm context fail IT). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 756 test (624 unit + 132 IT)** · mock-pay **không** gọi `/confirm` ⇒ CONFIRMED sau **1031 ms** (909 ms khi có voucher), saga `CONFIRMED`, steps `STOCK_COMMIT:OK`/`VOUCHER_COMMIT:OK`/`PAYMENT_VERIFY:SKIPPED`/`PAYMENT_EVENT_CONFIRM:OK`, voucher `used=1 locked=0` · `/confirm` sau đó **200**, stock **không** trừ 2 lần, history 2 dòng · webhook lặp ⇒ `duplicate:true`, outbox **1 row** · đơn `EXPIRED` ⇒ ack + WARN, state không đổi, **DLQ 0** · broker chết ⇒ `SUCCEEDED` + outbox `PENDING`, bật lại ⇒ tự confirm sau **7.8 s** · sweeper: `EXPIRED` ⇒ hàng về kho **~0 s** (`STOCK_RELEASE:OK`) · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-31` (refund), `TD-32` (extract outbox). |
 | 2026-11-09 | `SL-3.6` → `Done` (**đóng `TD-32`**): **`catalog` outbox product event + `search-service` 8091 (Postgres FTS) + reconcile**. `catalog-service`: `V4__create_outbox.sql` + package outbox (chép khuôn lần 3, có ý thức) + `CatalogOutbox` gọi trong **cùng transaction** của `ProductService.create/update/delete`; event `product.updated.v1` (tạo+sửa) / `product.archived.v1` (soft delete); +amqp, `publisher-confirm-type=correlated`, `shoplab.outbox.*`, **không** thêm rabbit vào readiness (producer chết broker vẫn phải 200). `search-service` **mới** (port **8091** — 8090 thuộc template): DB `search` (`unaccent` + `search_product` + GIN + `processed_events`), consumer `q.search` (consumer thứ 3 dùng lại `AbstractEventConsumer`), `GET /v1/search` (public, tsquery+unaccent, filter category/giá, phân trang offset), `POST /v1/admin/search/reindex` (ADMIN, watermark + archive orphan + idempotent), `@Scheduled` so số row (WARN lệch > 1%). Hạ tầng: Dockerfile + compose + CI matrix + **12 Dockerfile thêm 1 dòng COPY pom** + `POSTGRES_DB_SEARCH` + gateway route `/v1/search` (public) và `/v1/admin/search` (thắng `/v1/admin` nhờ prefix dài hơn) + README port. Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 805 test (662 unit + 143 IT)** · AC1 thấy sau **228 ms**, giá đúng · AC2 row index `ARCHIVED` · AC3 `q=dien` khớp `Điện thoại`, `q=dien%` 200 · AC6 outbox `SENT` cho cả 2 event · AC4 reindex `{61,61,0}` sau khi xoá tay 7 row, lần 2 không nhân bản · AC5 broker chết: tạo product 201 + outbox `PENDING|attempts=3`, reindex vẫn dựng lại, bật broker ⇒ `SENT` · job lệch: `INDEX LỆCH: index=58 catalog=65 lệch=10.77%` · e2e 17/17 · 27/27 · 41/41. Nợ: `TD-33` (min_price chưa tính SKU override). |
 | 2026-11-09 | `SL-3.7` → `Done`: thêm **`tools/e2e-async.sh`** — 48 assert, chứng minh 4 luồng async trên stack thật: `order.confirmed.v1` ⇒ email (`notification_logs`) · `payment.succeeded.v1` ⇒ order **tự** `CONFIRMED` (không gọi `/confirm`) · `product.updated/archived` ⇒ index search (giá mới + row `ARCHIVED`) · lỗi ⇒ **DLQ** ⇒ tắt fail-mode ⇒ `dlq.sh move` ⇒ xử lý lại. Poll có timeout (`POLL_FAST=5s`, `POLL_DLQ=15s` cho retry budget + độ trễ metrics của RabbitMQ), `trap` dọn state (fail-mode off + purge DLQ) kể cả khi bị kill, `DELETE /v1/carts` trước mỗi checkout, idempotency key = prefix + số thứ tự (không dùng `$RANDOM`). `e2e.yml`: thêm bước **E2E async (Phase 3)** chạy cuối (vì nó recreate `notification-service`) + job name `11 thành phần`; README mục **E2E async — SL-3.7**. Verify: script xanh **2 lần liên tiếp** (48/0 · 27,8 s và 48/0 · 30,9 s) · trap kiểm thật bằng `kill -TERM` (`FAIL_MODE true → false`, DLQ 0) · `e2e.yml` parse OK (10 step) · 3 script cũ 17/17 · 27/27 · 41/41 · `mvn -B -ntp verify` BUILD SUCCESS (805 test). |
+| 2026-11-09 | `SL-3.8` → `Done`: thêm **`tools/bench-async.sh`** (5 phép đo, in bảng markdown + lưu raw) và **`docs/reports/async-phase-3.md`** — số đo thật: checkout p50 42,7→43,1 ms (async **không** làm nhanh hơn), confirm→email p50 552/p95 1011 ms, webhook→CONFIRMED p50 29/p95 46 ms, relay **63,7 msg/s** (trần 100 ⇒ nghẽn relay polling), DLQ **0** trong 300 s với 100 checkout + 100 update (phát = xử lý 100/100 ở cả 3 luồng, 0 email trùng), degradation: consumer chết ⇒ checkout p95 44,6 ms + 20 event chờ ⇒ bật lại xử lý đủ 20/20. Nợ mới `TD-35` (outbox không có job dọn). `README` + `architecture.md` trỏ tới báo cáo. |
