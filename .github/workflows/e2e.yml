@@ -1,5 +1,5 @@
 # ==============================================================================
-# e2e.yml — E2E thật: `docker compose up` cả 10 thành phần rồi chạy smoke + checkout (SL-2.8)
+# e2e.yml — E2E thật: `docker compose up` cả 11 thành phần rồi chạy 4 script (SL-2.8 · SL-3.7)
 #
 # VÌ SAO KHÔNG chạy mỗi PR (đọc kỹ trước khi đổi):
 #   Mỗi image build trong CI phải chạy `mvn package` **từ đầu** (không cache Maven giữa các job).
@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   compose-e2e:
-    name: compose up (10 thành phần) + smoke + checkout
+    name: compose up (11 thành phần) + smoke + checkout + async
     runs-on: ubuntu-latest
     # Build 9 image + khởi động + 2 script: 45 phút là trần thực tế; 60 để có margin cho runner chậm.
     timeout-minutes: 60
@@ -75,6 +75,12 @@ jobs:
       # payment-service (F5) — để cuối cho gọn, tránh ảnh hưởng các bước khác.
       - name: E2E checkout nhánh fail (compensating)
         run: bash tools/e2e-checkout-fail.sh
+
+      # SL-3.7: 4 luồng async (event → email/auto-confirm/index/DLQ→replay). Chạy CUỐI vì script này
+      # `docker compose up -d notification-service` để bật/tắt fail-mode (recreate container) — để
+      # trước các script khác thì chúng có thể gọi đúng lúc notification đang restart.
+      - name: E2E async (Phase 3)
+        run: bash tools/e2e-async.sh
 
       # Log chỉ dump khi đỏ: log của 10 container rất dài, in vô điều kiện là làm log run không đọc được.
       - name: Log container (khi fail)
