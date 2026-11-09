@@ -4,6 +4,8 @@ import com.shoplab.commons.error.AppException;
 import com.shoplab.commons.error.ErrorCode;
 import com.shoplab.commons.error.NotFoundException;
 import com.shoplab.payment.idempotency.IdempotencyService;
+import com.shoplab.payment.outbox.OutboxRepository;
+import com.shoplab.payment.outbox.PaymentEvents;
 import com.shoplab.payment.payment.PaymentExceptions;
 import com.shoplab.payment.payment.PaymentRecord;
 import com.shoplab.payment.payment.PaymentRepository;
@@ -43,10 +45,12 @@ public class PaymentWebhookService {
   private static final Logger LOG = LoggerFactory.getLogger(PaymentWebhookService.class);
 
   private final PaymentRepository payments;
+  private final OutboxRepository outbox;
   private final Clock clock;
 
-  public PaymentWebhookService(PaymentRepository payments, Clock clock) {
+  public PaymentWebhookService(PaymentRepository payments, OutboxRepository outbox, Clock clock) {
     this.payments = payments;
+    this.outbox = outbox;
     this.clock = clock;
   }
 
@@ -145,6 +149,10 @@ public class PaymentWebhookService {
               + ")");
     }
 
+    if (target == PaymentStatus.SUCCEEDED) {
+      appendSucceeded(payment, now);
+    }
+
     LOG.info(
         "payment {} status: {} -> {} (provider txn {})",
         payment.id(),
@@ -152,6 +160,30 @@ public class PaymentWebhookService {
         target,
         request.providerTxnId());
     return new PaymentWebhookResponse(request.eventId(), payment.id(), target.name(), false, true);
+  }
+
+  /**
+   * Ghi `payment.succeeded.v1` vào outbox — <b>cùng transaction</b> với `UPDATE payments` (class
+   * này `@Transactional`; đây là lời gọi nội bộ nên **không** thêm `@Transactional`:
+   * self-invocation bỏ qua proxy, nhưng transaction của method ngoài vẫn đang mở — đúng thứ ta
+   * cần).
+   *
+   * <p>Chỉ gọi ở nhánh transition <b>thật</b>: webhook lặp (cùng `provider_event_id`) đã return sớm
+   * ở bước {@code recordEvent} nên không thể sinh event thứ hai; tầng DB cũng chặn bằng {@code
+   * ux_outbox_payment_succeeded}.
+   */
+  private void appendSucceeded(PaymentRecord payment, Instant now) {
+    outbox.append(
+        PaymentEvents.AGGREGATE,
+        payment.id(),
+        PaymentEvents.SUCCEEDED,
+        PaymentEvents.succeeded(
+            payment.id(), payment.orderId(), payment.amount(), payment.currency(), now));
+    LOG.info(
+        "outbox: ghi {} cho payment={} order={} (cùng transaction)",
+        PaymentEvents.SUCCEEDED,
+        payment.id(),
+        payment.orderId());
   }
 
   /** Map chuỗi trạng thái của provider → enum nội bộ; lạ ⇒ 400 (retry không giúp gì). */

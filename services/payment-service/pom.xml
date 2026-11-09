@@ -51,6 +51,15 @@
       (`UPDATE ... WHERE on_hand - reserved >= :qty`) và cần biết `rowsAffected` để biết hết hàng.
       JPA entity + dirty checking chỉ thêm tầng trung gian cho đúng loại truy vấn này.
     -->
+    <!--
+      SL-3.5: broker của Phase 3. Payment là PRODUCER của `payment.succeeded.v1` (outbox + relay) —
+      cần AMQP trên classpath để `EventPublisher` của commons hoạt động và topology được khai thật.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-jdbc</artifactId>

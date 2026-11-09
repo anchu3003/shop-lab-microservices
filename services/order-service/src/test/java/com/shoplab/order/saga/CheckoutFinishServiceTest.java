@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.shoplab.commons.error.AppException;
 import com.shoplab.commons.error.ErrorCode;
+import com.shoplab.commons.serviceauth.ServiceTokenClient;
 import com.shoplab.order.order.OrderRecord;
 import com.shoplab.order.order.OrderRepository;
 import com.shoplab.order.order.OrderStatus;
@@ -50,10 +51,17 @@ class CheckoutFinishServiceTest {
   private final OrderRepository orders = mock(OrderRepository.class);
   private final OrderWriter writer = mock(OrderWriter.class);
   private final CheckoutOutbox finalizer = mock(CheckoutOutbox.class);
+  private final ServiceTokenClient serviceTokens = mock(ServiceTokenClient.class);
 
   private final CheckoutFinishService service =
       new CheckoutFinishService(
-          downstream, sagas, orders, writer, finalizer, Clock.fixed(NOW, ZoneOffset.UTC));
+          downstream,
+          sagas,
+          orders,
+          writer,
+          finalizer,
+          serviceTokens,
+          Clock.fixed(NOW, ZoneOffset.UTC));
 
   // __FINISH_TESTS2__
 
@@ -151,9 +159,12 @@ class CheckoutFinishServiceTest {
   }
 
   @Test
-  @DisplayName("expire (sweeper) → order EXPIRED + saga EXPIRED, KHÔNG gọi service ngoài")
-  void expireOnlyWritesDatabase() {
+  @DisplayName("expire (sweeper) → RELEASE bằng service token rồi order/saga EXPIRED (TD-25)")
+  void expireReleasesWithServiceToken() {
     sagaFound(state(CheckoutSagaState.COMPLETED_START, true));
+    orderPending();
+    when(serviceTokens.tokenFor("inventory-service")).thenReturn("tok-inventory");
+    when(serviceTokens.tokenFor("promotion-service")).thenReturn("tok-promotion");
     when(writer.expirePending(eq(ORDER_ID), anyString(), any())).thenReturn(true);
 
     boolean expired = service.expire(ORDER_ID);
@@ -162,10 +173,34 @@ class CheckoutFinishServiceTest {
     verify(sagas)
         .markState(
             eq(ORDER_ID), eq(CheckoutSagaState.EXPIRED), eq("PAYMENT_WINDOW_EXCEEDED"), any());
-    // Sweeper không có token user ⇒ không được gọi release (hàng về theo TTL sweeper của 2
-    // service).
+    // TD-25: sweeper CÓ service token ⇒ trả hàng/voucher ngay, không chờ TTL của service khác.
+    verify(downstream).releaseStock(eq("tok-inventory"), eq(RESERVATION_ID));
+    verify(downstream).releaseVoucher(eq("tok-promotion"), eq(LOCK_ID));
+  }
+
+  @Test
+  @DisplayName("expire: release lỗi ⇒ vẫn expire (đơn phải rời trạng thái chờ) — TD-25")
+  void expireStillWorksWhenReleaseFails() {
+    sagaFound(state(CheckoutSagaState.COMPLETED_START, true));
+    orderPending();
+    when(serviceTokens.tokenFor(any())).thenThrow(new IllegalStateException("identity chết"));
+    when(writer.expirePending(eq(ORDER_ID), anyString(), any())).thenReturn(true);
+
+    assertThat(service.expire(ORDER_ID)).isTrue();
+    verify(sagas)
+        .markState(
+            eq(ORDER_ID), eq(CheckoutSagaState.EXPIRED), eq("PAYMENT_WINDOW_EXCEEDED"), any());
+  }
+
+  @Test
+  @DisplayName("expire: đơn không còn PENDING_PAYMENT ⇒ không release (tránh trả hàng đơn đã bán)")
+  void expireSkipsWhenOrderNoLongerPending() {
+    sagaFound(state(CheckoutSagaState.COMPLETED_START, true));
+    when(orders.findById(ORDER_ID)).thenReturn(Optional.of(confirmedOrder()));
+
+    assertThat(service.expire(ORDER_ID)).isFalse();
     verify(downstream, never()).releaseStock(any(), any());
-    verify(downstream, never()).releaseVoucher(any(), any());
+    verify(writer, never()).expirePending(any(), anyString(), any());
   }
 
   @Test
@@ -197,6 +232,22 @@ class CheckoutFinishServiceTest {
                     INTENT_ID,
                     NOW,
                     NOW)));
+  }
+
+  /** Đơn đã CONFIRMED — dùng để kiểm sweeper không release hàng của đơn đã bán. */
+  private static OrderRecord confirmedOrder() {
+    return new OrderRecord(
+        ORDER_ID,
+        USER_ID,
+        OrderStatus.CONFIRMED,
+        new BigDecimal("100.00"),
+        BigDecimal.ZERO,
+        new BigDecimal("100.00"),
+        "VND",
+        "key",
+        INTENT_ID,
+        NOW,
+        NOW);
   }
 
   private static CheckoutSagaRecord state(CheckoutSagaState state, boolean paymentRequired) {

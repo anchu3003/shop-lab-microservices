@@ -34,6 +34,20 @@ spring:
       connection-timeout: 3000
       pool-name: payment-pool
 
+  # ---------------------------------------------------------------------------
+  # SL-3.5: broker event — payment là PRODUCER của `payment.succeeded.v1`.
+  # `publisher-confirm-type: correlated` BẮT BUỘC (bài học SL-3.3): thiếu nó,
+  # `CorrelationData.getFuture()` không bao giờ complete ⇒ mỗi publish treo 5 s.
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:shoplab}
+    password: ${RABBITMQ_PASSWORD:}
+    connection-timeout: 3s
+    publisher-confirm-type: correlated
+    publisher-returns: true
+
   flyway:
     enabled: true
     # FAIL-CLOSED: chỉ migration, không seed dữ liệu tài chính.
@@ -61,6 +75,17 @@ shoplab:
         host: ${POSTGRES_HOST:localhost}
         port: ${POSTGRES_PORT:5432}
         timeout: 500ms
+
+  # SL-3.5: outbox relay — trễ tối đa ~interval trước khi `order-service` tự confirm đơn.
+  outbox:
+    interval: ${SHOPLAB_OUTBOX_INTERVAL:1s}
+    initial-delay: ${SHOPLAB_OUTBOX_INITIAL_DELAY:5s}
+    batch-size: ${SHOPLAB_OUTBOX_BATCH_SIZE:100}
+    claim-timeout: ${SHOPLAB_OUTBOX_CLAIM_TIMEOUT:30s}
+
+  events:
+    topology:
+      enabled: ${SHOPLAB_EVENTS_TOPOLOGY_ENABLED:true}
 
   payment:
     # Intent sống 15 phút — khớp TTL reservation (inventory) và voucher lock (promotion):

@@ -84,6 +84,15 @@ shoplab:
     topology:
       enabled: ${SHOPLAB_EVENTS_TOPOLOGY_ENABLED:true}
 
+  # SL-3.11/SL-3.5: order là CLIENT của service-to-service auth — xin service token để gọi
+  # inventory/promotion `commit` (tự confirm theo event) và `release` (sweeper, TD-25).
+  # Secret đọc từ env, không có default: thiếu ⇒ lỗi rõ khi gọi (không âm thầm dùng secret mặc định).
+  service-auth:
+    client-id: order-service
+    client-secret: ${ORDER_SERVICE_CLIENT_SECRET:}
+    token-url: ${IDENTITY_SERVICE_TOKEN_URL:http://localhost:8081/v1/auth/service-token}
+    ttl-skew: ${SHOPLAB_SERVICE_TOKEN_SKEW:30s}
+
   jwt:
     # order là RESOURCE SERVER: chỉ tải public key qua JWKS của identity.
     jwks-uri: ${IDENTITY_JWKS_URI:http://localhost:8081/.well-known/jwks.json}

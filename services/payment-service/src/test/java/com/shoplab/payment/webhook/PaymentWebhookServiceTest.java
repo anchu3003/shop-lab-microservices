@@ -3,6 +3,7 @@ package com.shoplab.payment.webhook;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -10,6 +11,8 @@ import static org.mockito.Mockito.when;
 
 import com.shoplab.commons.error.AppException;
 import com.shoplab.commons.error.NotFoundException;
+import com.shoplab.payment.outbox.OutboxRepository;
+import com.shoplab.payment.outbox.PaymentEvents;
 import com.shoplab.payment.payment.PaymentExceptions;
 import com.shoplab.payment.payment.PaymentRecord;
 import com.shoplab.payment.payment.PaymentRepository;
@@ -22,6 +25,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /** Test xử lý webhook: dedupe theo event id, so số tiền, compare-and-set trạng thái. */
 class PaymentWebhookServiceTest {
@@ -31,8 +35,9 @@ class PaymentWebhookServiceTest {
   private static final String INTENT_ID = "pi_mock_1";
 
   private final PaymentRepository payments = mock(PaymentRepository.class);
+  private final OutboxRepository outbox = mock(OutboxRepository.class);
   private final PaymentWebhookService service =
-      new PaymentWebhookService(payments, Clock.fixed(NOW, ZoneOffset.UTC));
+      new PaymentWebhookService(payments, outbox, Clock.fixed(NOW, ZoneOffset.UTC));
 
   private static PaymentRecord record(PaymentStatus status) {
     return new PaymentRecord(
@@ -69,6 +74,8 @@ class PaymentWebhookServiceTest {
     assertThat(response.duplicate()).isTrue();
     assertThat(response.applied()).isFalse();
     verify(payments, never()).markStatus(any(), any(), any(), any(), any());
+    // SL-3.5: webhook lặp KHÔNG được sinh event thứ hai (AC).
+    verify(outbox, never()).append(any(), any(), any(), any());
   }
 
   @Test
@@ -113,6 +120,49 @@ class PaymentWebhookServiceTest {
   }
 
   @Test
+  @DisplayName("SL-3.5: transition thật sang SUCCEEDED ⇒ ghi ĐÚNG 1 outbox `payment.succeeded.v1`")
+  void successShouldAppendOutboxEvent() {
+    PaymentRecord payment = record(PaymentStatus.REQUIRES_PAYMENT);
+    when(payments.findByProviderIntentId(INTENT_ID)).thenReturn(Optional.of(payment));
+    when(payments.insertWebhookEvent(any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(true);
+    when(payments.markStatus(any(), any(), any(), any(), any())).thenReturn(1);
+
+    service.apply(BODY, event("succeeded", "180000.00"));
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<java.util.Map<String, Object>> payload =
+        ArgumentCaptor.forClass(java.util.Map.class);
+    verify(outbox)
+        .append(
+            eq(PaymentEvents.AGGREGATE),
+            eq(payment.id()),
+            eq(PaymentEvents.SUCCEEDED),
+            payload.capture());
+    // Payload đúng 5 field theo contract (ADR-0007) — không thêm order/user thừa.
+    assertThat(payload.getValue())
+        .containsEntry("paymentIntentId", payment.id().toString())
+        .containsEntry("orderId", payment.orderId().toString())
+        .containsEntry("amount", payment.amount())
+        .containsEntry("currency", payment.currency())
+        .containsEntry("succeededAt", NOW.toString());
+  }
+
+  @Test
+  @DisplayName("SL-3.5: webhook FAILED ⇒ KHÔNG ghi outbox (chỉ sự kiện succeeded mới có event)")
+  void failedShouldNotAppendOutboxEvent() {
+    PaymentRecord payment = record(PaymentStatus.REQUIRES_PAYMENT);
+    when(payments.findByProviderIntentId(INTENT_ID)).thenReturn(Optional.of(payment));
+    when(payments.insertWebhookEvent(any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(true);
+    when(payments.markStatus(any(), any(), any(), any(), any())).thenReturn(1);
+
+    service.apply(BODY, event("failed", "180000.00"));
+
+    verify(outbox, never()).append(any(), any(), any(), any());
+  }
+
+  @Test
   @DisplayName("event id khác nhưng kết quả đã đúng → no-op (applied=false)")
   void sameOutcomeShouldBeNoOp() {
     PaymentRecord payment = record(PaymentStatus.SUCCEEDED);
@@ -124,6 +174,7 @@ class PaymentWebhookServiceTest {
 
     assertThat(response.applied()).isFalse();
     verify(payments, never()).markStatus(any(), any(), any(), any(), any());
+    verify(outbox, never()).append(any(), any(), any(), any());
   }
 
   @Test
