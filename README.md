@@ -835,6 +835,41 @@ curl -s -X POST 'localhost:8088/debug/faults/reset'          # tắt
 
 
 
+### E2E async — `SL-3.7`
+
+Async không nhìn thấy được bằng một `curl`: API trả `200` **trước khi** việc thật xảy ra. Script này
+**poll state cuối** (có timeout) thay vì `sleep` mù, và chứng minh cả 4 luồng event của Phase 3:
+
+```bash
+bash tools/e2e-async.sh     # cần stack đang chạy (compose up -d --wait)
+```
+
+```text
+== Kết quả: 48 PASS / 0 FAIL · 40 request · 27774 ms
+E2E async: OK
+```
+
+| Luồng | Bằng chứng (nguồn: DB/broker, không tin lời service) |
+|---|---|
+| `order.confirmed.v1` ⇒ email | row trong `notification_logs` (DB `notification`) |
+| `payment.succeeded.v1` ⇒ order tự chốt | mock-pay rồi **KHÔNG** gọi `/confirm` ⇒ `order.status = CONFIRMED` ≤ 5 s |
+| `product.updated/archived` ⇒ index | sửa product ⇒ `/v1/search` thấy **giá mới**; xoá ⇒ search mất, row index `ARCHIVED` |
+| lỗi ⇒ DLQ ⇒ replay | bật `SHOPLAB_NOTIFICATION_FAIL_MODE=true` ⇒ `q.notification.dlq ≥ 1` ⇒ tắt lỗi ⇒ `tools/dlq.sh move` ⇒ có email + DLQ rỗng |
+
+**Vì sao 2 timeout khác nhau** (`POLL_FAST=5s`, `POLL_DLQ=15s`):
+
+- luồng event thường xong trong ~1 s (relay outbox 1 s + consumer) ⇒ 5 s là rộng;
+- riêng DLQ **không thể** ≤ 5 s: consumer retry `200ms,1s,3s` ≈ **4,2 s** rồi mới nack sang DLQ;
+- và `/api/queues` của RabbitMQ là **số liệu thống kê, làm mới mỗi ~5 s** ⇒ `messages_ready` có thể
+  còn `1` sau khi message đã đi. Poll dài hơn là cách đúng — không phải thêm `sleep`.
+
+**Script tự dọn state** trong `trap EXIT` (kể cả khi chết giữa đường): tắt fail-mode + `dlq.sh purge
+q.notification`. Không có trap thì lần chạy sau thấy DLQ đầy message cũ và fail-mode đang bật ⇒ FAIL giả.
+
+> Bật fail-mode = **recreate container** (`SHOPLAB_NOTIFICATION_FAIL_MODE=true docker compose up -d
+> notification-service`): property bind lúc khởi động, không có endpoint runtime để đổi. Vì vậy trong
+> `e2e.yml` bước này chạy **cuối cùng**, sau 3 script kia.
+
 ### E2E smoke — `SL-1.3` → `SL-1.7`
 
 Bằng chứng end-to-end **cả Phase 1** bằng **1 lệnh**: `client → gateway → identity/catalog → DB`.
