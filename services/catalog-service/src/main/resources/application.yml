@@ -43,6 +43,17 @@ spring:
     locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}
     baseline-on-migrate: false
 
+  # SL-3.6: catalog là PRODUCER (outbox + relay) ⇒ cần broker. Producer confirm bật "correlated":
+  # relay chỉ đánh SENT khi broker đã xác nhận nhận message (không phải khi TCP write xong).
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:shoplab}
+    password: ${RABBITMQ_PASSWORD:}
+    connection-timeout: 3s
+    publisher-confirm-type: correlated
+    # KHÔNG khai listener: catalog không consume event nào (chỉ search-service consume product event).
+
 server:
   port: ${SERVER_PORT:8082}
   shutdown: graceful
@@ -66,6 +77,23 @@ shoplab:
         host: ${POSTGRES_HOST:localhost}
         port: ${POSTGRES_PORT:5432}
         timeout: 500ms
+      # SL-3.6: KHÔNG đưa rabbitmq vào readiness. Producer mà broker chết thì API vẫn phải 200
+      # (event nằm chờ trong outbox, relay gửi bù) — báo "chưa sẵn sàng" vì broker chết sẽ biến một
+      # sự cố async thành sự cố cả catalog (đúng bài học ADR-0007: async không nằm trên critical path).
+
+  # SL-3.6: outbox relay (chép khuôn SL-3.3). `interval` 1 s ⇒ index trễ tối đa ~1 s so với catalog.
+  outbox:
+    interval: ${SHOPLAB_OUTBOX_INTERVAL:1s}
+    initial-delay: ${SHOPLAB_OUTBOX_INITIAL_DELAY:5s}
+    batch-size: ${SHOPLAB_OUTBOX_BATCH_SIZE:100}
+    claim-timeout: ${SHOPLAB_OUTBOX_CLAIM_TIMEOUT:30s}
+
+  events:
+    enabled: true
+    # Catalog CHỈ phát event, không consume ⇒ không cần bảng dedupe. Để `true` thì commons tạo bảng
+    # `processed_events` rỗng trong DB catalog — bảng chết, gây hiểu nhầm là service có consumer.
+    dedup:
+      auto-create-schema: false
 
 logging:
   level:

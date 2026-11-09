@@ -262,6 +262,7 @@ bash tools/reset-infra.sh
 | `8088` | `payment-service` | Phase 2 (`SL-2.7`) — payment intent + webhook provider idempotent; DB `payment` |
 | `8083` | `cart-service` | Phase 2 (`SL-2.1`) — giỏ hàng trên **Redis** (không có Postgres) |
 | `8089` | `notification-service` | Phase 3 (`SL-3.4`) — consumer `q.notification` (email mock) + `GET /v1/notifications/me`; DB `notification` |
+| `8091` | `search-service` | Phase 3 (`SL-3.6`) — index sản phẩm từ event + `GET /v1/search` (Postgres FTS) + `POST /v1/admin/search/reindex`; DB `search` |
 
 > `up -d` mặc định **KHÔNG** dựng `service-template` — service mẫu nằm trong profile `template` (`SL-1.13`). Bật khi cần:
 > `docker compose -f infra/docker-compose.yml --env-file .env --profile template up -d service-template`
@@ -354,6 +355,52 @@ bash tools/dlq.sh purge q.notification     # xoá sạch .dlq (chỉ khi đã hi
 
 **Còn thiếu (cố ý, xem [`Backlog-phase-0.md`](Backlog-phase-0.md) → SL-0.3 out of scope)**: MinIO (object storage) và OpenSearch 2.x
 (search) — dựng khi phase cần thật; observability stack (Phase 6); K8s (Phase 7).
+
+### search-service — `SL-3.6`
+
+Index sản phẩm (Postgres **FTS**), port **8091**, DB `search`. **Không** phải nguồn sự thật: nó học từ
+event của `catalog` (`q.search`) và có thể dựng lại từ catalog bất cứ lúc nào.
+
+```bash
+# Tìm kiếm (PUBLIC — guest cũng gọi được qua gateway)
+curl -s 'localhost:8080/v1/search?q=dien%20thoai&size=5'
+curl -s 'localhost:8080/v1/search?categoryId=<uuid>&minPrice=1000000&maxPrice=5000000'
+bash -c 'curl -s "localhost:8080/v1/search?q=dien%25"'      # ký tự đặc biệt: vô hại, không lỗi
+
+# Dựng lại toàn bộ index từ catalog (ADMIN) — idempotent, chạy lại bao nhiêu lần cũng được
+TOKEN="$(curl -s -X POST localhost:8080/v1/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@shoplab.local","password":"matkhau123"}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessToken"])')"
+curl -s -X POST localhost:8080/v1/admin/search/reindex -H "Authorization: Bearer $TOKEN"
+# → {"scanned":65,"upserted":65,"archived":0}
+```
+
+**Cách nó giữ đồng bộ** (chi tiết `architecture.md` §6.4):
+
+| Đường | Trễ | Khi nào dùng |
+|---|---|---|
+| event `product.updated.v1` / `product.archived.v1` qua outbox | ~1 s (relay polling) | đường thường — catalog không chờ search |
+| `POST /v1/admin/search/reindex` | vài giây (đọc cả catalog theo lô 100) | index lệch, đổi máy, xoá dữ liệu tay |
+| `@Scheduled` so số row (10′, lệch > 1 % ⇒ log WARN) | — | **phát hiện** lệch, không tự sửa |
+
+```bash
+# Kiểm index có khớp catalog không (đọc log job)
+docker logs shoplab-search-service --since 15m | grep -E 'INDEX LỆCH|index khớp catalog'
+# Xem thẳng 2 con số
+docker exec shoplab-postgres psql -U shoplab -d search -tAc \
+  "select status, count(*) from search_product group by status"
+docker exec shoplab-postgres psql -U shoplab -d catalog -tAc \
+  "select count(*) from product where deleted_at is null"
+```
+
+**Giới hạn đã biết (nói thật, không giấu)**: `simple` + `unaccent` **không** stem tiếng Việt và **không**
+biết từ đồng nghĩa ⇒ `tai nghe` không khớp `headphone`; `minPrice` dùng **giá product**, chưa tính
+`sku.price_override` (`TD-33`); phân trang **offset** (`TD-6`). Phase 8 đổi sang OpenSearch: contract
+event + API giữ nguyên.
+
+> ⚠️ Database `search` được tạo bởi `infra/init/01-create-databases.sh` **chỉ ở lần init volume đầu tiên**.
+> Volume cũ có sẵn thì tạo tay một lần:
+> `docker exec shoplab-postgres psql -U shoplab -d shoplab -c "CREATE DATABASE search OWNER shoplab"`
 
 ### Service template (`SL-0.4`)
 

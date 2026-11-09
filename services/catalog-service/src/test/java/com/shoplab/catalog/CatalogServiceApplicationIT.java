@@ -54,7 +54,12 @@ import tools.jackson.databind.ObjectMapper;
       "shoplab.env=local",
       "shoplab.debug-endpoints=true",
       // SL-1.15: seed dev nằm ở `db/seed` (không nạp mặc định) — IT cần seed để test phân trang.
-      "spring.flyway.locations=classpath:db/migration,classpath:db/seed"
+      "spring.flyway.locations=classpath:db/migration,classpath:db/seed",
+      // SL-3.6: IT KHÔNG có broker. Relay mà chạy thì mỗi giây một lần cố publish rồi thất bại —
+      // log ồn ào và test chậm, trong khi điều cần kiểm là "có dòng outbox" (publish là việc của
+      // relay, đã có test riêng ở order/payment). Đẩy nhịp ra thật xa.
+      "shoplab.outbox.initial-delay=1h",
+      "shoplab.outbox.interval=1h"
     })
 @Testcontainers
 class CatalogServiceApplicationIT {
@@ -98,7 +103,7 @@ class CatalogServiceApplicationIT {
   // ==========================================================================
 
   @Test
-  @DisplayName("Flyway đã tạo schema catalog + ghi lịch sử migration (V1, V2, V3, seed repeatable)")
+  @DisplayName("Flyway đã tạo schema catalog + ghi lịch sử migration (V1..V4, seed repeatable)")
   void flywayMigratedCatalogSchema() {
     List<String> tables =
         jdbc.queryForList(
@@ -106,7 +111,7 @@ class CatalogServiceApplicationIT {
                 + " order by table_name",
             String.class);
 
-    assertThat(tables).contains("category", "product", "sku", "flyway_schema_history");
+    assertThat(tables).contains("category", "product", "sku", "outbox", "flyway_schema_history");
 
     List<String> scripts =
         jdbc.queryForList("select script from flyway_schema_history", String.class);
@@ -115,6 +120,8 @@ class CatalogServiceApplicationIT {
             "V1__create_catalog.sql",
             "V2__create_sku.sql",
             "V3__add_soft_delete.sql",
+            // SL-3.6: bảng outbox (producer event product).
+            "V4__create_outbox.sql",
             "R__seed_dev_data.sql");
 
     // SL-2.11: cột soft delete phải tồn tại, `status` có DEFAULT 'ACTIVE' (20 row seed không phải
@@ -444,6 +451,53 @@ class CatalogServiceApplicationIT {
     // sku_id
     Map<String, Object> sku = jdbc.queryForMap("select status from sku where id = ?", skuId);
     assertThat(sku.get("status")).isEqualTo("ARCHIVED");
+
+    // (5) SL-3.6: `product.archived.v1` nằm trong outbox NGAY (cùng transaction với UPDATE product)
+    // — đây là bằng chứng "catalog không gọi thẳng search": nó chỉ ghi ý định phát event.
+    Map<String, Object> event =
+        jdbc.queryForMap(
+            "select event_type, payload::text as payload, status from outbox"
+                + " where aggregate_id = ? and event_type = 'product.archived.v1'",
+            productId);
+    assertThat(event.get("status")).isEqualTo("PENDING");
+    assertThat(String.valueOf(event.get("payload"))).contains(productId.toString());
+  }
+
+  @Test
+  @DisplayName(
+      "SL-3.6: tạo + sửa product ⇒ 2 dòng outbox `product.updated.v1` với payload đủ field")
+  void productWritesUpdatedEventsToOutbox() {
+    UUID categoryId = createCategory(sellerToken(), "Do gia dung");
+    String token = sellerToken();
+    UUID productId = createProduct(token, categoryId, "Noi chien khong dau", "990000.00");
+
+    assertThat(
+            put(
+                    "/v1/products/" + productId,
+                    token,
+                    Map.of("name", "Noi chien khong dau 6L", "price", "1290000.00"))
+                .status())
+        .isEqualTo(200);
+
+    // Hai lần đổi (create + update) ⇒ 2 event: sửa nhiều lần là hợp lệ, khác với
+    // `payment.succeeded`
+    // (một intent chỉ được phát một lần).
+    List<Map<String, Object>> rows =
+        jdbc.queryForList(
+            "select payload::text as payload from outbox"
+                + " where aggregate_id = ? and event_type = 'product.updated.v1'"
+                + " order by created_at",
+            productId);
+    assertThat(rows).hasSize(2);
+
+    // Payload của lần sửa phải là trạng thái MỚI (nếu ghi trước khi flush thì đây là chỗ lộ ra).
+    // jsonb đọc qua JDBC là PGobject ⇒ ép ::text ngay trong câu query cho ra String.
+    String lastPayload = String.valueOf(rows.get(1).get("payload"));
+    assertThat(lastPayload)
+        .contains("Noi chien khong dau 6L")
+        .contains("1290000.00")
+        .contains(categoryId.toString())
+        .contains("\"status\": \"ACTIVE\"");
   }
 
   @Test

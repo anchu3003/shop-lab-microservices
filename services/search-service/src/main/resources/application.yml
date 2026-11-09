@@ -1,0 +1,90 @@
+# ==============================================================================
+# application.yml — cấu hình search-service (SL-3.6)
+#
+# 12-factor (AGENTS.md §6): mọi giá trị phụ thuộc môi trường đọc từ env.
+# ==============================================================================
+
+spring:
+  application:
+    name: search-service
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+  datasource:
+    # Database RIÊNG (database per service). Tên do init script của Postgres tạo sẵn.
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB_SEARCH:search}
+    username: ${POSTGRES_USER:shoplab}
+    password: ${POSTGRES_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:4}
+      minimum-idle: 1
+      connection-timeout: 3000
+      pool-name: search-pool
+
+  flyway:
+    enabled: true
+    # FAIL-CLOSED: chỉ migration. Index KHÔNG có seed — nó là bản sao của catalog, không phải nguồn
+    # dữ liệu. Seed ở đây sẽ tạo ra sản phẩm "ma" không có trong catalog (đúng thứ index không được
+    # phép có).
+    locations: ${SHOPLAB_FLYWAY_LOCATIONS:classpath:db/migration}
+    baseline-on-migrate: false
+
+  # SL-3.6: consumer của q.search. Service này chỉ CONSUME (không publish) ⇒ không cần
+  # publisher-confirm. Mọi service khai topology qua commons nên queue vẫn tồn tại dù catalog chưa chạy.
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:shoplab}
+    password: ${RABBITMQ_PASSWORD:}
+    connection-timeout: 3s
+    listener:
+      simple:
+        # 1 thread + prefetch 1: giữ thứ tự trong queue (ADR-0007 D3) — event sau phải thấy trạng thái
+        # của event trước, nếu không index có thể "hồi sinh" một product vừa bị archive.
+        concurrency: 1
+        prefetch: 1
+
+server:
+  port: ${SERVER_PORT:8091}
+  shutdown: graceful
+
+shoplab:
+  env: ${APP_ENV:local}
+  debug-endpoints: ${SHOPLAB_DEBUG_ENDPOINTS:false}
+  git-commit: ${SHOPLAB_GIT_COMMIT:unknown}
+
+  jwt:
+    jwks-uri: ${IDENTITY_JWKS_URI:http://localhost:8081/.well-known/jwks.json}
+    issuer: ${IDENTITY_JWT_ISSUER:https://identity.shoplab.local}
+
+  readiness:
+    dependencies:
+      postgres: ${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}
+      rabbitmq: ${RABBITMQ_HOST:localhost}:${RABBITMQ_PORT:5672}
+
+  # SL-3.6: retry/DLQ + tham số reconcile.
+  search:
+    retry-delays: ${SHOPLAB_SEARCH_RETRY_DELAYS:200ms,1s,3s}
+    # Chỉ dùng cho reindex / so số row — KHÔNG nằm trên đường request của khách.
+    catalog-url: ${CATALOG_SERVICE_URL:http://localhost:8082}
+    catalog-page-size: ${SHOPLAB_SEARCH_RECONCILE_BATCH:100}
+    drift-check-interval: ${SHOPLAB_SEARCH_DRIFT_INTERVAL:10m}
+    drift-check-initial-delay: ${SHOPLAB_SEARCH_DRIFT_INITIAL_DELAY:60s}
+    drift-threshold-percent: ${SHOPLAB_SEARCH_DRIFT_THRESHOLD:1}
+    max-query-length: ${SHOPLAB_SEARCH_MAX_QUERY_LENGTH:100}
+
+  # SL-3.2: dedupe table do CHÍNH service khai bằng Flyway (V1) ⇒ tắt auto-create của commons.
+  events:
+    enabled: true
+    dedup:
+      auto-create-schema: false
+
+logging:
+  level:
+    com.shoplab: ${LOG_LEVEL:INFO}
+
+# --- OpenAPI (SL-1.8) ---
+springdoc:
+  api-docs:
+    enabled: ${SHOPLAB_OPENAPI_ENABLED:true}
+    path: /v3/api-docs

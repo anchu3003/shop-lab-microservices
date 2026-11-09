@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.shoplab.catalog.category.CategoryRepository;
+import com.shoplab.catalog.outbox.CatalogOutbox;
 import com.shoplab.catalog.sku.SkuRepository;
 import com.shoplab.catalog.sku.SkuStatus;
 import com.shoplab.commons.error.NotFoundException;
@@ -28,9 +29,10 @@ class ProductServiceTest {
   private final ProductRepository products = mock(ProductRepository.class);
   private final CategoryRepository categories = mock(CategoryRepository.class);
   private final SkuRepository skus = mock(SkuRepository.class);
+  private final CatalogOutbox outbox = mock(CatalogOutbox.class);
 
   private final ProductService service =
-      new ProductService(products, categories, skus, Clock.fixed(NOW, ZoneOffset.UTC));
+      new ProductService(products, categories, skus, outbox, Clock.fixed(NOW, ZoneOffset.UTC));
 
   @Test
   @DisplayName("tạo product: trim tên, description rỗng → null, giá giữ nguyên BigDecimal")
@@ -49,6 +51,10 @@ class ProductServiceTest {
     assertThat(created.price()).isEqualByComparingTo("25990000.00");
     assertThat(created.createdAt()).isEqualTo(NOW);
     assertThat(created.version()).isZero();
+    // SL-3.6: event phải được ghi cùng lần commit với INSERT product. Unit test chỉ kiểm được
+    // "đã gọi đúng 1 lần" — bất biến transaction thật được kiểm ở IT (rollback thì outbox cũng
+    // mất).
+    verify(outbox).productUpdated(any(Product.class));
   }
 
   @Test
@@ -96,6 +102,9 @@ class ProductServiceTest {
     assertThat(updated.updatedAt()).isEqualTo(NOW);
     assertThat(updated.createdAt()).isEqualTo(NOW.minusSeconds(60));
     assertThat(updated.status()).isEqualTo(ProductStatus.ACTIVE);
+    // Event mang dữ liệu SAU flush (`version`/`updatedAt` mới) — gọi trước `saveAndFlush` là
+    // consumer nhận giá trị cũ.
+    verify(outbox).productUpdated(any(Product.class));
   }
 
   @Test
@@ -120,6 +129,10 @@ class ProductServiceTest {
     assertThatThrownBy(() -> service.delete(id)).isInstanceOf(NotFoundException.class);
     verify(products, never()).delete(any());
     verify(skus, never()).updateStatusByProductId(any(), any());
+    // Product không tồn tại ⇒ không có thay đổi nào ⇒ KHÔNG được phát event (event cho một việc
+    // không xảy ra là thứ khiến index và catalog lệch nhau theo chiều không thể đoán).
+    verify(outbox, never()).productArchived(any(), any());
+    verify(outbox, never()).productUpdated(any());
   }
 
   @Test
@@ -138,5 +151,8 @@ class ProductServiceTest {
     // Hard delete là thứ đã bị bỏ (TD-12): xoá row sẽ mất luôn SKU do ON DELETE CASCADE.
     verify(products, never()).delete(any());
     verify(skus).updateStatusByProductId(id, SkuStatus.ARCHIVED);
+    // Mốc thời gian trong event phải BẰNG `deleted_at` — một sự kiện, một mốc (không đọc lại đồng
+    // hồ ở chỗ thứ hai rồi lệch vài ms so với dữ liệu đã ghi).
+    verify(outbox).productArchived(id, NOW);
   }
 }

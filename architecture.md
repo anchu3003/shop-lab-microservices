@@ -4,7 +4,7 @@
 |---|---|
 | **Trạng thái** | `DRAFT v0.5` — Phase 0 · Phase 1 · Phase 2 **hoàn thành** (tag `phase-2`); Phase 3 (async & event-driven) đang làm: đã chốt contract event ([ADR-0007](docs/adr/0007-event-contract.md)) |
 | **Người thực hiện** | bạn + AI |
-| **Cập nhật lần cuối** | 2026-11-08 (`SL-3.0` — ADR-0007 contract event Phase 3) |
+| **Cập nhật lần cuối** | 2026-11-09 (`SL-3.6` — `catalog` outbox + `search-service` 8091 Postgres FTS + reconcile, §6.4) |
 | **Liên quan** | `AGENTS.md`, `Backlog.md`, `Backlog-phase-0.md`, `docs/adr/`, `docs/phases/` |
 
 ---
@@ -234,7 +234,7 @@ cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutt
 | `order-service` | Vòng đời order (**idempotent** theo `Idempotency-Key`), snapshot giá; orchestrator Saga (SL-2.6) | `orders`, `order_items`, `order_status_history`, `idempotency_keys`, `outbox` | PostgreSQL | REST + event | 2 |
 | `payment-service` | Payment intent (**idempotent**), nhận webhook provider (**idempotent** theo khoá tự nhiên), mock provider cho Phase 2; refund để Phase 6 | `payments`, `payment_webhook_events`, `idempotency_keys` (`transactions`/`refunds`/`outbox` chưa có) | PostgreSQL | REST + webhook | 2 |
 | `notification-service` | Email / SMS / Push theo template | `notification_logs`, `templates` | PostgreSQL | **async consumer** | 3 |
-| `search-service` | Index & query sản phẩm (full-text, filter, sort) | search index (không phải source of truth) | **PostgreSQL FTS** (Phase 3) → OpenSearch (Phase 8) | REST + consumer | 3 |
+| `search-service` | Index & query sản phẩm (full-text, filter, sort) | search index (không phải source of truth) | **PostgreSQL FTS** (Phase 3, port **8091**) → OpenSearch (Phase 8) | REST + consumer | 3 |
 | `review-service` | Review, rating, moderation | `reviews`, `ratings` | PostgreSQL | REST + event | 8 |
 | `shipping-service` | Tạo vận đơn, tracking status | `shipments`, `tracking_events` | PostgreSQL | REST + event | 8 |
 | `analytics-service` | Tổng hợp số liệu bán hàng / funnel | `fact_*`, `dim_*` | ClickHouse (hoặc Postgres) | **CDC / consumer** | 8 |
@@ -400,6 +400,35 @@ Luồng "đọc" bình thường (cache) khác hẳn luồng "tranh mua":
 Đòn bẩy chính (làm ở Phase 4–5): **cache pre-warm**, **atomic counter** (Redis `DECR` / Lua),
 **rate limit** nhiều tầng, **queue + backpressure**, **circuit breaker** để cắt tải chứ không sập,
 **graceful degradation** (tạm tắt review/rating/recommendation để giữ luồng checkout sống).
+
+### 6.4. Search index & reconcile (`SL-3.6`)
+
+`search-service` là **index**, không phải nguồn sự thật. Luồng:
+
+```
+catalog: UPDATE product + INSERT outbox            (1 transaction — ADR-0007 D4)
+   │  relay publish  product.updated.v1 / product.archived.v1
+   ▼
+q.search ──► search-service: UPSERT search_product (tsvector) / ARCHIVED
+   │
+   └─ API: GET /v1/search?q=&categoryId=&minPrice=&maxPrice=&page=&size=   (public, chỉ ACTIVE)
+
+POST /v1/admin/search/reindex (ADMIN) ──► đọc GET /v1/products theo lô ──► UPSERT + archive row mồ côi
+@Scheduled mỗi 10′ ──► so số row index vs catalog, lệch > 1% ⇒ log WARN (KHÔNG tự sửa)
+```
+
+Bốn quyết định đáng nhớ:
+
+1. **`max ≤ 2 s` đến từ outbox polling 1 s**, không phải từ webhook đồng bộ — catalog không chờ search.
+2. **`unaccent(simple)` + `plainto_tsquery`**: tiếng Việt không dấu vẫn khớp; ký tự `%`/`_` vô hại. Giới hạn
+   thật: không stemming, không từ đồng nghĩa (ghi rõ thay vì hứa quá).
+3. **Chốt thời gian khi ghi** (`updated_at <= EXCLUDED.updated_at`): event đến lệch thứ tự (at-least-once)
+   không thể ghi đè dữ liệu mới.
+4. **Reconcile có watermark** (`updated_at < mốc bắt đầu quét`) + idempotent (`UPSERT`) ⇒ dựng lại index
+   không archive oan product vừa tạo trong lúc quét, và gọi bao nhiêu lần cũng ra một kết quả.
+
+Phase 8 đổi engine sang OpenSearch: **thay storage, giữ nguyên contract event + API search** — đây là mục
+tiêu của cả phase, không phải chi tiết triển khai.
 
 ---
 
@@ -848,4 +877,4 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-07 | `SL-2.7`: thêm **`payment-service`** (8088, DB `payment`) — payment intent idempotent (`Idempotency-Key`), **mock provider** (fail-closed ngoài local), webhook **idempotent** theo khoá tự nhiên (`provider_event_id` PK + `provider_txn_id` UNIQUE) + **HMAC-SHA256 trên raw body** & timestamp window; bất biến tiền do CHECK canh (`amount > 0`, `SUCCEEDED ⇔ paid_at`); mỗi đơn tối đa 1 intent sống (unique index có điều kiện). Cập nhật §5, §6.2, §8.4 | bạn + AI |
 | 2026-11-07 | `SL-2.1`: thêm **`cart-service`** (8083) — service **đầu tiên không có Postgres**: Redis HASH `cart:<owner>` (owner = `u:<userId>` | `g:<guestToken>`), TTL **30 ngày** refresh mỗi lần ghi; mọi phép ghi chạy **Lua** (read-modify-write nguyên tử, bất biến `qty 1..999` + `maxLines` kiểm trong script); **guest cart** với token do **server** cấp (`POST /v1/carts/guest`, marker `cart:guest:<token>`); **merge khi login** cộng dồn + cap + xoá giỏ guest trong cùng script ⇒ gọi lại không cộng lần 2; gateway để `/v1/carts/**` **public** và cart tự phân xử danh tính. **Cart không snapshot giá** (quyết định A, `TD-20`) ⇒ cập nhật §5, §8.4 | bạn + AI |
 | 2026-11-08 | `SL-3.0` mở **Phase 3**: ADR-[0007](docs/adr/0007-event-contract.md) chốt **contract event** (envelope 7 field · routing key `<aggregate>.<event>.v<N>` · exchange `shoplab.events` + `shoplab.dlx` · queue theo consumer + DLQ · **at-least-once + dedupe `eventId`** · outbox **polling relay** · retry 3 → DLQ không auto-replay) + bảng 5 event khởi điểm; sửa §9.4 (bỏ "schema registry từ Phase 3" → version trong envelope), §5/§8.2/§11.2/§12 (search dùng **Postgres FTS** ở Phase 3, OpenSearch Phase 8) | bạn + AI |
-
+| 2026-11-09 | `SL-3.6`: thêm **`search-service`** (8091, DB `search`) — index product dựng từ event `product.updated.v1` / `product.archived.v1` (`catalog` phát qua outbox) + `GET /v1/search` (tsvector + GIN + unaccent) + `POST /v1/admin/search/reindex` (reconcile có watermark, idempotent) + job so số row lệch > 1% ⇒ WARN; §6.4 mô tả luồng + 4 quyết định; `TD-32` đóng (copy outbox lần 3 có ý thức), thêm `TD-33` (min_price chưa tính SKU override) | bạn + AI |

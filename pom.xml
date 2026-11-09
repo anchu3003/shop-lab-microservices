@@ -36,6 +36,7 @@
     <module>services/payment-service</module>
     <module>services/cart-service</module>
     <module>services/notification-service</module>
+    <module>services/search-service</module>
     <module>services/api-gateway</module>
   </modules>
 

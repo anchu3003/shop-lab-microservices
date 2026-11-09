@@ -6,6 +6,7 @@ import com.shoplab.commons.config.MissingConfigException;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * catalog-service — nguồn sự thật về category và product (SL-1.5).
@@ -14,11 +15,17 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
  * <b>ghi</b> được. Service này <b>tự verify JWT</b> thay vì tin header gateway gắn — defense in
  * depth: gọi thẳng port service vẫn phải có token hợp lệ.
  *
+ * <p><b>SL-3.6</b>: catalog là <b>producer</b> event — mỗi lần product đổi, một dòng ghi vào bảng
+ * {@code outbox} trong <b>cùng transaction</b> (xem {@code com.shoplab.catalog.outbox}), relay
+ * publish `product.updated.v1` / `product.archived.v1`. Catalog <b>không biết</b> ai consume (hôm
+ * nay là {@code search-service}, Phase 8 có thể là OpenSearch) — đảo chiều phụ thuộc.
+ *
  * <p>Database riêng ({@code catalog}), schema do Flyway quản lý — database per service (AGENTS.md
  * §6). Không biết gì về order/cart: giao tiếp qua API + event.
  */
 @SpringBootApplication
 @ConfigurationPropertiesScan
+@EnableScheduling
 public class CatalogServiceApplication {
 
   public static void main(String[] args) {
