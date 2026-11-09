@@ -16,9 +16,12 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * — khoá tự nhiên của provider ({@code provider_event_id}, {@code provider_txn_id}), không phải
  * khoá của client (`architecture.md` §6.2).
  *
- * <p>Phase 2 <b>không</b> gọi service khác: webhook chỉ cập nhật {@code payments}; việc chuyển
- * order sang {@code CONFIRMED} thuộc saga `SL-2.6` (nó giữ token của user). Database riêng ({@code
- * payment}) — database per service (AGENTS.md §6).
+ * <p><b>SL-3.5</b>: webhook chuyển intent sang {@code SUCCEEDED} sẽ ghi thêm một dòng <b>outbox</b>
+ * ({@code payment.succeeded.v1}) trong <b>cùng transaction</b>; relay publish lên broker để {@code
+ * order-service} tự chốt đơn. Payment vẫn <b>không gọi</b> service nào — nó chỉ phát sự kiện (đảo
+ * chiều phụ thuộc: order biết payment, payment không cần biết order).
+ *
+ * <p>Database riêng ({@code payment}) — database per service (AGENTS.md §6).
  */
 @SpringBootApplication
 @ConfigurationPropertiesScan

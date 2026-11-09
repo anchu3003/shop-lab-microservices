@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-3.11` ✅ **Done** — service token `client_credentials` + `aud`/`exp`) |
-| **Ticket tiếp theo** | `SL-3.5` — `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`** + `TD-25`; dùng service token của `SL-3.11`) *(merge bằng `--skip-ci-check` — `TD-28`)* |
+| **Ticket đang làm** | — (`SL-3.5` ✅ **Done** — `payment.succeeded.v1` ⇒ auto-confirm; **trả `TD-17`, `TD-25`**) |
+| **Ticket tiếp theo** | `SL-3.6` — `catalog` outbox + **`search-service`** (8090, Postgres FTS) + reconcile + `GET /v1/search` *(merge bằng `--skip-ci-check` — `TD-28`)* |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -19,7 +19,7 @@
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
-| 3 | Async & event-driven | 🟡 Đang làm (11 ticket) | 5 / 11 |
+| 3 | Async & event-driven | 🟡 Đang làm (12 ticket) | 7 / 12 |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
@@ -252,7 +252,7 @@ $ md5sum docs/api/openapi.yaml
 | 3 | `SL-3.2` | `service-commons`: `EventEnvelope` + publisher (confirm) + consumer base (retry → DLQ) + dedupe `processed_events` | M | ✅ Done |
 | 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | ✅ Done |
 | 5 | `SL-3.4` | **`notification-service`** (8089): consumer `order.confirmed` → email mock + retry + **DLQ** + `tools/dlq.sh` | M | ✅ Done |
-| 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`** + `TD-25`) | M | Todo (`SL-3.11` ✅) |
+| 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`** + `TD-25`) | M | ✅ Done |
 | 7 | `SL-3.6` | `catalog-service` outbox product event + **`search-service`** (8090, Postgres **FTS**) index + reconcile + `GET /v1/search` | M | Todo |
 | 8 | `SL-3.7` | E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml` | S | Todo |
 | 9 | `SL-3.8` | **Báo cáo async**: latency checkout · độ trễ confirm→email · throughput relay · DLQ = 0 dưới tải | S | Todo |
@@ -908,7 +908,7 @@ bật lại → notification_logs có thêm: 1     <-- message chờ trong queue
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo (đã đủ điều kiện: `SL-3.11` cung cấp service token) |
+| **Trạng thái** | Done ✅ (2026-11-09) |
 | **Phase** | 3 — Async & event-driven |
 | **Phụ thuộc** | `SL-3.2` · `SL-3.3` (khuôn outbox) · `SL-3.4` (khuôn consumer) · **`SL-3.11`** (token để gọi `commit` không cần user); chặn `SL-3.7`/`SL-3.8` |
 | **Ước lượng** | M |
@@ -941,13 +941,13 @@ dù tiền đã vào**. Phase 3 là lúc trả món nợ này đúng như điề
 
 **Acceptance Criteria**
 
-- [ ] Mock-pay **không** gọi `/confirm` ⇒ ≤ **2 s** sau: order `CONFIRMED`, `saga = CONFIRMED`, `stock.on_hand` giảm đúng,
+- [x] Mock-pay **không** gọi `/confirm` ⇒ ≤ **2 s** sau: order `CONFIRMED`, `saga = CONFIRMED`, `stock.on_hand` giảm đúng,
       voucher `COMMITTED`, `checkout_saga_steps` có `PAYMENT_EVENT_CONFIRM:OK`.
-- [ ] Gọi `/confirm` **sau** khi event đã confirm ⇒ **200** (idempotent), `stock`/voucher **không** bị trừ 2 lần.
-- [ ] Webhook lặp (cùng `provider_event_id`) ⇒ **không** sinh message `payment.succeeded.v2`, outbox vẫn 1 row.
-- [ ] `payment.succeeded` cho đơn đã `EXPIRED` ⇒ `ack`, log WARN, state **không** đổi, DLQ rỗng.
-- [ ] Broker chết lúc webhook ⇒ payment `SUCCEEDED` vẫn ghi DB + outbox `PENDING`; broker sống lại ⇒ event đi, order tự confirm.
-- [ ] `TD-17` → `✅ đã trả (SL-3.5)` (phần refund tách `TD` mới); `e2e-checkout`/`e2e-checkout-fail` không regress.
+- [x] Gọi `/confirm` **sau** khi event đã confirm ⇒ **200** (idempotent), `stock`/voucher **không** bị trừ 2 lần.
+- [x] Webhook lặp (cùng `provider_event_id`) ⇒ **không** sinh message `payment.succeeded.v2`, outbox vẫn 1 row.
+- [x] `payment.succeeded` cho đơn đã `EXPIRED` ⇒ `ack`, log WARN, state **không** đổi, DLQ rỗng.
+- [x] Broker chết lúc webhook ⇒ payment `SUCCEEDED` vẫn ghi DB + outbox `PENDING`; broker sống lại ⇒ event đi, order tự confirm.
+- [x] `TD-17` → `✅ đã trả (SL-3.5)` (phần refund tách `TD` mới); `e2e-checkout`/`e2e-checkout-fail` không regress.
 
 **Ghi chú kỹ thuật**
 
@@ -958,7 +958,101 @@ dù tiền đã vào**. Phase 3 là lúc trả món nợ này đúng như điề
 
 **Kết quả verify** *(điền khi Done)*
 
+CI **đang tắt** (`SL-3.10`/`TD-28`) ⇒ bằng chứng là `mvn verify` + e2e **local** + kịch bản chạy trên stack thật.
+
+**1. Test tự động** — `mvn -B -ntp verify` (12 module):
+
+```
+[INFO] BUILD SUCCESS
+TOTAL: Tests run: 756, Failures: 0, Errors: 0   (624 unit + 132 IT)   <-- +10 so với baseline SL-3.11 (746)
+  · order:   CheckoutFinishServiceEventTest (6 nhánh quyết định) · expire re-test (3: release bằng token ·
+             release lỗi vẫn expire · đơn không còn PENDING_PAYMENT thì không release)
+  · payment: PaymentWebhookServiceTest (+3: ghi outbox 1 lần · webhook lặp không ghi · FAILED không ghi)
+```
+
+**2. AC1 — mock-pay, KHÔNG gọi `/confirm`**
+
+```
+mock-pay → order CONFIRMED sau 1031 ms   (đơn thường)  ·  909 ms (đơn có voucher 10%)
+saga = CONFIRMED
+steps: STOCK_COMMIT:OK · VOUCHER_COMMIT:OK · PAYMENT_VERIFY:SKIPPED · PAYMENT_EVENT_CONFIRM:OK
+stock: 5 → 3 available (mua 2)          voucher: used=1 locked=0 (COMMITTED)
+outbox(payment): payment.succeeded.v1|SENT|attempts=1
+```
+
+**3. AC2 — `/confirm` sau khi event đã chốt**
+
+```
+confirm status = 200 · state = CONFIRMED   ·   stock vẫn 3 (KHÔNG trừ 2 lần)   ·   history 2 dòng (không thêm)
+```
+
+**4. AC3 — webhook lặp (cùng `provider_event_id`)**
+
+```
+lần 1: {"duplicate":false,"applied":false}      (intent đã SUCCEEDED ⇒ no-op, không ghi gì)
+lần 2: {"duplicate":true,"applied":false}
+outbox rows cho intent này = 1   ·   không có message `payment.succeeded.v2`
+```
+
+**5. AC4 — event cho đơn đã `EXPIRED`**
+
+```
+order status = EXPIRED (không đổi) · saga = EXPIRED · payment = SUCCEEDED · outbox = SENT
+q.order.dlq ready = 0
+log: "đơn 5ef18dca… ở saga EXPIRED — không chốt theo event … (cần xử lý tay)"
+```
+
+**6. AC5 — broker chết lúc webhook**
+
+```
+broker TẮT:  payment = SUCCEEDED · outbox = PENDING|attempts=3 · order = PENDING_PAYMENT
+broker BẬT:  order CONFIRMED sau 7.8 s · outbox = SENT|attempts=11 · saga = CONFIRMED · stock 3 → 2
+```
+
+**7. `TD-25` — sweeper release ngay (không chờ TTL)**
+
+```
+checkout (payment-window 20 s): reserved = 2
+order EXPIRED sau ~22 s  ⇒  HÀNG VỀ KHO sau ~0 s (reserved = 0)   <-- trước đây phải chờ TTL 15 phút
+steps: STOCK_RELEASE:OK · EXPIRE:OK
+```
+
+**8. Regression e2e**
+
+```
+== 17 PASS / 0 FAIL · 13 request · 683 ms      (e2e-smoke)
+== 27 PASS / 0 FAIL · 14 request · 1059 ms     (e2e-checkout)
+== 41 PASS / 0 FAIL / 0 SKIP · 37 request      (e2e-checkout-fail)
+```
+
 **Learning note** *(điền khi Done)*
+
+- **"Hai đường confirm" không phải vấn đề idempotency, mà là vấn đề *thứ tự kiểm tra***. Chốt đơn theo event phải loại
+  dần 5 khả năng trước khi chạm downstream: không có saga · saga đã `CONFIRMED` (bình thường, hai đường gặp nhau) · saga
+  chưa `COMPLETED_START` · `paymentIntentId` lệch · đơn không còn `PENDING_PAYMENT`. Bỏ bất kỳ bước nào thì hệ **chốt
+  nhầm đơn** — loại lỗi không sửa được bằng code (tiền đã thu, hàng đã giao). Vì thế test là **ma trận 6 nhánh**, không
+  phải "một happy path + một lỗi".
+- **Bằng chứng thanh toán đổi chỗ, không mất đi**: đường client gọi `/confirm` phải *hỏi* payment (`verifyPayment`);
+  đường event **không hỏi lại** vì event được phát ra ngay sau CAS `SUCCEEDED` của chính payment. Nếu vẫn gọi lại thì
+  vừa thừa (round-trip), vừa không làm được (không có token user) — và nếu cố tình dùng service token để gọi thì lại
+  biến một luồng *đã có bằng chứng* thành phụ thuộc runtime vào payment. Ghi `PAYMENT_VERIFY:SKIPPED` vào audit để
+  người đọc sau không tưởng là bước đó bị bỏ quên.
+- **Payload event phải có "khoá đối chiếu"**: `paymentIntentId` trong payload không phải để trang trí — nó là thứ duy
+  nhất phân biệt "event của đơn này" với "event bị route/replay sai". `orderId` một mình là chưa đủ.
+- **Ack cho kết cục nghiệp vụ, retry cho lỗi hạ tầng**: đơn `EXPIRED` mà tiền đã thu là chuyện phải **hoàn tiền tay**
+  (ack + log ERROR kèm `eventId`/`paymentIntentId`), còn inventory 503 là chuyện retry. Trộn hai loại này làm DLQ đầy
+  message "không retry được" và che mất sự cố thật.
+- **Sweeper release là chỗ dễ tạo bug bán quá tồn kho**: release *trước* khi CAS sang `EXPIRED` (đúng yêu cầu `TD-25`:
+  hàng về ngay) mở một cửa sổ rất hẹp — nếu một confirm chen vào giữa thì hàng đã trả cho đơn vẫn được bán. Chặn bằng
+  cách kiểm `orders.status = PENDING_PAYMENT` **trước** khi release, và log WARN nếu CAS sau đó trả `false` (nghĩa là
+  release đã chạy nhưng đơn không expire được ⇒ phải kiểm tay). Cửa sổ không về 0, nhưng nó **nhìn thấy được**.
+- **Bài học cũ lặp lại y nguyên**: `@ConfigurationProperties` inject một bean không tồn tại (`ObjectMapper` của Jackson 2)
+  làm **context fail** — lần này ở IT của order-service. Cùng họ với `SL-3.3` (`JdbcOutboxRepository` tự tạo mapper).
+  Với hạ tầng dùng chung trong `service-commons`, **không được giả định bean nào có mặt**: hoặc tự tạo, hoặc
+  `@ConditionalOnBean` + fail mềm.
+- **Copy khuôn outbox lần 2 là quyết định có ý thức, không phải lười**: 2 service cần đúng 500 dòng giống nhau. Nhưng
+  lần thứ 3 (`SL-3.6` catalog) là lúc phải extract vào commons — đã ghi `TD-32` với điều kiện revisit rõ ràng, để "lần
+  sau" không trôi thành "không bao giờ".
 
 ### SL-3.11 — Service-to-service auth: `client_credentials` + `aud`/`exp` (tách từ `SL-3.5`)
 
@@ -1633,6 +1727,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 | 2026-11-08 | SL-3.2 | **`@ConditionalOnBean` là điều kiện *theo thời điểm*, không phải "bean này sẽ có"**: auto-config chạy theo thứ tự, điều kiện chỉ thấy bean đã đăng ký **trước** nó. Thiếu `after`/`afterName` ⇒ điều kiện âm thầm `false` ⇒ store dedupe không được tạo, bảng `processed_events` không xuất hiện, **không một dòng lỗi** — cùng họ với `SL-3.1` (`RabbitAdmin` khai lazy): code đúng, hệ không làm gì, log sạch. Cách phát hiện duy nhất: kiểm **trạng thái của hệ ngoài** (bảng trong DB, exchange trên broker), không kiểm "service healthy". Phụ: Boot 4 đặt `JdbcTemplateAutoConfiguration` ở module `spring-boot-jdbc` ⇒ dùng `afterName` (string) để commons không phải kéo dependency chỉ vì một cái tên. Hai bài học thiết kế: (1) **marker dedupe phải xoá khi xử lý fail** — nếu chỉ `insert` trước handler thì DLQ replay bị chính marker chặn, message nằm trong DLQ mà không bao giờ chạy lại; (2) **`AcknowledgeMode.MANUAL` là điều kiện của DLQ** — auto-ack nghĩa là message "xong" ngay khi listener trả về ⇒ không còn cơ hội `nack` khi fail ⇒ mất message im lặng. |
 
+| 2026-11-09 | SL-3.5 | **Hai đường confirm: cái khó là *thứ tự kiểm tra*, không phải idempotency** — chốt đơn theo `payment.succeeded.v1` phải loại dần 5 khả năng (không saga · saga đã `CONFIRMED` · saga chưa `COMPLETED_START` · `paymentIntentId` lệch · đơn không còn `PENDING_PAYMENT`) trước khi chạm downstream; bỏ bước nào cũng là **chốt nhầm đơn đã trả tiền** (lỗi không sửa được bằng code). Bằng chứng thanh toán *đổi chỗ*: đường client hỏi payment (`verifyPayment`), đường event không hỏi lại (event phát ngay sau CAS `SUCCEEDED`) nhưng vẫn ghi `PAYMENT_VERIFY:SKIPPED` vào audit. `paymentIntentId` trong payload là **khoá đối chiếu**, không phải trang trí. **Ack cho kết cục nghiệp vụ, retry cho lỗi hạ tầng** (đơn `EXPIRED` + tiền đã thu = hoàn tiền tay ⇒ ack + log ERROR; inventory 503 = retry). `TD-25` release-trước-CAS mở cửa sổ bán quá tồn kho ⇒ chặn bằng kiểm `PENDING_PAYMENT` trước khi release + WARN khi CAS trả `false`. Và bài học cũ lặp lại: `@ConfigurationProperties` inject bean `ObjectMapper` (Jackson 2) không tồn tại ⇒ **context fail cả IT** — hạ tầng commons **không được giả định bean nào có mặt**. |
+
 | 2026-11-08 | SL-3.11 | **Service-to-service auth: phần khó là *biết ai gọi*, không phải *gọi được*** — shared secret (phương án A) xong trong 30 phút nhưng mọi service dùng chung một danh tính: log không phân biệt được ai, và một chỗ rò rỉ mở toàn bộ endpoint chỉ-cần-`authenticated()`. `aud` + `sub=svc:<name>` biến "có request nội bộ" thành "**order-service** gọi **inventory** trong 5 phút tới". Hai bug thật: (1) `@ConfigurationProperties` **record lồng record** (`record Clients(Map…)`) làm path bind thành `clients.clients.<id>` ⇒ map rỗng ⇒ mọi request 401 "sai secret" (triệu chứng dối, đọc log tưởng sai secret); map phải là field trực tiếp, và map key có `-` đặt bằng property phẳng phải viết `clients[order-service].secret`. (2) Test JWT dùng mốc thời gian cố định ⇒ `JwtValidators` so `exp` với *now* ⇒ token "hết hạn ngay khi tạo", 3 test đỏ với thông báo chỉ nói "Jwt expired" ⇒ mốc phải là `Instant.now()`. Và: **chuẩn thắng kỳ vọng** — AC mình viết "sai audience ⇒ 403", đo thật Spring trả **401 `invalid_token`** (đúng: 403 dành cho "đã xác thực thiếu quyền") ⇒ sửa AC, không uốn code cho khớp giấy. |
 
 | 2026-11-08 | SL-3.4 | **Replay DLQ không phải "publish lại payload"** — trong DLQ, `routing_key` của message là **tên queue** (`q.notification`) vì DLX đặt routing key = tên queue (ADR-0007 D2); routing key gốc nằm ở header `x-death[0].routing-keys`. Bản đầu `tools/dlq.sh move` publish lại bằng `routing_key` hiện tại ⇒ `routed=false` ⇒ message **bị ack khỏi DLQ rồi rơi vào hư không**, không một lỗi nào (đúng họ "lỗi im lặng" của `SL-3.1`/`SL-3.2`). Nguyên tắc cho tool vận hành: **peek trước, consume sau** — validate xong mới `ack`, và parse lỗi phải là **no-op**. Kèm bài học bash: `python3 -c "…nhiều dòng…"` trong `"$( … )"` là bẫy thật — parse trả rỗng *sau khi* message đã bị `get` mất; chuyển sang **file python tạm + heredoc quoted** là hết lớp lỗi này. Thứ hai: **property của Boot chỉ áp cho bean của Boot** — `spring.rabbitmq.listener.simple.auto-startup=false` không chạm tới `eventListenerContainerFactory` tự khai (cần `AcknowledgeMode.MANUAL`) ⇒ IT không có broker chết với `FatalListenerStartupException: Authentication failure`, **đỏ cả 17 test** dù logic đúng; phải tự khai công tắc (`shoplab.events.consumer-auto-startup`). Thứ ba, về thiết kế: **dedupe là điều kiện của retry** (marker phải bị xoá khi handler fail, nếu không DLQ replay bị chính marker chặn) và **async đổi "chặn" lấy "im lặng"** — service chết thì confirm vẫn 200 (đúng), message chờ trong queue rồi xử lý khi consumer sống lại, nhưng consumer chết **mãi** thì không ai biết ⇒ phải có metric queue depth (§`SL-3.8`/`SL-3.9`). |
@@ -1663,19 +1759,21 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-14` | Bảng `idempotency_keys` không có job dọn row quá 24h ⇒ phình dần (1 row/request checkout) | SL-2.0 | **Đã trả ở `SL-2.5`**: `IdempotencySweeper` (COMPLETED > 24h, IN_PROGRESS > 1h, batch 200) | ✅ đã trả (SL-2.5) |
 | `TD-15` | Reservation sweeper là `@Scheduled` in-process ⇒ chạy trùng khi `inventory-service` > 1 instance | SL-2.0 | **Đã trả ở `SL-2.3`**: `FOR UPDATE SKIP LOCKED` + conditional `markStatus` ⇒ N instance vẫn không trả chỗ 2 lần | ✅ đã trả (SL-2.3) |
 | `TD-16` | Chưa có API **restore/unarchive** product đã xoá mềm; bán lại cùng product phải tạo mới | SL-2.0 | Khi seller ẩn nhầm cần khôi phục **hoặc** có UI quản trị product | thấp |
-| `TD-17` | Webhook `payment.succeeded` **không** cập nhật order (Phase 2 chưa có broker) ⇒ nếu saga không chạy, tiền đã thu mà đơn vẫn `PENDING_PAYMENT`; chưa có `refund`/`transactions` để hoàn tiền ca này | SL-2.7 | Khi làm `SL-2.6`/`SL-2.9` (test compensating thấy ca này) **hoặc** khi Phase 3 có event `payment.succeeded` | cao |
+| `TD-17` | Webhook `payment.succeeded` **không** cập nhật order (Phase 2 chưa có broker) ⇒ nếu saga không chạy, tiền đã thu mà đơn vẫn `PENDING_PAYMENT`; chưa có `refund`/`transactions` để hoàn tiền ca này | SL-2.7 | Khi làm `SL-2.6`/`SL-2.9` (test compensating thấy ca này) **hoặc** khi Phase 3 có event `payment.succeeded` | ✅ đã trả (SL-3.5) |
 | `TD-18` | Webhook dùng **một** HMAC secret tĩnh, không key id/rotation; không lưu raw body (chỉ sha256) nên điều tra tranh chấp phải xin lại provider | SL-2.7 | Khi nối provider thật (Stripe/VNPay) — họ có key id + rotation riêng | thấp |
 | `TD-19` | Idempotency store (`idempotency_keys` + `IdempotencyService`) **copy lần 2** (order, payment) chưa có module chung ở `packages/` | SL-2.7 | Khi có service thứ 3 cần idempotency (dự kiến không có ở Phase 2 ⇒ quyết ở `SL-2.12` hoặc Phase 3) | thấp |
 | `TD-20` | Cart **không** lưu `price_snapshot` và không gọi catalog (quyết định `SL-2.1`) ⇒ hiển thị giá trong giỏ phải gọi catalog riêng; giỏ không phát hiện được SKU đã archive/đổi giá | SL-2.1 | **`SL-2.13` đã có `GET /v1/skus?ids=` (batch)** ⇒ phần còn lại chỉ là UI/gateway gọi endpoint đó (làm ở `SL-2.8`) | trung bình |
 | `TD-22` | `GET /v1/skus?ids=` là **public**, nhận tới 100 id, **chưa rate limit** và **chưa cache** ⇒ 1 client có thể dội tải catalog (100 id/request) hoặc dùng làm đòn bộc phát | SL-2.13 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi đo được p99 list/get của catalog tăng do traffic `/v1/skus` (Phase 4 — cache-aside) | thấp |
 | `TD-23` | IT `inventory`: `commitAfterExpiryReturnsGone` **flaky** — test đẩy `expires_at` về quá khứ rồi `commit`, nhưng sweeper trong IT chạy mỗi **300 ms** nên có lúc nó expire trước ⇒ `commit` trả **409** thay vì **410** (đỏ trên CI chậm, xanh ở máy local) | SL-2.13 (CI run `42444551383`) | Lần tới khi sửa test của inventory: tắt sweeper (`sweep-interval-ms` rất lớn) cho test lazy-expire, hoặc assert `status ∈ {410, 409}` + kiểm `reserved = 0` (điều thực sự quan trọng) | trung bình |
 | `TD-24` | `checkout_saga_steps` + `checkout_sagas` **không có job dọn** — 1 dòng/bước/lần checkout ⇒ phình mãi (audit nhưng không ai đọc sau 30 ngày) | SL-2.6a | Khi bảng > 10⁶ row hoặc khi `SL-2.6b` thêm sweeper (gộp 1 `@Scheduled` dọn saga `COMPLETED_START`/`FAILED_*` cũ > 30 ngày) | thấp |
-| `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | thấp |
+| `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | ✅ đã trả (SL-3.5) |
 | `TD-26` | `build-image` (CI) **flaky** khi Maven Central tạm thời không trả artifact: mỗi image `mvn package` từ đầu KHÔNG cache Maven ⇒ gặp hiccup là đỏ oan (gặp thật ở `SL-2.8`: `spring-boot-dependencies:4.1.2 … absent in central`, rerun thì xanh) | SL-2.8 (run `42451712993`) | Phase 7: registry + **cache layer Maven** (`--mount=type=cache` hoặc image builder có `.m2` ấm) ⇒ build nhanh và bớt phụ thuộc Central | thấp |
 | `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
 | `TD-29` | Bảng `outbox` **không có job dọn** row `SENT` ⇒ 1 row/event/lần checkout, phình dần. Hệ quả phụ: đường quét `WHERE status = 'PENDING'` vẫn dùng index riêng nên không chậm, nhưng backup/disk thì lớn lên | SL-3.3 | **Đã trả ở `SL-3.7`** (chưa) — revisit khi bảng > 10⁶ row hoặc khi `notification-service` (`SL-3.4`) xong: gộp 1 job retention cho `outbox` + `processed_events` (giữ 7 ngày để còn điều tra) | trung bình |
 | `TD-28` | **CI đang TẮT tạm thời** (`vars.CI_ENABLED=false`, từ `SL-3.10`) để tăng tốc merge Phase 3 ⇒ mất 3 hàng rào tự động: `test` + JaCoCo gate độc lập, `lint` trong môi trường sạch, và **`build-image` matrix** (chốt duy nhất bắt lỗi Dockerfile/COPY pom khi thêm module/service). Verify chuyển sang **local** (`mvn verify` + e2e) do người/AI tự khai | SL-3.10 | **Bắt buộc** bật lại khi đóng Phase 3 (`gh variable delete CI_ENABLED`) — hoặc sớm hơn nếu có ≥ 1 lần `main` đỏ mà local xanh | cao |
 | `TD-30` | `notification_logs` + `processed_events` **không có job dọn**: `processed_events` tăng 1 row/event/consumer **vĩnh viễn** (không xoá được vì dedupe cần), `notification_logs` tăng 1 row/đơn đã confirm — sau 1 năm là chục triệu row ở cả 2 bảng | SL-3.4 | Gộp vào **cùng job retention** với `TD-29`: `processed_events` giữ ≥ 7 ngày (đủ dài hơn max retry + replay tay), `notification_logs` giữ theo yêu cầu nghiệp vụ (≥ 90 ngày). Revisit khi bảng > 10⁶ row **hoặc** khi làm `SL-3.7`/`SL-3.9` (job/runbook) | trung bình |
+| `TD-31` | **Không có refund**: ca `payment.succeeded` cho đơn đã `EXPIRED`/`CANCELLED` (tiền đã thu, hàng đã trả) hiện chỉ log ERROR `TIỀN ĐÃ THU … cần hoàn tiền tay`. Chưa có bảng `refunds`/`transactions`, chưa có API hoàn tiền | SL-3.5 | Phase 6 (refund) hoặc ngay khi có ≥ 1 ca thật cần hoàn tiền trong môi trường chạy thật | cao |
+| `TD-32` | **Outbox bị copy 2 lần** (`order` SL-3.3, `payment` SL-3.5) và `SL-3.6` (catalog) sẽ là lần thứ 3: ~500 dòng gần giống nhau (record/repository/relay/properties/DDL) ở mỗi service | SL-3.5 | Khi làm `SL-3.6` — extract `OutboxAutoConfiguration` vào `service-commons` (bảng + relay + properties dùng chung, service chỉ khai `outbox.append(...)`) hoặc chấp nhận copy lần 3 và đóng nợ bằng lý do rõ ràng | trung bình |
 
 
 ## 8. Changelog
@@ -1768,3 +1866,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | `SL-3.3` → `Done`: **transactional outbox ở `order-service`** — migration `V4__create_outbox.sql` (`outbox` + `status PENDING/SENT` + CHECK `SENT ⇒ sent_at` + index riêng cho `PENDING` + `claimed_at` để 2 relay không gửi trùng) · `OutboxRepository`/`JdbcOutboxRepository` (`claimPending` = 1 câu `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING`, `markSent`, `markFailed` trả claim) · **`CheckoutOutbox`** (bean riêng `@Transactional`: `confirm`/`cancel` ghi order + saga + outbox **cùng transaction** — self-invocation sẽ bỏ qua proxy) · **`OutboxRelay`** (`@Scheduled` 1 s, batch 100, **`eventId = outbox.id`** để retry giữ nguyên id cho dedupe của consumer, lỗi 1 row không chặn row khác) · `OutboxProperties` + env compose. **2 bug thật**: (a) thiếu `spring.rabbitmq.publisher-confirm-type=correlated` ⇒ `getFuture()` không bao giờ complete ⇒ mỗi publish treo 5 s (outbox cứu: event không mất, chỉ trễ); (b) `JdbcOutboxRepository` đòi bean `ObjectMapper` ⇒ IT đỏ 28/28 ⇒ tự tạo mapper. Verify: **mvn verify BUILD SUCCESS · 687 test (566 unit + 121 IT)** · stack thật: confirm ⇒ `PENDING|0` → `SENT|1` + message `q.notification` · **broker chết ⇒ order vẫn `CONFIRMED`**, row `PENDING` `attempts=11`, bật lại ⇒ `SENT` · cancel ⇒ `order.cancelled.v1|SENT` · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-29` (chưa có job dọn row `SENT`). |
 | 2026-11-08 | `SL-3.4` → `Done`: **`notification-service` (8089)** — service mới (`notification` DB riêng, Flyway `V1`: `notification_logs` + `notification_templates` seed 2 mẫu + `processed_events`) · consumer `q.notification` (`order.confirmed.v1` / `order.cancelled.v1`) **không viết lại hạ tầng**: chỉ override `consumerName()`/`handledEventTypes()`/`handleEvent()` trên `AbstractEventConsumer` (~60 dòng, 0 dòng retry/DLQ/dedupe) · `TemplateRenderer` placeholder `{{var}}` (không engine) · `GET /v1/notifications/me` (userId từ claim `sub`, `?limit` bị chặn bởi trần cấu hình) · `SHOPLAB_NOTIFICATION_FAIL_MODE` **fail-closed** (chỉ `env=local`) để test retry/DLQ · **`tools/dlq.sh`** `list|peek|move|purge` — replay đọc **routing key gốc từ `x-death`**, `peek` trước rồi mới `ack`. Hạ tầng: commons thêm cờ `shoplab.events.consumer-auto-startup` (property `spring.rabbitmq.listener.simple.auto-startup` của Boot **không** áp cho container factory tự khai ⇒ IT đỏ 17 test), compose + gateway route + CI matrix + `.env.example`. **Bug thật**: `dlq.sh move` bản đầu publish bằng `routing_key` hiện tại = tên queue ⇒ `routed=false` ⇒ **mất message**; parse `python3 -c` nhiều dòng trong `$( )` cũng làm rơi 1 message (chuyển sang file python tạm). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 730 test (600 unit + 130 IT)** · async thật: publish → row sau **239 ms** · dedupe: cùng `eventId` 2 lần ⇒ **1 row** · fail-mode ⇒ `ready=0 unacked=0` + `q.notification.dlq ready=1`, `dlq.sh move` ⇒ DLQ `1→0` + `notification_logs` +1 · `docker stop` notification ⇒ confirm vẫn **200**, bật lại ⇒ message được xử lý · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-30` (retention `notification_logs` + `processed_events`).
 | 2026-11-08 | `SL-3.11` → `Done`: **service-to-service auth** (`client_credentials` + `aud`/`exp`, **ADR-0008**) — `identity-service`: `POST /v1/auth/service-token` (`clientId`+`clientSecret`+`audience`) ⇒ JWT RS256 `role=SERVICE`, `aud=[service đích]`, `exp=5m`, `sub=svc:<client>`, `jti`; registry client trong config (`shoplab.service-auth.clients[<id>].secret` từ env + `allowed-audiences`), secret so sánh **hằng thời gian**, client lạ/sai secret trả **cùng** 401; `service-commons`: `ServiceTokenClient` (cache tới `exp-30s`, một khoá cho lần nạp, **không cache lỗi**, `invalidate` khi 401) + `HttpServiceTokenSource` (JDK `HttpClient`) + `ServiceTokenRules.validator(issuer, serviceName)` (kiểm `aud` **chỉ khi** `role=SERVICE`); `inventory` + `promotion` dùng validator đó. Compose/`.env.example`: `ORDER_SERVICE_CLIENT_SECRET` (**không default** ⇒ thiếu env là identity không khởi động). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 746 test (614 unit + 132 IT)** · stack thật: token `expiresIn=300 role=SERVICE aud=inventory-service sub=svc:order-service` · sai secret **401**, `aud=payment-service` **400** (allowlist) · `inventory` + đúng `aud` **404** (qua auth) vs sai `aud` **401 `invalid_token`** · `promotion` + đúng `aud` **403** (thiếu role ADMIN) vs sai `aud` **401** · token user không hồi quy (404) · e2e 17/17 · 27/27 · 41/41. **2 bug thật**: record lồng record làm bind `clients.clients.*` ⇒ map rỗng ⇒ 401 "sai secret"; test JWT mốc cố định ⇒ token hết hạn ngay khi tạo. |
+| 2026-11-09 | `SL-3.5` → `Done` (**trả `TD-17` + `TD-25`**): **`payment.succeeded.v1` ⇒ order tự confirm** — `payment-service`: migration `V2__create_outbox.sql` (DDL chép khuôn `SL-3.3` + **unique index** `ux_outbox_payment_succeeded` để 1 intent chỉ phát 1 event), outbox package (record/repository/relay/properties/`PaymentEvents`), `PaymentWebhookService` ghi outbox **trong cùng transaction** ở nhánh transition thật sang `SUCCEEDED` (nhánh idempotent-return không ghi), `spring-boot-starter-amqp` + `publisher-confirm-type: correlated`. `order-service`: `PaymentSucceededConsumer` (`q.order`, dùng lại `AbstractEventConsumer`), `CheckoutFinishService.confirmByEvent` (**ma trận 5 nhánh** trước khi chạm downstream · `paymentIntentId` phải khớp saga · **bỏ** `verifyPayment` nhưng ghi step `PAYMENT_VERIFY:SKIPPED` · step mới `PAYMENT_EVENT_CONFIRM`), commit/release gọi bằng **service token** (`SL-3.11`) nên **sweeper release ngay** thay vì chờ TTL (`TD-25`); `CheckoutStep` + `PAYMENT_EVENT_CONFIRM`. Hạ tầng: order khai `shoplab.service-auth.*` + compose env, `outputs`; commons `HttpServiceTokenSource` **tự tạo ObjectMapper** (bài học: inject bean Jackson 2 làm context fail IT). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 756 test (624 unit + 132 IT)** · mock-pay **không** gọi `/confirm` ⇒ CONFIRMED sau **1031 ms** (909 ms khi có voucher), saga `CONFIRMED`, steps `STOCK_COMMIT:OK`/`VOUCHER_COMMIT:OK`/`PAYMENT_VERIFY:SKIPPED`/`PAYMENT_EVENT_CONFIRM:OK`, voucher `used=1 locked=0` · `/confirm` sau đó **200**, stock **không** trừ 2 lần, history 2 dòng · webhook lặp ⇒ `duplicate:true`, outbox **1 row** · đơn `EXPIRED` ⇒ ack + WARN, state không đổi, **DLQ 0** · broker chết ⇒ `SUCCEEDED` + outbox `PENDING`, bật lại ⇒ tự confirm sau **7.8 s** · sweeper: `EXPIRED` ⇒ hàng về kho **~0 s** (`STOCK_RELEASE:OK`) · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-31` (refund), `TD-32` (extract outbox). |

@@ -29,12 +29,18 @@ public class HttpServiceTokenSource implements ServiceTokenClient.TokenSource {
   private static final Duration READ_TIMEOUT = Duration.ofSeconds(3);
 
   private final ServiceTokenProperties properties;
-  private final ObjectMapper objectMapper;
+  //
+  // Tự tạo mapper thay vì inject bean: service KHÔNG có web layer (worker/consumer) không có bean
+  // `com.fasterxml.jackson.databind.ObjectMapper` — Boot 4 mặc định Jackson 3 (`tools.jackson`).
+  // Inject sẽ làm **context fail** ngay lúc khởi động (bẫy thật gặp ở IT của SL-3.5: "required a
+  // bean
+  // of type ObjectMapper that could not be found"). Cùng cách làm với `JdbcOutboxRepository`
+  // (SL-3.3).
+  private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
   private final HttpClient http;
 
-  public HttpServiceTokenSource(ServiceTokenProperties properties, ObjectMapper objectMapper) {
+  public HttpServiceTokenSource(ServiceTokenProperties properties) {
     this.properties = properties;
-    this.objectMapper = objectMapper;
     this.http = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build();
   }
 

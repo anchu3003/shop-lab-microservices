@@ -372,6 +372,13 @@ Cách xử lý:
 - Webhook **không** gọi `order-service`: chuyển order sang `CONFIRMED` thuộc saga (`SL-2.6`, nó giữ
   token user). Hệ quả đã ghi ở `TD-17`.
 
+**Cập nhật `SL-3.5`** (đã trả `TD-17` + `TD-25`): webhook chuyển intent sang `SUCCEEDED` ghi thêm một dòng
+**outbox** (`payment.succeeded.v1`) trong **cùng transaction**; relay publish, `order-service` consume `q.order` và
+tự commit stock/voucher bằng **service token** (`SL-3.11`, ADR-0008) rồi chốt đơn. Hai đường confirm (client gọi
+`/confirm` và event) cùng đi qua **một** compare-and-set trên `orders` ⇒ không chốt 2 lần; ca tiền đã thu mà đơn đã
+`EXPIRED` chỉ còn log ERROR + `TD-31` (refund, Phase 6). Sweeper hết hạn đơn giờ gọi `release` trực tiếp (không chờ
+TTL của inventory/promotion).
+
 ### 6.3. Flash sale — bài toán spike
 
 Luồng "đọc" bình thường (cache) khác hẳn luồng "tranh mua":

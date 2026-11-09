@@ -1,6 +1,5 @@
 package com.shoplab.commons.serviceauth;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -26,9 +25,7 @@ public class ServiceTokenClientAutoConfiguration {
 
   @Bean
   @ConditionalOnMissingBean
-  public ServiceTokenClient serviceTokenClient(
-      ServiceTokenProperties properties, ObjectMapper objectMapper) {
-    return new ServiceTokenClient(
-        new HttpServiceTokenSource(properties, objectMapper), properties.ttlSkew());
+  public ServiceTokenClient serviceTokenClient(ServiceTokenProperties properties) {
+    return new ServiceTokenClient(new HttpServiceTokenSource(properties), properties.ttlSkew());
   }
 }

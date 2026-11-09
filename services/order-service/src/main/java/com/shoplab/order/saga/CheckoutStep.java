@@ -25,5 +25,13 @@ public enum CheckoutStep {
   /** `SL-2.6b` (cancel): trả lượt voucher. */
   VOUCHER_RELEASE,
   /** `SL-2.6b` (sweeper): đơn quá `payment-window` chưa thanh toán ⇒ `EXPIRED`. */
-  EXPIRE
+  EXPIRE,
+  /**
+   * `SL-3.5`: chốt đơn do **event** `payment.succeeded.v1` (không phải client gọi `/confirm`).
+   *
+   * <p>Tách khỏi `PAYMENT_VERIFY` có chủ ý: hai đường confirm phải nhìn ra được trong audit, nếu
+   * không thì "vì sao đơn này CONFIRMED" chỉ còn là suy đoán. Ở đường event, `PAYMENT_VERIFY` ghi
+   * `SKIPPED` (event của chính payment là bằng chứng — gọi lại là thừa và không có token user).
+   */
+  PAYMENT_EVENT_CONFIRM
 }

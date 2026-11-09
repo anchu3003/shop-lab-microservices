@@ -3,6 +3,7 @@ package com.shoplab.order.saga;
 import com.shoplab.commons.error.AppException;
 import com.shoplab.commons.error.ErrorCode;
 import com.shoplab.commons.error.NotFoundException;
+import com.shoplab.commons.serviceauth.ServiceTokenClient;
 import com.shoplab.order.order.OrderRecord;
 import com.shoplab.order.order.OrderRepository;
 import com.shoplab.order.order.OrderStatus;
@@ -14,6 +15,7 @@ import com.shoplab.order.saga.downstream.PaymentStatusResponse;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -46,6 +48,7 @@ public class CheckoutFinishService {
   private final OrderRepository orders;
   private final OrderWriter writer;
   private final CheckoutOutbox finalizer;
+  private final ServiceTokenClient serviceTokens;
   private final Clock clock;
 
   public CheckoutFinishService(
@@ -54,12 +57,14 @@ public class CheckoutFinishService {
       OrderRepository orders,
       OrderWriter writer,
       CheckoutOutbox finalizer,
+      ServiceTokenClient serviceTokens,
       Clock clock) {
     this.downstream = downstream;
     this.sagas = sagas;
     this.orders = orders;
     this.writer = writer;
     this.finalizer = finalizer;
+    this.serviceTokens = serviceTokens;
     this.clock = clock;
   }
 
@@ -128,6 +133,106 @@ public class CheckoutFinishService {
   // __FINISH_PART2__
 
   /**
+   * Audience của 2 service đích — trùng `spring.application.name` của chúng (điều kiện của `aud`).
+   */
+  private static final String INVENTORY_AUDIENCE = "inventory-service";
+
+  private static final String PROMOTION_AUDIENCE = "promotion-service";
+
+  /**
+   * Chốt đơn do **event** `payment.succeeded.v1` (SL-3.5, trả `TD-17`) — đường thứ hai, không có
+   * token người dùng.
+   *
+   * <p><b>Vì sao thứ tự kiểm tra quan trọng</b>: đây là chỗ dễ chốt nhầm nhất trong hệ. Mỗi nhánh
+   * "không chốt được" phải **ack** (ném ra là message vào DLQ rồi quay lại vô ích ở lần replay sau)
+   * và **log đủ dữ kiện** để người trực xử lý tay — vì những ca đó là chuyện tiền, không phải
+   * chuyện message.
+   *
+   * <p><b>Vì sao không gọi {@code verifyPayment}</b>: event được phát ra từ chính `payment-service`
+   * ngay sau khi nó CAS intent sang `SUCCEEDED` — gọi lại API payment chỉ tốn round-trip và không
+   * có token user để gọi. Bằng chứng thanh toán ở đây là **envelope** (khoá `eventId` do outbox giữ
+   * ổn định), cộng thêm 2 chốt: `paymentIntentId` phải khớp saga + consumer dedupe theo `eventId`.
+   *
+   * @param eventId id envelope — chỉ dùng cho log/audit (dedupe đã do consumer base lo)
+   * @param payload payload đã decode (`orderId`, `paymentIntentId`, …)
+   */
+  public void confirmByEvent(String eventId, Map<String, Object> payload) {
+    UUID orderId = uuidOrNull(payload, "orderId");
+    UUID intentId = uuidOrNull(payload, "paymentIntentId");
+    if (orderId == null || intentId == null) {
+      LOG.warn("payment.succeeded thiếu orderId/paymentIntentId (event={}) — bỏ qua", eventId);
+      return;
+    }
+
+    Optional<CheckoutSagaRecord> found = sagas.findById(orderId);
+    if (found.isEmpty()) {
+      LOG.warn(
+          "payment.succeeded cho đơn không có saga (order={} event={}) — bỏ qua", orderId, eventId);
+      return;
+    }
+    CheckoutSagaRecord saga = found.get();
+    if (saga.state() == CheckoutSagaState.CONFIRMED) {
+      // Hai đường confirm (client + event) là chấp nhận có chủ ý ⇒ gặp nhau ở đây là chuyện bình
+      // thường, không phải lỗi.
+      LOG.info("đơn {} đã CONFIRMED trước đó — bỏ qua event {}", orderId, eventId);
+      return;
+    }
+    if (saga.state() != CheckoutSagaState.COMPLETED_START) {
+      LOG.warn(
+          "đơn {} ở saga {} — không chốt theo event {} (cần xử lý tay)",
+          orderId,
+          saga.state(),
+          eventId);
+      return;
+    }
+    if (saga.paymentIntentId() == null || !saga.paymentIntentId().equals(intentId)) {
+      // Chốt nhầm đơn đã trả tiền là lỗi không sửa được bằng code ⇒ từ chối + log to.
+      LOG.warn(
+          "payment.succeeded KHÔNG khớp intent: đơn {} cần {} nhưng event {} báo {} — không chốt",
+          orderId,
+          saga.paymentIntentId(),
+          eventId,
+          intentId);
+      return;
+    }
+    Optional<OrderRecord> order = orders.findById(orderId);
+    if (order.isEmpty() || order.get().status() != OrderStatus.PENDING_PAYMENT) {
+      // Ca nghiệp vụ thật: tiền đã về nhưng đơn đã EXPIRED/CANCELLED ⇒ phải hoàn tiền (Phase 6).
+      LOG.error(
+          "TIỀN ĐÃ THU nhưng đơn {} đang {} (event={}, paymentIntent={}) — cần hoàn tiền tay; xem TD-31",
+          orderId,
+          order.map(o -> o.status().name()).orElse("KHÔNG TỒN TẠI"),
+          eventId,
+          intentId);
+      return;
+    }
+
+    addStep(
+        orderId,
+        CheckoutStep.PAYMENT_VERIFY,
+        SagaStepRecord.SagaStepStatus.SKIPPED,
+        null,
+        System.nanoTime(),
+        "đã có payment.succeeded.v1 (event=" + eventId + ")");
+
+    commitStock(saga, serviceTokens.tokenFor(INVENTORY_AUDIENCE));
+    commitVoucher(saga, serviceTokens.tokenFor(PROMOTION_AUDIENCE));
+
+    long start = System.nanoTime();
+    Instant now = Instant.now(clock);
+    finalizer.confirm(orderId, "thanh toán xác nhận qua payment.succeeded.v1", now);
+    addStep(
+        orderId,
+        CheckoutStep.PAYMENT_EVENT_CONFIRM,
+        SagaStepRecord.SagaStepStatus.OK,
+        null,
+        start,
+        "event=" + eventId + " intent=" + intentId);
+    LOG.info(
+        "checkout tự confirm qua event: order={} intent={} event={}", orderId, intentId, eventId);
+  }
+
+  /**
    * Sweeper gọi cho từng saga quá `payment-window`: **chỉ ghi DB** (order + saga `EXPIRED`).
    *
    * <p><b>Vì sao không gọi release</b>: sweeper chạy nền, không có JWT của user, mà endpoint
@@ -143,6 +248,24 @@ public class CheckoutFinishService {
     if (found.isEmpty() || found.get().state() != CheckoutSagaState.COMPLETED_START) {
       return false;
     }
+    CheckoutSagaRecord saga = found.get();
+
+    // Chỉ trả hàng khi đơn THẬT SỰ còn chờ thanh toán: nếu đơn vừa được event confirm ở nơi khác
+    // thì
+    // release ở đây sẽ trả hàng của một đơn đã bán (bán quá tồn kho) — kiểm trước khi làm là rẻ
+    // nhất.
+    Optional<OrderRecord> order = orders.findById(orderId);
+    if (order.isEmpty() || order.get().status() != OrderStatus.PENDING_PAYMENT) {
+      return false;
+    }
+
+    // TD-25 (trả ở SL-3.5): sweeper giờ có service token nên gọi release TRỰC TIẾP thay vì chờ TTL
+    // của inventory/promotion (trước đây hàng về kho trễ ≤ 1 nhịp). Lỗi release KHÔNG chặn việc
+    // expire: đơn đã hết hạn thì phải rời khỏi trạng thái chờ, còn hàng thì TTL của service kia vẫn
+    // là lưới an toàn cuối (log WARN để biết lưới đó có phải dùng tới hay không).
+    releaseQuietly(saga, INVENTORY_AUDIENCE, CheckoutStep.STOCK_RELEASE);
+    releaseQuietly(saga, PROMOTION_AUDIENCE, CheckoutStep.VOUCHER_RELEASE);
+
     long start = System.nanoTime();
     Instant now = Instant.now(clock);
     boolean changed = writer.expirePending(orderId, "quá hạn thanh toán", now);
@@ -154,10 +277,43 @@ public class CheckoutFinishService {
           SagaStepRecord.SagaStepStatus.OK,
           null,
           start,
-          "quá payment-window, hàng/voucher do TTL sweeper của inventory/promotion trả");
-      LOG.info("checkout expired: order={} (hàng/voucher trả theo TTL)", orderId);
+          "quá payment-window; hàng/voucher trả trực tiếp bằng service token");
+      LOG.info("checkout expired: order={} (đã gọi release)", orderId);
+    } else {
+      // Release đã chạy nhưng CAS không đổi được trạng thái ⇒ có request confirm chen vào giữa.
+      LOG.warn(
+          "expire: đơn {} không còn PENDING_PAYMENT khi CAS — đã release hàng/voucher, cần kiểm tay",
+          orderId);
     }
     return changed;
+  }
+
+  /**
+   * Gọi release bằng service token, **nuốt lỗi có log** — dùng cho sweeper (không có ngữ cảnh người
+   * dùng để báo lỗi, và một lần release fail không được làm hỏng cả nhịp quét).
+   */
+  private void releaseQuietly(CheckoutSagaRecord saga, String audience, CheckoutStep step) {
+    boolean hasTarget =
+        step == CheckoutStep.STOCK_RELEASE ? saga.reservationId() != null : saga.lockId() != null;
+    if (!hasTarget) {
+      return;
+    }
+    try {
+      String token = serviceTokens.tokenFor(audience);
+      if (step == CheckoutStep.STOCK_RELEASE) {
+        releaseStock(saga, token);
+      } else {
+        releaseVoucher(saga, token);
+      }
+    } catch (RuntimeException ex) {
+      LOG.warn(
+          "expire: release {} thất bại cho đơn {} ({}): {} — vẫn expire, TTL của {} sẽ trả sau",
+          step,
+          saga.orderId(),
+          audience,
+          ex.getMessage(),
+          audience);
+    }
   }
 
   private void verifyPayment(CheckoutSagaRecord saga, String bearer) {
@@ -327,6 +483,18 @@ public class CheckoutFinishService {
       return null;
     }
     return detail.length() <= 200 ? detail : detail.substring(0, 197) + "…";
+  }
+
+  private static UUID uuidOrNull(Map<String, Object> payload, String field) {
+    Object value = payload == null ? null : payload.get(field);
+    if (value == null || String.valueOf(value).isBlank()) {
+      return null;
+    }
+    try {
+      return UUID.fromString(String.valueOf(value));
+    } catch (IllegalArgumentException ex) {
+      return null;
+    }
   }
 
   private static AppException conflict(String message) {

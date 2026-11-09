@@ -63,7 +63,12 @@ import tools.jackson.databind.ObjectMapper;
     properties = {
       "shoplab.env=local",
       "shoplab.debug-endpoints=true",
-      "spring.datasource.hikari.maximum-pool-size=20"
+      "spring.datasource.hikari.maximum-pool-size=20",
+      // SL-3.5: order giờ có consumer `q.order`. IT chạy KHÔNG có broker ⇒ tắt listener của commons
+      // (bài học SL-3.4: `spring.rabbitmq.listener.simple.auto-startup` của Boot không áp cho
+      // factory
+      // tự khai ⇒ thiếu cờ này là `FatalListenerStartupException` làm đỏ cả context).
+      "shoplab.events.consumer-auto-startup=false"
     })
 @Testcontainers
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
