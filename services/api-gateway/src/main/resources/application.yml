@@ -55,6 +55,10 @@ shoplab:
       # SL-2.13: tra giá nhiều SKU là đường ĐỌC (giá niêm yết vốn công khai, guest xem giỏ cũng cần)
       # ⇒ public như /v1/products/**.
       - /v1/skus/**
+      # SL-3.6: tìm kiếm là đường ĐỌC công khai (guest cũng tìm hàng) — index chỉ có dữ liệu
+      # công khai của product. `/v1/admin/search/**` thì KHÔNG public (cần ADMIN).
+      - /v1/search
+      - /v1/search/**
       - /.well-known/**
       # SL-1.8: spec OpenAPI của chính gateway (chỉ bật ở local — xem springdoc.api-docs.enabled).
       - /v3/api-docs
@@ -121,6 +125,13 @@ shoplab:
       # (JWT hoặc X-Cart-Token do chính nó cấp).
       - path-prefix: /v1/carts
         base-url: ${CART_SERVICE_URL:http://localhost:8083}
+      # SL-3.6: search-service — route /v1/search (public) và /v1/admin/search (ADMIN).
+      # `/v1/admin/search` DÀI HƠN `/v1/admin` nên thắng route của identity (prefix dài nhất thắng) —
+      # nhờ vậy không phải đổi route admin cũ của identity.
+      - path-prefix: /v1/search
+        base-url: ${SEARCH_SERVICE_URL:http://localhost:8091}
+      - path-prefix: /v1/admin/search
+        base-url: ${SEARCH_SERVICE_URL:http://localhost:8091}
       # SL-3.4: notification-service — chỉ đường đọc thông báo của CHÍNH mình. Cần token.
       - path-prefix: /v1/notifications
         base-url: ${NOTIFICATION_SERVICE_URL:http://localhost:8089}

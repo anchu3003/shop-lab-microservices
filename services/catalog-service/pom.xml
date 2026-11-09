@@ -52,6 +52,15 @@
     </dependency>
 
     <!--
+      SL-3.6: catalog là PRODUCER của `product.updated.v1` / `product.archived.v1` (outbox + relay).
+      Không có consumer nào ở đây — dedupe `processed_events` cố ý không dùng (xem application.yml).
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+
+    <!--
       PHẢI dùng starter, không dùng `flyway-core` trần: Spring Boot 4 tách auto-configuration
       thành module riêng ⇒ khai sai là Flyway im lặng không chạy (đã gặp thật ở SL-1.1).
     -->

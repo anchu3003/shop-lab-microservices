@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-3.5` ✅ **Done** — `payment.succeeded.v1` ⇒ auto-confirm; **trả `TD-17`, `TD-25`**) |
-| **Ticket tiếp theo** | `SL-3.6` — `catalog` outbox + **`search-service`** (8090, Postgres FTS) + reconcile + `GET /v1/search` *(merge bằng `--skip-ci-check` — `TD-28`)* |
+| **Ticket đang làm** | — (`SL-3.6` ✅ **Done** — `catalog` outbox + `search-service` 8091 + reconcile; **đóng `TD-32`**) |
+| **Ticket tiếp theo** | `SL-3.7` — E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml` *(merge bằng `--skip-ci-check` — `TD-28`)* |
 | **Số ticket chi tiết hiện có** | 52 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 — đều đã archive · Phase 3: **10** — đang mở) |
 
 ---
@@ -19,7 +19,7 @@
 | 0 | Foundation | ✅ Done | 8 / 8 |
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
-| 3 | Async & event-driven | 🟡 Đang làm (12 ticket) | 7 / 12 |
+| 3 | Async & event-driven | 🟡 Đang làm (12 ticket) | 8 / 12 |
 | 4 | Scale & performance | ⚪ Todo (epic) | — |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
@@ -253,7 +253,7 @@ $ md5sum docs/api/openapi.yaml
 | 4 | `SL-3.3` | `order-service`: **transactional outbox** + relay ⇒ `order.confirmed.v1` / `order.cancelled.v1` | M | ✅ Done |
 | 5 | `SL-3.4` | **`notification-service`** (8089): consumer `order.confirmed` → email mock + retry + **DLQ** + `tools/dlq.sh` | M | ✅ Done |
 | 6 | `SL-3.5` | `payment-service` outbox + `payment.succeeded.v1` ⇒ `order-service` **auto-confirm** (**trả `TD-17`** + `TD-25`) | M | ✅ Done |
-| 7 | `SL-3.6` | `catalog-service` outbox product event + **`search-service`** (8090, Postgres **FTS**) index + reconcile + `GET /v1/search` | M | Todo |
+| 7 | `SL-3.6` | `catalog-service` outbox product event + **`search-service`** (8091, Postgres **FTS**) index + reconcile + `GET /v1/search` | M | ✅ Done |
 | 8 | `SL-3.7` | E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml` | S | Todo |
 | 9 | `SL-3.8` | **Báo cáo async**: latency checkout · độ trễ confirm→email · throughput relay · DLQ = 0 dưới tải | S | Todo |
 | 10 | `SL-3.9` | `docs/runbook-phase-3.md` + **DoD Phase 3** (archive · tag `phase-3` · release) | S | Todo |
@@ -1202,7 +1202,7 @@ admin (token user) + inventory  → 404   ·   admin (token user) + promotion �
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | Done ✅ (2026-11-09) |
 | **Phase** | 3 — Async & event-driven *(quyết định storage: Postgres FTS — xem ghi chú ở đầu phase)* |
 | **Phụ thuộc** | `SL-3.2` (consumer/publisher) · `SL-3.3` (khuôn outbox); chặn `SL-3.7`/`SL-3.8` |
 | **Ước lượng** | M |
@@ -1222,7 +1222,7 @@ không dấu đều ra.
 
 - `catalog-service`: outbox + relay (cùng khuôn `SL-3.3`) phát `product.updated.v1` (created/updated gộp) và
   `product.archived.v1` khi soft delete (`SL-2.11`).
-- `search-service` (port **8090**), DB **`search`**: bảng `search_product(product_id PK, name, description, category_id,
+- `search-service` (port **8091** — `8090` thuộc `service-template` từ Phase 0), DB **`search`**: bảng `search_product(product_id PK, name, description, category_id,
   min_price, status, updated_at, search_vector tsvector)` + GIN index + extension `unaccent`; consumer `q.search` upsert/archive.
 - `GET /v1/search?q=&categoryId=&minPrice=&maxPrice=&page=&size=` — chỉ trả product `ACTIVE`, body `ApiError` chuẩn, phân
   trang offset (ghi `TD` về keyset nếu cần, đồng bộ `TD-6`).
@@ -1255,7 +1255,123 @@ không dấu đều ra.
 
 **Kết quả verify** *(điền khi Done)*
 
+CI **đang tắt** (`SL-3.10`/`TD-28`) ⇒ bằng chứng = `mvn verify` + AC chạy trên **stack thật** + e2e local.
+
+**1. Test tự động** — `mvn -B -ntp verify` (13 module):
+
+```
+[INFO] BUILD SUCCESS
+TOTAL: Tests run: 805, Failures: 0, Errors: 0   (662 unit + 143 IT)  <-- +49 so với SL-3.5 (756)
+  · catalog: +2 (ProductServiceTest 4 assertion outbox · IT: outbox row product.updated/archived, V4)
+  · search:  38 unit (SearchQueryTest 8 · SearchProductTest 4 · IndexDriftCheckerTest 4 · config/health 22)
+             + 10 IT (schema+GIN+unaccent · AC1 · AC2 · AC3 · lệch thứ tự · filter/paging · 400 ·
+                      reindex dựng lại + idempotent · archive orphan · 401/403)
+```
+
+**2. AC1 — tạo product ⇒ search thấy ≤ 2 s**
+
+```
+POST /v1/products (seller) → 201, product 8054d3b5-…
+GET  /v1/search?q=dien thoai <ts>  → thấy sau 228 ms   (trễ = relay 1 s + consumer)
+giá trả về: 12990000.00 (khớp giá catalog)
+```
+
+**3. AC2 — soft delete ⇒ search không còn, row index `ARCHIVED`**
+
+```
+DELETE /v1/products/<id> → 204
+GET /v1/search?q=dien thoai <ts> → không còn (poll ~0.3 s)
+search_product.status = ARCHIVED            (row KHÔNG bị xoá — replay event cũ không hồi sinh)
+outbox(catalog): product.archived.v1|SENT
+```
+
+**4. AC3 — unaccent + wildcard**
+
+```
+q=dien        → khớp "Điện thoại"          (unaccent hai phía, tsquery — không phải LIKE)
+q=dien%       → 200, không lỗi
+q=%%%         → 200 (không row nào)
+```
+
+**5. AC6 — event product đi qua outbox (không gọi thẳng search)**
+
+```
+outbox(catalog): product.updated.v1|SENT · product.archived.v1|SENT
+q.search  ready=0  consumers=1   ·   q.search.dlq ready=0
+```
+
+**6. AC4 — reconcile**
+
+```
+POST /v1/admin/search/reindex  (không token) → 401   ·   (buyer) → 403   ·   (admin) → 200
+lần đầu  : {"scanned":61,"upserted":61,"archived":0}     catalog=61 · index ACTIVE=61
+xoá tay 7 row index → còn 54
+reindex  : {"scanned":61,"upserted":61,"archived":0}   → index về 61 row (đủ)
+lần 2    : {"scanned":61,"upserted":61,"archived":0}   → số row KHÔNG đổi, không product_id trùng
+```
+
+**7. AC5 — broker chết**
+
+```
+docker stop shoplab-rabbitmq
+POST /v1/products → 201 (catalog vẫn chạy bình thường)
+outbox: product.updated.v1|PENDING|attempts=3     (event nằm chờ, KHÔNG mất)
+GET /v1/search?q=… → chưa thấy (đúng: event chưa đi)
+POST /v1/admin/search/reindex → {"scanned":62,"upserted":62}  → search thấy product
+docker start shoplab-rabbitmq → outbox SENT trong ~6 s (relay gửi bù)
+```
+
+**8. Job phát hiện lệch** (hạ nhịp xuống 5 s bằng override tạm, rồi trả về mặc định)
+
+```
+index khớp catalog: index=65 catalog=65 lệch=0.00%
+xoá tay 7 row index →
+INDEX LỆCH: index=58 catalog=65 lệch=10.77% (ngưỡng 1%) ⇒ chạy `POST /v1/admin/search/reindex`
+```
+
+**9. Regression e2e**
+
+```
+== 17 PASS / 0 FAIL · 13 request · 531 ms      (e2e-smoke)
+== 27 PASS / 0 FAIL · 14 request · 1250 ms     (e2e-checkout)
+== 41 PASS / 0 FAIL / 0 SKIP · 37 request      (e2e-checkout-fail)
+```
+
 **Learning note** *(điền khi Done)*
+
+- **"Index lệch" không phải bug, là trạng thái bình thường** — cái phải có là **phát hiện + dựng lại**. Ba tính chất
+  làm nên điều đó: (1) event ghi trong **cùng transaction** với thay đổi product (outbox), (2) consumer idempotent
+  (`UPSERT` theo khoá tự nhiên), (3) reconcile chạy lại bao nhiêu lần cũng ra cùng kết quả. Thiếu (3) thì "index" chỉ
+  là một bản copy không ai dám tin.
+- **`unaccent()` không IMMUTABLE ⇒ không dùng được generated column.** Đây là chỗ dễ mất 1 giờ: Postgres từ chối
+  `GENERATED ALWAYS AS (to_tsvector('simple', unaccent(name)))` mà thông báo lỗi không nói rõ nguyên nhân. Cách đúng:
+  cột `search_vector` thật, ghi trong **chính câu UPSERT** ⇒ chỉ có MỘT chỗ tính vector. Nếu để 2 chỗ (app + trigger)
+  thì sớm muộn cũng lệch — và lệch kiểu đó API vẫn 200, chỉ là không bao giờ tìm thấy gì.
+- **`plainto_tsquery` thay `LIKE` là thứ xoá luôn cả một lớp bug**: `%`, `_`, `\` không còn là cú pháp, nên "khách gõ
+  ký tự lạ" không thể thành wildcard hay lỗi SQL. Đổi lại phải nói thật về chất lượng: `simple` + unaccent **không**
+  stem tiếng Việt, **không** biết từ đồng nghĩa — "tai nghe" không khớp "headphone". Trung thực trong docs tốt hơn
+  quảng cáo "search thông minh".
+- **Event đến lệch thứ tự là chuyện của at-least-once** ⇒ mọi UPSERT của index phải có **chốt thời gian**
+  (`WHERE search_product.updated_at <= EXCLUDED.updated_at`). Không có nó, một event cũ đến muộn sẽ đưa giá/tên cũ
+  trở lại index — và vì reconcile cũng dùng UPSERT nên nó sẽ **giữ nguyên** cái sai đó.
+- **Reconcile cần watermark, không chỉ cần so danh sách**: chỉ archive row có `updated_at < mốc bắt đầu quét`. Bỏ
+  watermark thì product được tạo **trong lúc** đang quét (chưa kịp vào kết quả) sẽ bị archive oan — bug kinh điển của
+  mọi job "full sync" mà chỉ xuất hiện khi có tải thật.
+- **Nhánh rỗng phải viết tay**: Spring mở rộng `NOT IN (:ids)` với collection rỗng thành `NOT IN (NULL)` ⇒ **không row
+  nào** bị archive, trong khi ý nghĩa đúng là "catalog rỗng thì index phải rỗng". Nếu không nghĩ tới, `reindex` sẽ báo
+  thành công mà bỏ lại rác — đúng loại lỗi chỉ phát hiện khi có người hỏi "sao search còn hàng đã xoá".
+- **`upserted` là "số row được ghi", không phải "số row đổi"**: gọi reindex 2 lần vẫn thấy `upserted=61` (vì `<=` cho
+  phép ghi lại cùng mốc thời gian — cần thế để replay idempotent). Muốn con số "thay đổi thật" thì phải thêm `<>`
+  so sánh từng cột; ta chọn **không** làm, và ghi rõ ở đây để lần sau không ai đọc số đó thành "index vừa lệch 61 row".
+- **Bẫy hạ tầng lặp lại lần thứ 3** (đúng như dự đoán ở `TD-32`): `RestClient.Builder` là bean **không có** trong
+  context của service mới (Boot 4 tách auto-config) ⇒ inject là context fail. Chọn JDK `HttpClient` + Jackson tường
+  minh: ít phụ thuộc hơn, và lỗi lộ ra ngay ở compile thay vì lúc chạy.
+- **Đừng tin sort của service khác**: `reindex` gọi `GET /v1/products?sort=updatedAt,desc` → catalog trả **400** vì
+  whitelist sort chỉ có `price`/`createdAt` (AC4 đỏ 4 test cho tới khi sửa). Bài học: gọi API nội bộ cũng phải đọc
+  whitelist của nó, và **test end-to-end mới bắt được** — unit test + IT (catalog giả) đều xanh.
+- **`TD-32` đóng bằng lý do, không bằng im lặng**: lần copy thứ 3 (~500 dòng) đổi lấy việc `SL-3.6` giữ đúng scope và
+  diff review được. Điều kiện revisit ghi rõ: producer thứ 4 hoặc khi lên OpenSearch (Phase 8) — lúc đó hình dạng
+  outbox có thể phải đổi, extract sớm sẽ phải làm lại.
 
 ### SL-3.7 — E2E async (`tools/e2e-async.sh`) + bước trong `e2e.yml`
 
@@ -1773,7 +1889,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-28` | **CI đang TẮT tạm thời** (`vars.CI_ENABLED=false`, từ `SL-3.10`) để tăng tốc merge Phase 3 ⇒ mất 3 hàng rào tự động: `test` + JaCoCo gate độc lập, `lint` trong môi trường sạch, và **`build-image` matrix** (chốt duy nhất bắt lỗi Dockerfile/COPY pom khi thêm module/service). Verify chuyển sang **local** (`mvn verify` + e2e) do người/AI tự khai | SL-3.10 | **Bắt buộc** bật lại khi đóng Phase 3 (`gh variable delete CI_ENABLED`) — hoặc sớm hơn nếu có ≥ 1 lần `main` đỏ mà local xanh | cao |
 | `TD-30` | `notification_logs` + `processed_events` **không có job dọn**: `processed_events` tăng 1 row/event/consumer **vĩnh viễn** (không xoá được vì dedupe cần), `notification_logs` tăng 1 row/đơn đã confirm — sau 1 năm là chục triệu row ở cả 2 bảng | SL-3.4 | Gộp vào **cùng job retention** với `TD-29`: `processed_events` giữ ≥ 7 ngày (đủ dài hơn max retry + replay tay), `notification_logs` giữ theo yêu cầu nghiệp vụ (≥ 90 ngày). Revisit khi bảng > 10⁶ row **hoặc** khi làm `SL-3.7`/`SL-3.9` (job/runbook) | trung bình |
 | `TD-31` | **Không có refund**: ca `payment.succeeded` cho đơn đã `EXPIRED`/`CANCELLED` (tiền đã thu, hàng đã trả) hiện chỉ log ERROR `TIỀN ĐÃ THU … cần hoàn tiền tay`. Chưa có bảng `refunds`/`transactions`, chưa có API hoàn tiền | SL-3.5 | Phase 6 (refund) hoặc ngay khi có ≥ 1 ca thật cần hoàn tiền trong môi trường chạy thật | cao |
-| `TD-32` | **Outbox bị copy 2 lần** (`order` SL-3.3, `payment` SL-3.5) và `SL-3.6` (catalog) sẽ là lần thứ 3: ~500 dòng gần giống nhau (record/repository/relay/properties/DDL) ở mỗi service | SL-3.5 | Khi làm `SL-3.6` — extract `OutboxAutoConfiguration` vào `service-commons` (bảng + relay + properties dùng chung, service chỉ khai `outbox.append(...)`) hoặc chấp nhận copy lần 3 và đóng nợ bằng lý do rõ ràng | trung bình |
+| `TD-32` | **Outbox bị copy 3 lần** (`order` SL-3.3, `payment` SL-3.5, `catalog` SL-3.6): ~500 dòng gần giống nhau (record/repository/relay/properties/DDL) ở mỗi service | SL-3.5 | ✅ **đã trả (SL-3.6)** — chấp nhận copy lần 3 có ý thức: giữ `SL-3.6` đúng scope (diff nhỏ, review được) thay vì trộn refactor 2 service cũ vào ticket service mới. Extract `OutboxAutoConfiguration` vào commons khi có **producer thứ 4** hoặc khi lên OpenSearch (Phase 8 — lúc đó hình dạng outbox có thể phải đổi, extract sớm sẽ phải làm lại) | trung bình |
+| `TD-33` | `search_product.min_price` = **giá niêm yết của product**, KHÔNG phải min qua `sku.price_override` (index chưa biết SKU) ⇒ `minPrice` filter sai lệch với SKU có override thấp hơn | SL-3.6 | Khi search cần lọc/sort theo giá SKU thật, hoặc khi có yêu cầu "từ giá X" trên UI — lúc đó thêm field SKU vào payload event + reindex theo SKU | trung bình |
+| `TD-34` | `tools/export-openapi.sh` chưa gộp spec của `notification-service` + `search-service` ⇒ `docs/api/openapi.yaml` thiếu toàn bộ API Phase 3 | SL-3.6 | Khi cần spec đầy đủ (DoD Phase 3/4 hoặc có client sinh code từ spec) — sửa 1 lần: thêm 2 nguồn vào script merge | thấp |
 
 
 ## 8. Changelog
@@ -1867,3 +1985,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-08 | `SL-3.4` → `Done`: **`notification-service` (8089)** — service mới (`notification` DB riêng, Flyway `V1`: `notification_logs` + `notification_templates` seed 2 mẫu + `processed_events`) · consumer `q.notification` (`order.confirmed.v1` / `order.cancelled.v1`) **không viết lại hạ tầng**: chỉ override `consumerName()`/`handledEventTypes()`/`handleEvent()` trên `AbstractEventConsumer` (~60 dòng, 0 dòng retry/DLQ/dedupe) · `TemplateRenderer` placeholder `{{var}}` (không engine) · `GET /v1/notifications/me` (userId từ claim `sub`, `?limit` bị chặn bởi trần cấu hình) · `SHOPLAB_NOTIFICATION_FAIL_MODE` **fail-closed** (chỉ `env=local`) để test retry/DLQ · **`tools/dlq.sh`** `list|peek|move|purge` — replay đọc **routing key gốc từ `x-death`**, `peek` trước rồi mới `ack`. Hạ tầng: commons thêm cờ `shoplab.events.consumer-auto-startup` (property `spring.rabbitmq.listener.simple.auto-startup` của Boot **không** áp cho container factory tự khai ⇒ IT đỏ 17 test), compose + gateway route + CI matrix + `.env.example`. **Bug thật**: `dlq.sh move` bản đầu publish bằng `routing_key` hiện tại = tên queue ⇒ `routed=false` ⇒ **mất message**; parse `python3 -c` nhiều dòng trong `$( )` cũng làm rơi 1 message (chuyển sang file python tạm). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 730 test (600 unit + 130 IT)** · async thật: publish → row sau **239 ms** · dedupe: cùng `eventId` 2 lần ⇒ **1 row** · fail-mode ⇒ `ready=0 unacked=0` + `q.notification.dlq ready=1`, `dlq.sh move` ⇒ DLQ `1→0` + `notification_logs` +1 · `docker stop` notification ⇒ confirm vẫn **200**, bật lại ⇒ message được xử lý · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-30` (retention `notification_logs` + `processed_events`).
 | 2026-11-08 | `SL-3.11` → `Done`: **service-to-service auth** (`client_credentials` + `aud`/`exp`, **ADR-0008**) — `identity-service`: `POST /v1/auth/service-token` (`clientId`+`clientSecret`+`audience`) ⇒ JWT RS256 `role=SERVICE`, `aud=[service đích]`, `exp=5m`, `sub=svc:<client>`, `jti`; registry client trong config (`shoplab.service-auth.clients[<id>].secret` từ env + `allowed-audiences`), secret so sánh **hằng thời gian**, client lạ/sai secret trả **cùng** 401; `service-commons`: `ServiceTokenClient` (cache tới `exp-30s`, một khoá cho lần nạp, **không cache lỗi**, `invalidate` khi 401) + `HttpServiceTokenSource` (JDK `HttpClient`) + `ServiceTokenRules.validator(issuer, serviceName)` (kiểm `aud` **chỉ khi** `role=SERVICE`); `inventory` + `promotion` dùng validator đó. Compose/`.env.example`: `ORDER_SERVICE_CLIENT_SECRET` (**không default** ⇒ thiếu env là identity không khởi động). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 746 test (614 unit + 132 IT)** · stack thật: token `expiresIn=300 role=SERVICE aud=inventory-service sub=svc:order-service` · sai secret **401**, `aud=payment-service` **400** (allowlist) · `inventory` + đúng `aud` **404** (qua auth) vs sai `aud` **401 `invalid_token`** · `promotion` + đúng `aud` **403** (thiếu role ADMIN) vs sai `aud` **401** · token user không hồi quy (404) · e2e 17/17 · 27/27 · 41/41. **2 bug thật**: record lồng record làm bind `clients.clients.*` ⇒ map rỗng ⇒ 401 "sai secret"; test JWT mốc cố định ⇒ token hết hạn ngay khi tạo. |
 | 2026-11-09 | `SL-3.5` → `Done` (**trả `TD-17` + `TD-25`**): **`payment.succeeded.v1` ⇒ order tự confirm** — `payment-service`: migration `V2__create_outbox.sql` (DDL chép khuôn `SL-3.3` + **unique index** `ux_outbox_payment_succeeded` để 1 intent chỉ phát 1 event), outbox package (record/repository/relay/properties/`PaymentEvents`), `PaymentWebhookService` ghi outbox **trong cùng transaction** ở nhánh transition thật sang `SUCCEEDED` (nhánh idempotent-return không ghi), `spring-boot-starter-amqp` + `publisher-confirm-type: correlated`. `order-service`: `PaymentSucceededConsumer` (`q.order`, dùng lại `AbstractEventConsumer`), `CheckoutFinishService.confirmByEvent` (**ma trận 5 nhánh** trước khi chạm downstream · `paymentIntentId` phải khớp saga · **bỏ** `verifyPayment` nhưng ghi step `PAYMENT_VERIFY:SKIPPED` · step mới `PAYMENT_EVENT_CONFIRM`), commit/release gọi bằng **service token** (`SL-3.11`) nên **sweeper release ngay** thay vì chờ TTL (`TD-25`); `CheckoutStep` + `PAYMENT_EVENT_CONFIRM`. Hạ tầng: order khai `shoplab.service-auth.*` + compose env, `outputs`; commons `HttpServiceTokenSource` **tự tạo ObjectMapper** (bài học: inject bean Jackson 2 làm context fail IT). Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 756 test (624 unit + 132 IT)** · mock-pay **không** gọi `/confirm` ⇒ CONFIRMED sau **1031 ms** (909 ms khi có voucher), saga `CONFIRMED`, steps `STOCK_COMMIT:OK`/`VOUCHER_COMMIT:OK`/`PAYMENT_VERIFY:SKIPPED`/`PAYMENT_EVENT_CONFIRM:OK`, voucher `used=1 locked=0` · `/confirm` sau đó **200**, stock **không** trừ 2 lần, history 2 dòng · webhook lặp ⇒ `duplicate:true`, outbox **1 row** · đơn `EXPIRED` ⇒ ack + WARN, state không đổi, **DLQ 0** · broker chết ⇒ `SUCCEEDED` + outbox `PENDING`, bật lại ⇒ tự confirm sau **7.8 s** · sweeper: `EXPIRED` ⇒ hàng về kho **~0 s** (`STOCK_RELEASE:OK`) · e2e 17/17 · 27/27 · 41/41. Nợ mới: `TD-31` (refund), `TD-32` (extract outbox). |
+| 2026-11-09 | `SL-3.6` → `Done` (**đóng `TD-32`**): **`catalog` outbox product event + `search-service` 8091 (Postgres FTS) + reconcile**. `catalog-service`: `V4__create_outbox.sql` + package outbox (chép khuôn lần 3, có ý thức) + `CatalogOutbox` gọi trong **cùng transaction** của `ProductService.create/update/delete`; event `product.updated.v1` (tạo+sửa) / `product.archived.v1` (soft delete); +amqp, `publisher-confirm-type=correlated`, `shoplab.outbox.*`, **không** thêm rabbit vào readiness (producer chết broker vẫn phải 200). `search-service` **mới** (port **8091** — 8090 thuộc template): DB `search` (`unaccent` + `search_product` + GIN + `processed_events`), consumer `q.search` (consumer thứ 3 dùng lại `AbstractEventConsumer`), `GET /v1/search` (public, tsquery+unaccent, filter category/giá, phân trang offset), `POST /v1/admin/search/reindex` (ADMIN, watermark + archive orphan + idempotent), `@Scheduled` so số row (WARN lệch > 1%). Hạ tầng: Dockerfile + compose + CI matrix + **12 Dockerfile thêm 1 dòng COPY pom** + `POSTGRES_DB_SEARCH` + gateway route `/v1/search` (public) và `/v1/admin/search` (thắng `/v1/admin` nhờ prefix dài hơn) + README port. Verify: `mvn -B -ntp verify` **BUILD SUCCESS · 805 test (662 unit + 143 IT)** · AC1 thấy sau **228 ms**, giá đúng · AC2 row index `ARCHIVED` · AC3 `q=dien` khớp `Điện thoại`, `q=dien%` 200 · AC6 outbox `SENT` cho cả 2 event · AC4 reindex `{61,61,0}` sau khi xoá tay 7 row, lần 2 không nhân bản · AC5 broker chết: tạo product 201 + outbox `PENDING|attempts=3`, reindex vẫn dựng lại, bật broker ⇒ `SENT` · job lệch: `INDEX LỆCH: index=58 catalog=65 lệch=10.77%` · e2e 17/17 · 27/27 · 41/41. Nợ: `TD-33` (min_price chưa tính SKU override). |

@@ -28,7 +28,7 @@ name: shoplab
 services:
   # ---------------------------------------------------------------------------
   # PostgreSQL — 1 instance, nhiều database (database per service, AGENTS.md §6)
-  # 7 DB được tạo bởi infra/init/01-create-databases.sh lần đầu khởi tạo volume.
+  # 8 DB được tạo bởi infra/init/01-create-databases.sh lần đầu khởi tạo volume.
   # ---------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
@@ -45,6 +45,7 @@ services:
       POSTGRES_DB_ORDER: ${POSTGRES_DB_ORDER:-order}
       POSTGRES_DB_PAYMENT: ${POSTGRES_DB_PAYMENT:-payment}
       POSTGRES_DB_NOTIFICATION: ${POSTGRES_DB_NOTIFICATION:-notification}
+      POSTGRES_DB_SEARCH: ${POSTGRES_DB_SEARCH:-search}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -278,6 +279,11 @@ services:
       # JWKS lấy qua network nội bộ (không qua gateway — tránh phụ thuộc vòng).
       IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
       IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      # SL-3.6: catalog là producer của product event (outbox + relay).
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-shoplab}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
     ports:
       - "${CATALOG_SERVICE_PORT:-8082}:${CATALOG_SERVICE_PORT:-8082}"
     depends_on:
@@ -286,6 +292,10 @@ services:
       # Cần identity sống để lấy JWKS — chết từ đầu thì catalog không verify được token nào.
       identity-service:
         condition: service_healthy
+      # SL-3.6: broker không nằm trên critical path (outbox giữ event) nhưng chờ healthy để log
+      # khởi động không đầy cảnh báo "chưa publish được".
+      rabbitmq:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:$${SERVER_PORT}/health || exit 1"]
       interval: 10s
@@ -611,6 +621,63 @@ services:
 
 
   # ---------------------------------------------------------------------------
+  # search-service — index sản phẩm (SL-3.6): consumer `q.search` + PostgreSQL FTS.
+  # KHÔNG phải nguồn sự thật: chết/cũ thì search thiếu kết quả, không ảnh hưởng đặt hàng.
+  # ---------------------------------------------------------------------------
+  search-service:
+    build:
+      context: ..
+      dockerfile: services/search-service/Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    image: shoplab-search-service:local
+    container_name: shoplab-search-service
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      SERVER_PORT: ${SEARCH_SERVICE_PORT:-8091}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB_SEARCH: ${POSTGRES_DB_SEARCH:-search}
+      POSTGRES_USER: ${POSTGRES_USER:-shoplab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      IDENTITY_JWKS_URI: ${IDENTITY_JWKS_URI:-http://identity-service:8081/.well-known/jwks.json}
+      IDENTITY_JWT_ISSUER: ${IDENTITY_JWT_ISSUER:-https://identity.shoplab.local}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USER: ${RABBITMQ_USER:-shoplab}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD chưa set — cp .env.example .env rồi chạy lại}
+      # Reconcile đọc catalog qua network nội bộ (endpoint public nên không cần service token).
+      CATALOG_SERVICE_URL: ${CATALOG_SERVICE_URL:-http://catalog-service:8082}
+    # Probe dùng /ready (kiểm postgres + rabbitmq): service có thể "sống" mà consumer không chạy vì
+    # mất broker — đúng thứ cần bắt, vì index sẽ đứng yên mà không ai biết.
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --no-verbose
+        - --tries=1
+        - --spider
+        - http://localhost:${SEARCH_SERVICE_PORT:-8091}/ready
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    ports:
+      - "${SEARCH_SERVICE_PORT:-8091}:${SEARCH_SERVICE_PORT:-8091}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity-service:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - shoplab-net
+
+
+  # ---------------------------------------------------------------------------
   # cart-service — giỏ hàng (SL-2.1): Redis là source of truth (TTL 30 ngày), Lua cho read-modify-write.
   # Service DUY NHẤT không có Postgres ⇒ depends_on chỉ redis + identity (JWKS).
   # ---------------------------------------------------------------------------
@@ -690,6 +757,7 @@ services:
       PAYMENT_SERVICE_URL: ${PAYMENT_SERVICE_URL:-http://payment-service:8088}
       CART_SERVICE_URL: ${CART_SERVICE_URL:-http://cart-service:8083}
       NOTIFICATION_SERVICE_URL: ${NOTIFICATION_SERVICE_URL:-http://notification-service:8089}
+      SEARCH_SERVICE_URL: ${SEARCH_SERVICE_URL:-http://search-service:8091}
       GATEWAY_CONNECT_TIMEOUT: ${GATEWAY_CONNECT_TIMEOUT:-2s}
       GATEWAY_READ_TIMEOUT: ${GATEWAY_READ_TIMEOUT:-5s}
     ports:

@@ -32,6 +32,7 @@ databases=(
   "${POSTGRES_DB_ORDER:-order}"
   "${POSTGRES_DB_PAYMENT:-payment}"
   "${POSTGRES_DB_NOTIFICATION:-notification}"
+  "${POSTGRES_DB_SEARCH:-search}"
 )
 
 create_database() {

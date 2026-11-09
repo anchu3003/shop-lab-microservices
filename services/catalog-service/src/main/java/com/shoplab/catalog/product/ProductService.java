@@ -1,6 +1,7 @@
 package com.shoplab.catalog.product;
 
 import com.shoplab.catalog.category.CategoryRepository;
+import com.shoplab.catalog.outbox.CatalogOutbox;
 import com.shoplab.catalog.sku.SkuRepository;
 import com.shoplab.catalog.sku.SkuStatus;
 import com.shoplab.catalog.web.PageResponse;
@@ -22,13 +23,19 @@ public class ProductService {
   private final ProductRepository products;
   private final CategoryRepository categories;
   private final SkuRepository skus;
+  private final CatalogOutbox outbox;
   private final Clock clock;
 
   public ProductService(
-      ProductRepository products, CategoryRepository categories, SkuRepository skus, Clock clock) {
+      ProductRepository products,
+      CategoryRepository categories,
+      SkuRepository skus,
+      CatalogOutbox outbox,
+      Clock clock) {
     this.products = products;
     this.categories = categories;
     this.skus = skus;
+    this.outbox = outbox;
     this.clock = clock;
   }
 
@@ -51,6 +58,8 @@ public class ProductService {
                 normalize(request.description()),
                 request.price(),
                 Instant.now(clock)));
+    // SL-3.6: event `product.updated.v1` ghi TRONG cùng transaction với INSERT product.
+    outbox.productUpdated(saved);
     return ProductResponse.from(saved);
   }
 
@@ -103,7 +112,10 @@ public class ProductService {
     // NHƯNG phải flush TRƯỚC khi đọc `version`: optimistic locking tăng version ở thời điểm flush,
     // không phải lúc gán field ⇒ không flush thì response trả version CŨ (0) và client sẽ update
     // bằng version sai ở lần sau (409 không đáng có). Bug này bắt được ở bước verify SL-1.5.
-    return ProductResponse.from(products.saveAndFlush(product));
+    Product updated = products.saveAndFlush(product);
+    // saveAndFlush TRƯỚC outbox: event phải mang `updatedAt`/`version` đã thật sự ghi xuống DB.
+    outbox.productUpdated(updated);
+    return ProductResponse.from(updated);
   }
 
   /**
@@ -119,9 +131,13 @@ public class ProductService {
   @Transactional
   public void delete(UUID id) {
     Product product = require(id);
-    product.archive(Instant.now(clock));
+    Instant now = Instant.now(clock);
+    product.archive(now);
     // Bulk update: 1 câu SQL cho mọi SKU của product, không load entity (xem SkuRepository).
     skus.updateStatusByProductId(id, SkuStatus.ARCHIVED);
+    // SL-3.6: `product.archived.v1` cùng transaction ⇒ index search không thể "sót" product đã
+    // xoá nếu catalog đã commit (chỉ có thể trễ, và trễ thì reconcile dựng lại được).
+    outbox.productArchived(id, now);
   }
 
   /**
