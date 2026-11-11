@@ -1460,10 +1460,10 @@ $ bash tools/e2e-checkout-fail.sh  41 PASS / 0 FAIL / 0 SKIP · 37 request · 13
 $ bash tools/e2e-async.sh          48 PASS / 0 FAIL · 36 request · 37428 ms   ← 4 luồng async + DLQ replay
 ```
 
-**3) Mọi lệnh trong runbook §3 chạy được thật** (dán output thật vào chính runbook, không viết tay):
+**3) Mọi lệnh trong runbook §3 chạy được thật** (dán output thật vào chính runbook, không viết tay; lượt cuối chạy lại một lần nữa sau `docker compose up -d` để chắc snippet khớp output hiện tại — phát hiện thêm 1 bẫy: **ngay sau `up`, `tools/rabbit-topology.sh` báo *chưa có queue nào*** vì topology do service khai báo lúc khởi động (~45 s); đã ghi vào §3.1):
 `tools/rabbit-topology.sh` (topology + `consumers`/`ready`/`unacked`) · `tools/dlq.sh list/peek/move` ·
 `psql` outbox (`SENT`/`attempts`/`last_error`) · `processed_events` · `notification_logs` ·
-`search_product` + `POST /v1/admin/search/reindex` (`{"scanned":21,"upserted":21,"archived":0}`) ·
+`search_product` + `POST /v1/admin/search/reindex` (`{"scanned":25,"upserted":25,"archived":0}`) ·
 `order_status_history` · management API `messages_ready/unacknowledged/consumers`.
 
 **4) Runbook §5 = ca debug thật "email không tới"** (`SHOPLAB_NOTIFICATION_FAIL_MODE=true`):
