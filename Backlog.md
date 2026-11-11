@@ -6,9 +6,9 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (`SL-4.0` ✅ **Done** — retention job trả `TD-29` + `TD-30`) |
-| **Ticket tiếp theo** | Phase 4 — **breakdown epic** (load test k6 · cache-aside · rate limit · read replica · partition) |
-| **Số ticket chi tiết hiện có** | 54 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 · Phase 3: **12** — đều đã archive) |
+| **Ticket đang làm** | — (Phase 4 đã breakdown **13 ticket**; kế tiếp là `SL-4.1`) |
+| **Ticket tiếp theo** | `SL-4.1` — k6 harness + baseline (tìm **điểm vỡ** đầu tiên, trước khi tối ưu gì) |
+| **Số ticket chi tiết hiện có** | 66 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 · Phase 3: 12 — đã archive · Phase 4: **13** — đang mở) |
 
 ---
 
@@ -20,7 +20,7 @@
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
 | 3 | Async & event-driven | ✅ Done (tag `phase-3`, 12 ticket) | 12 / 12 |
-| 4 | Scale & performance | 🟡 Đang làm (1/…) — trả nợ xong, épic chưa breakdown | 1 / 1 |
+| 4 | Scale & performance | 🟡 Đang làm (breakdown xong **13 ticket**) | 1 / 13 |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
 | 7 | Deployment & infra | ⚪ Todo (epic) | — |
@@ -292,19 +292,55 @@ service-to-service auth từ `SL-3.5`).
 chặn Phase 4**) · `TD-31` (không có refund) · `TD-33` (`min_price` chưa tính SKU override) · `TD-34` (OpenAPI thiếu spec
 `notification`/`search`) · `TD-36` (IT `CheckoutSagaIT` flaky theo tải) — xem §7.
 
-### Phase 4 — Scale & performance
-Mục tiêu: có số liệu chứng minh mỗi pattern giúp gì.
+### Phase 4 — Scale & performance (breakdown `SL-4.x` — **13 ticket**)
 
-- `SL-4.x` Load test harness bằng **k6** + baseline khi chưa tối ưu (p99, throughput, điểm vỡ)
-- `SL-4.x` Cache-aside cho catalog + TTL + jitter + xử lý **cache stampede**
-- `SL-4.x` **Rate limit** ở gateway (token bucket theo user/IP) + trả 429 có `Retry-After`
-- `SL-4.x` **Read replica** + routing read/write, đo **replica lag**
-- `SL-4.x` **Partition** bảng `orders` theo thời gian, đo cải thiện query
-- `SL-4.x` Kịch bản **flash sale** 500k request/60s → báo cáo before/after
-- `SL-4.x` Connection pooling: đo điểm gãy khi số connection vượt pool size
+> **Mục tiêu phase**: mỗi pattern scale phải **chứng minh bằng số đo** — không thêm cache/limit/replica vì "nghe hay".
+> Câu hỏi xuyên suốt: *pattern này cải thiện chỉ số nào, bao nhiêu, và trả giá gì?*
+> **Điều kiện hoàn thành**: có harness đo lặp lại được · mỗi pattern có **before/after** trên cùng bộ đo · tìm được
+> **điểm vỡ** của hệ · flash sale **không oversell, không sập** · báo cáo tổng hợp + runbook + tag `phase-4`.
 
-> Phase 4 **chưa breakdown** đầy đủ (làm khi tới lượt — `AGENTS.md` §3.1). Ticket `SL-4.0` dưới đây là ticket
-> **phát sinh trả nợ** (`TD-29` + `TD-30`), làm trước load test vì bảng phụ phình theo đúng traffic mà load test tạo ra.
+**Chuẩn đo của phase (áp dụng cho MỌI ticket — không lặp lại trong từng AC)**
+
+| Hạng mục | Quy ước |
+|---|---|
+| **Cách đo** | **Điểm vỡ (knee)**, không phải RPS tuyệt đối: ramp VU theo bậc (`50 → 100 → 200 → 400`, mỗi bậc ≥ 60 s). **Điểm vỡ** = bậc đầu tiên có `http_req_failed > 1%` **hoặc** p99 vượt ngưỡng NFR (read **150 ms**, checkout **500 ms**). Báo cáo ghi RPS đạt được **ngay trước** điểm vỡ |
+| **Quy đổi về NFR** | Mọi báo cáo ghi thêm `hệ số = 50.000 RPS (NFR) ÷ RPS đo được` — vd "đạt 350 RPS ⇒ **1/143** mục tiêu NFR trên máy dev này". Không được viết "đạt 50k RPS" khi chưa đo |
+| **Client** | `grafana/k6` qua Docker (không cài vào máy). Ghi lại cấu hình máy + **CPU của chính k6** — nếu k6 chạm trần CPU thì đó là điểm vỡ **của client**, phải nói rõ |
+| **Dataset** | seed cố định, idempotent (`tools/load/seed.sh`): 1.000 product · 2.000 SKU · 20 category · 200 buyer · tồn kho 1.000/SKU |
+| **Số liệu thu** | k6 summary (p50/p95/p99, RPS, error) · `docker stats` · `pg_stat_database` (xact_commit, blks_read) · `pg_stat_activity` · Redis `INFO` · log service |
+| **Lưu raw** | `/tmp/load-<ticket>-<ts>/` + bảng markdown in ra từ `tools/load.sh` (cùng khuôn `tools/bench-async.sh` của `SL-3.8`) |
+| **Báo cáo** | từng ticket dán số vào "Kết quả verify"; tổng hợp cuối phase ở `docs/reports/scale-phase-4.md` (`SL-4.12`) |
+
+| # | Ticket | Nội dung | Ước lượng | Trạng thái |
+|---|---|---|---|---|
+| 0 | `SL-4.0` | *(phát sinh)* **Retention job** `outbox` · `processed_events` · `notification_logs` (trả `TD-29`+`TD-30`) | M | ✅ Done |
+| 1 | `SL-4.1` | **k6 harness + baseline**: 3 scenario · seed · `tools/load.sh` · tìm **điểm vỡ** đầu tiên | M | Todo |
+| 2 | `SL-4.2` | **Cache-aside `catalog`** (TTL + jitter + **single-flight**) — trả phần cache của `TD-22` | M | Todo |
+| 3 | `SL-4.3` | **Rate limit ở gateway** (token bucket Redis + Lua) — trả `TD-21` + phần limit của `TD-22` | M | Todo |
+| 4 | `SL-4.4` | **Read replica** (streaming thật) + routing read/write + đo **replica lag** | M | Todo |
+| 5 | `SL-4.5` | **Connection pool**: đo điểm gãy (Hikari × pgbouncer) | S | Todo |
+| 6 | `SL-4.6` | **Partition `orders` theo tháng** + pruning + đo p99 list | M | Todo |
+| 7 | `SL-4.7` | **Flash sale (1/2)**: atomic stock counter (Redis Lua) + pre-warm | M | Todo |
+| 8 | `SL-4.8` | **Flash sale (2/2)**: degradation + backpressure + báo cáo spike | M | Todo |
+| 9 | `SL-4.9` | **Keyset pagination** (thay offset) — trả `TD-6` | S | Todo |
+| 10 | `SL-4.10` | **Retention `checkout_sagas` + `checkout_saga_steps`** — trả `TD-24` | S | Todo |
+| 11 | `SL-4.11` | **Khử flaky theo tải** (`CheckoutSagaIT`, `inventory` IT) — trả `TD-36` + `TD-23` | S | Todo |
+| 12 | `SL-4.12` | **Báo cáo scale tổng hợp + DoD Phase 4** (`docs/reports/scale-phase-4.md` · runbook · archive · tag) | S | Todo |
+
+**Quyết định đã chốt khi breakdown** *(2026-11-11)*:
+
+- **Đo bằng điểm vỡ + hệ số quy đổi**, không bám số tuyệt đối của NFR: máy dev (WSL2 12 thread) không tạo nổi 50k RPS; ghi
+  "đạt X RPS ⇒ 1/F mục tiêu" trung thực hơn và vẫn so before/after được trên cùng bộ đo.
+- **Read replica = streaming replication thật** (container replica + `primary_conninfo`), không giả lập lag: lag là thứ cần
+  **đo** chứ không phải cần **giả**.
+- **`orders` partition theo tháng (declarative)**, không sharding theo `user_id` — sharding đổi khoá phân giải toàn hệ, để Phase 8.
+- **Flash sale tách 2 ticket** (`4.7` atomic counter, `4.8` degradation + báo cáo): "không oversell" và "không sập phần còn lại"
+  là hai bài toán khác nhau, gộp lại thành ticket `L`.
+- **Không** làm ở phase này: circuit breaker/retry/bulkhead (Phase 5) · metric/dashboard/alert (Phase 6) · `TD-31` (refund) ·
+  `TD-32`/`TD-19` (extract shared lib) · `TD-33`/`TD-34` — ghi rõ để không phải quyết lại.
+
+**Debt sẽ trả trong phase**: `TD-6` (`4.9`) · `TD-21` + `TD-22` (`4.3`/`4.2`) · `TD-23` + `TD-36` (`4.11`) · `TD-24` (`4.10`).
+**Debt còn mở sau phase (dự kiến)**: `TD-1`, `TD-2`, `TD-5`, `TD-8`–`TD-11`, `TD-13`, `TD-16`–`TD-20`, `TD-26`, `TD-31`–`TD-34` — §7.
 
 ### SL-4.0 — Retention job cho `outbox` · `processed_events` · `notification_logs` (trả `TD-29` + `TD-30`)
 
@@ -474,6 +510,686 @@ YAML lồng nhau **không bind**, DDL auto-create vẫn chạy. Bằng chứng: 
   vì để "khi nào chậm thì tính" (đó chính là cách nợ `TD-29` sinh ra).
 
 
+
+### SL-4.1 — k6 harness + baseline (tìm điểm vỡ đầu tiên)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | — (ticket đầu tiên; `SL-4.0` xong để bảng phụ không phình trong lúc đo) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Phase 3 dạy cách đo **một luồng** (`tools/bench-async.sh`), nhưng Phase 4 cần đo **tải tổng**: nhiều client đồng thời, nhiều
+endpoint, kéo dài vài phút, và phải tìm được **điểm vỡ**. `bench-async.sh` đo latency tuần tự/20 song song, không ramp tải,
+không có scenario đọc catalog (thứ chiếm 20:1 traffic theo `architecture.md` §3).
+
+**Mục tiêu**
+
+1. Harness k6 **lặp lại được** cho 3 scenario: đọc catalog (read-heavy), search, checkout.
+2. Bộ **seed dữ liệu** cố định, idempotent (1.000 product · 2.000 SKU · 20 category · 200 buyer).
+3. **Baseline**: p50/p95/p99 · RPS · error rate theo từng bậc tải + **điểm vỡ** khi **chưa** tối ưu gì.
+
+**In scope**
+
+- `tools/load/` — k6 scripts: `read-catalog.js` (list + detail + `GET /v1/skus?ids=`), `read-search.js`, `checkout.js`.
+- `tools/load/seed.sh` — seed idempotent (prefix cố định, chạy lại không tạo trùng) + in ID cho scenario.
+- `tools/load.sh` — chạy 1 scenario theo **bậc VU** (mặc định `50,100,200,400`, mỗi bậc 60 s), in **bảng markdown**
+  (VU · RPS · p50 · p95 · p99 · error%), dừng khi qua điểm vỡ, lưu raw `/tmp/load-<scenario>-<ts>/`.
+- `docs/reports/scale-phase-4-baseline.md` — baseline 3 scenario + điểm vỡ + hệ số quy đổi NFR + "nghẽn ở đâu".
+
+**Out of scope**
+
+- Không sửa code service (baseline phải là hệ **hiện tại**, chưa cache/limit/replica).
+- Không dựng Grafana/Prometheus (Phase 6) · không test flash sale (đó là `SL-4.8`).
+
+**Acceptance Criteria**
+
+- [ ] `bash tools/load/seed.sh` chạy 2 lần: lần 2 **không** tạo thêm row, in cùng bộ ID.
+- [ ] `bash tools/load.sh --scenario read-catalog` chạy từ máy sạch (chỉ cần Docker + stack up), in bảng markdown theo bậc VU,
+      raw lưu `/tmp/load-read-catalog-<ts>/`.
+- [ ] Có **điểm vỡ** cho `read-catalog` và `checkout`: bậc VU + RPS **ngay trước** điểm vỡ + lý do (p99 vượt ngưỡng hay
+      error > 1%) + **hệ số quy đổi NFR**.
+- [ ] Script **dừng đúng** khi qua điểm vỡ và cảnh báo nếu **k6 chạm trần CPU** (điểm vỡ của client).
+- [ ] `docs/reports/scale-phase-4-baseline.md` có 3 bảng + kết luận "nghẽn đầu tiên ở đâu" kèm bằng chứng.
+
+**Ghi chú kỹ thuật**
+
+- **k6 qua Docker**: `docker run --network shoplab-net -v $PWD/tools/load:/scripts` ⇒ gọi `http://api-gateway:8080`.
+- **Ramp theo bậc, không ramp mượt**: bậc rõ mới trả lời được "vỡ ở đâu"; mỗi bậc ≥ 60 s để p99 ổn định.
+- **`ramping-vus`, không `constant-arrival-rate`**: mục tiêu là "bao nhiêu **client đồng thời**"; RPS là hệ quả.
+- **Checkout cần state riêng**: pool 200 buyer, VU xoay vòng; `Idempotency-Key` = `<runId>-<vu>-<iter>` (bài học `SL-3.8`).
+- **Đo trước, tối ưu sau**: baseline không được chứa thay đổi của `SL-4.2`+.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.2 — Cache-aside cho `catalog` (TTL + jitter + single-flight)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | `SL-4.1` (phải có baseline để so) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+`catalog-service` bị đọc nhiều nhất (read:write ≈ 20:1) và hiện **không có cache**: mỗi `GET /v1/products`,
+`GET /v1/products/{id}`, `GET /v1/skus?ids=` là một (hoặc nhiều) query Postgres. Redis đã có trong hệ (cart dùng) nhưng chưa
+dùng cho catalog.
+
+**Mục tiêu**
+
+1. Giảm tải đọc DB + **hạ p99 read** bằng cache-aside, có **jitter** để TTL không hết hạn đồng loạt.
+2. Chống **cache stampede** bằng single-flight.
+3. Cache **không bao giờ** làm sai dữ liệu: ghi product ⇒ key liên quan bị vô hiệu; Redis chết ⇒ vẫn phục vụ (fallback DB).
+
+**In scope**
+
+- `catalog-service`: cache-aside cho `GET /v1/products` (list), `GET /v1/products/{id}`, `GET /v1/skus?ids=` (trả phần cache
+  của `TD-22`), `GET /v1/categories`.
+- Key schema + TTL cấu hình được (`SHOPLAB_CATALOG_CACHE_TTL=60s`, `..._TTL_JITTER_PERCENT=10`) + **version key** `catalog:v1:*`.
+- **Single-flight**: `SET <key>:lock <token> NX PX 2000`; request thua lock chờ ngắn rồi đọc lại cache/DB. Log
+  `cache=hit|miss|stale`.
+- **Invalidation** ngay sau ghi: create/update/archive product → xoá key detail/list + `skus?ids=`.
+- Đo lại `read-catalog` cùng bậc VU như baseline + báo cáo before/after.
+
+**Out of scope**
+
+- Không cache `search-service` (index đã là bản sao), không cache `cart` (Redis vốn là store), không cache dữ liệu tiền.
+- Không làm **cache warming** (đó là `SL-4.7`), không CDN/HTTP cache.
+
+**Acceptance Criteria**
+
+- [ ] Đo lại `read-catalog` ở **cùng** bậc VU: p99 giảm **≥ 30%** **hoặc** điểm vỡ lùi **≥ 1 bậc** (ghi cả hai nếu đạt); không
+      đạt thì báo cáo phải giải thích **bằng số** (nghẽn chuyển sang đâu).
+- [ ] Hit ratio ≥ **80%** ở scenario read (log `cache=hit/miss` hoặc header debug).
+- [ ] **Stampede test**: xoá key hot rồi bắn **200 request đồng thời** ⇒ query DB cho key đó **≤ 2** (delta
+      `pg_stat_database.xact_commit` hoặc log `db-load`).
+- [ ] **Invalidation**: update product ⇒ `GET /v1/products/{id}` + list trả **dữ liệu mới** trong ≤ 1 s (poll).
+- [ ] **Fail-open**: `docker stop shoplab-redis` ⇒ endpoint catalog vẫn `200` (chậm hơn, log WARN), không 500.
+- [ ] `mvn verify` xanh (unit test key/TTL/jitter/single-flight) + `e2e-smoke`/`e2e-checkout` không regress.
+
+**Ghi chú kỹ thuật**
+
+- **Cache-aside**, không read-through: quyết định đọc cache ở service ⇒ dễ debug hơn interceptor "tự động".
+- **Jitter**: `TTL = base × (1 ± jitter%)` bằng `ThreadLocalRandom` — mục tiêu là **phá đồng pha**.
+- **Single-flight bằng lock Redis, không `synchronized`**: nhiều instance thì lock JVM vô nghĩa. Đánh đổi: request thua lock
+  chờ ~50–100 ms (đo được) — chấp nhận, vì "tất cả cùng đập DB" tệ hơn.
+- **Invalidation theo version key**: xoá từng key dễ sai (list có filter/sort) ⇒ update 1 product xoá key cụ thể; hàng loạt
+  thì bump `catalog:v1`.
+- **Hit ratio phải có nguồn đo**: header `X-Cache` chỉ bật khi `SHOPLAB_DEBUG_ENDPOINTS=true` (khuôn có ở payment `/debug/faults`).
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.3 — Rate limit ở gateway (token bucket Redis + Lua)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | `SL-4.1` (đo được tải mới chứng minh được tác dụng) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Gateway hiện **không giới hạn gì**: `/v1/carts/**` (public) và `GET /v1/skus?ids=` (public, 100 id/request) có thể bị một
+client dội tải — `TD-21`, `TD-22`. Đây cũng là mảnh bắt buộc của flash sale (`architecture.md` §6.3): phần lớn request phải bị
+chặn **ở biên** để service bên trong chỉ nhận phần tải nó chịu được.
+
+**Mục tiêu**
+
+1. Chặn tải theo **user** (JWT `sub`) và theo **IP** (request chưa đăng nhập), cấu hình được theo route.
+2. Trả `429` **đúng chuẩn**: JSON `ErrorCode`, `Retry-After`, `X-RateLimit-*`.
+3. Không biến gateway thành **single point of failure**: Redis chết ⇒ **fail-open** + log WARN (thà nhận tải còn hơn sập).
+
+**In scope**
+
+- `api-gateway`: filter token bucket dùng **Redis + Lua** (atomic: đọc + trừ trong 1 `EVAL`).
+- Cấu hình theo route (`application.yml`, override env): `default: 100 rps/burst 200` · `POST /v1/checkout: 10/20` ·
+  `POST /v1/auth/login: 5/10`.
+- Bypass `/health` `/ready` `/version` `/v3/api-docs` `/mock-provider/**`.
+- 429 body theo `ApiError` hiện có + `Retry-After` + `X-RateLimit-Limit|Remaining|Reset`.
+- Test: k6 500 VU không token đánh public read; k6 user hợp lệ dưới ngưỡng ⇒ **0** 429; stop Redis ⇒ fail-open.
+- Trả `TD-21` + phần limit của `TD-22`.
+
+**Out of scope**
+
+- Không rate limit **bên trong** service (chỉ ở biên) — bulkhead/backpressure nội bộ thuộc Phase 5.
+- Không quota theo ngày/tháng (billing), không allowlist theo API key thật.
+
+**Acceptance Criteria**
+
+- [ ] k6 500 VU (không token) vào `GET /v1/products` ⇒ **≥ 90%** là `429` và `pg_stat_database.xact_commit` **không** tăng
+      tương ứng (chặn ở biên, không phải ở DB).
+- [ ] User hợp lệ gửi **dưới ngưỡng** ⇒ **0** `429` (không chặn oan).
+- [ ] 429 có đủ `Retry-After` + `X-RateLimit-*`; body parse được thành `ApiError` (có `code`, `traceId`).
+- [ ] **Fail-open**: `docker stop shoplab-redis` ⇒ request vẫn `200` + log WARN `rate-limit: redis lỗi, fail-open`.
+- [ ] Hai user khác nhau **không** dùng chung bucket (bắn user 1 tới ngưỡng ⇒ user 2 bình thường).
+- [ ] `mvn verify` xanh (unit test thuật toán + filter) · `e2e-checkout` 27 không regress · `TD-21`/`TD-22` cập nhật §7.
+
+**Ghi chú kỹ thuật**
+
+- **Token bucket trong Lua** (`EVAL`): `INCR` + `PEXPIRE` kiểu "fixed window" cho phép burst gấp đôi ở ranh giới cửa sổ;
+  token bucket cho **burst có kiểm soát** — đúng thứ cần cho flash sale.
+- **Key**: `rl:<route>:u:<sub>` khi có JWT, `rl:<route>:ip:<ip>` khi không. Lấy IP **sau** `X-Forwarded-For` hợp lệ — không tin
+  header client tự đặt.
+- **Fail-open có chủ ý**: rate limit là **bảo vệ**, không phải chức năng; Redis chết mà chặn hết traffic là tự bắn vào chân.
+  Đánh đổi này phải ghi trong runbook.
+- **Không log mỗi request bị chặn** ở INFO (500 VU sẽ ngập log); log WARN theo cửa sổ.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.4 — Read replica cho `catalog` + `order` (streaming thật) + đo lag
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | `SL-4.1` (baseline) · độc lập với `SL-4.2`/`4.3` |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Toàn bộ read và write đang dùng **cùng một** Postgres. Với read:write ≈ 20:1, cách tách phổ biến nhất là **read replica**:
+write vào primary, read vào replica. Cái giá là **replica lag** — và lag phải **đo được**, vì nó biến thành "khách vừa sửa
+product mà mở lại vẫn thấy giá cũ" nếu routing sai chỗ.
+
+**Mục tiêu**
+
+1. Có **replica thật** (streaming replication) trong compose, `hot_standby=on`.
+2. `catalog-service` + `order-service` **route** read → replica, write → primary, tắt được bằng env.
+3. Đo **lag** dưới tải + chứng minh chỗ **buộc** đọc primary vẫn đọc primary.
+
+**In scope**
+
+- `infra/docker-compose.yml`: thêm `postgres-replica` (volume riêng, `pg_basebackup -R` khi khởi tạo + `primary_conninfo`),
+  healthcheck `pg_isready` + kiểm `pg_is_in_recovery()`.
+- 2 datasource: primary (write) + `shoplab.datasource.read.*` (replica, read-only); `SHOPLAB_READ_REPLICA_ENABLED=false` ⇒ đọc
+  về primary (công tắc sự cố).
+- Routing: `catalog` — `GET` list/detail/category → replica; `order` — `GET /v1/orders/**` → replica; **mọi** đường ghi +
+  `GET /v1/skus?ids=` → **primary**.
+- Đo lag: `pg_last_wal_replay_lsn()` vs `pg_current_wal_lsn()`, endpoint debug `GET /debug/replication` + log khi lag > ngưỡng.
+- Test read-your-write: update product → `GET` ngay có thể **cũ** (ghi rõ ngưỡng), checkout **luôn** thấy giá mới.
+
+**Out of scope**
+
+- Không logical replication/CDC (Phase 8), không multi-primary, không failover tự động (Phase 7).
+- Không route `inventory`/`promotion` sang replica (tồn kho/khuyến mãi phải tuyệt đối tươi).
+- Không làm connection pooler ở ticket này (`SL-4.5`).
+
+**Acceptance Criteria**
+
+- [ ] `docker compose up` có **15 container**; replica `pg_is_in_recovery()=t`; insert vào primary ⇒ thấy ở replica ≤ 1 s khi idle.
+- [ ] Chứng minh **routing thật** (`pg_stat_activity` hoặc `log_statement=all`): `GET /v1/products` ở **replica**;
+      `POST /v1/products` + `GET /v1/skus?ids=` ở **primary**.
+- [ ] **Đo lag dưới tải**: `checkout` + `read-catalog` đồng thời ≥ 100 RPS trong 60 s ⇒ p50/p95/**max** lag; nêu ngưỡng mà từ đó
+      "đọc replica không còn an toàn cho màn hình X".
+- [ ] **Read-your-write**: update giá rồi `GET` 20 lần ⇒ ghi rõ bao nhiêu lần thấy giá cũ, sau bao lâu luôn thấy mới; checkout
+      dùng giá mới ngay request đầu (0 sai lệch).
+- [ ] `SHOPLAB_READ_REPLICA_ENABLED=false` ⇒ chạy như cũ + e2e xanh (chứng minh **tắt được** khi replica sự cố).
+- [ ] p99 `read-catalog` **không tệ hơn** baseline (nếu tệ: giải thích bằng số, vd thêm 1 hop mạng).
+
+**Ghi chú kỹ thuật**
+
+- **Streaming (physical)**: `pg_basebackup -R` sinh `standby.signal` + `primary_conninfo`; cần `wal_level=replica` (mặc định
+  PG 16) + `max_wal_senders` đủ.
+- **Read-only phải thật**: `default_transaction_read_only=on` hoặc user chỉ `SELECT` — lỡ ghi vào replica thì phải **fail**.
+- **Lag là đánh đổi, không phải bug**: list product chấp nhận cũ 1–2 s; giá trong checkout thì không. Bảng ranh giới này ghi
+  vào `runbook-phase-4.md` (`SL-4.12`).
+- **Đừng route theo "GET = read"**: `GET /v1/skus?ids=` là GET nhưng dùng cho **quyết định giá** — đúng cái bẫy của pattern này.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.5 — Connection pool: đo điểm gãy (Hikari × pgbouncer)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | `SL-4.1` (k6 + baseline) · `SL-4.4` (đo trên cả primary/replica) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Mỗi service có Hikari pool riêng + Postgres `max_connections=100`. Khi tải tăng, câu hỏi thực tế không phải "pool to là tốt"
+mà là **pool bao nhiêu thì hàng đợi xin connection bắt đầu ăn vào p99** — và pgbouncer có cứu được không.
+
+**Mục tiêu**
+
+Có **bảng số** trả lời: (a) điểm gãy ở mức tải nào với pool 10/20/50; (b) pgbouncer (transaction pooling) cải thiện bao nhiêu;
+(c) khuyến nghị cấu hình + lý do.
+
+**In scope**
+
+- Ma trận đo: `hikari.maximum-pool-size ∈ {10, 20, 50}` × bậc tải `SL-4.1` cho `read-catalog` + `checkout`.
+- Thu: p99, throughput, connection thực tế trên Postgres, `pg_stat_activity` (`active`/`idle`/`waiting`).
+- Thử **pgbouncer** (container, transaction mode); đo lại với pool/service nhỏ (vd 5) để thấy tác dụng.
+- Kết luận ghi vào `docs/reports/scale-phase-4-baseline.md` mục "connection pool".
+
+**Out of scope**
+
+- Không đổi kiến trúc kết nối (vẫn JDBC/Hikari), không R2DBC.
+- Không tuning Postgres (`shared_buffers`/`work_mem`) — bài học pool, không phải tuning DB.
+
+**Acceptance Criteria**
+
+- [ ] Bảng 3×2 (pool × scenario) có p99 + throughput; ghi bậc tải mà p99 bắt đầu phình.
+- [ ] Xác định **pool size tối thiểu** mà p99 không tệ hơn baseline > 10% (ghi số).
+- [ ] Có số của pgbouncer ở cùng tải với pool/service nhỏ (p99 + throughput so với không dùng).
+- [ ] Khuyến nghị cấu hình cuối (số cụ thể + lý do) vào `.env.example`/`README` nếu đổi default.
+- [ ] Không regress: `e2e-checkout` + `e2e-async` xanh với cấu hình mới.
+
+**Ghi chú kỹ thuật**
+
+- "Điểm gãy của pool" = p99 phình + connection `active` chạm trần **trong khi CPU Postgres chưa bão hoà** ⇒ nghẽn ở hàng đợi xin
+  connection, không phải ở query.
+- pgbouncer **transaction mode** + JDBC: phải để **`prepareThreshold=0`**, không thì prepared statement session-scoped bị dùng lại
+  sai kết nối — **bẫy thật** phải ghi lại.
+- Tổng connection = Σ pool các service + replica ⇒ so với `max_connections` trước khi tăng pool, kẻo đổi "nghẽn pool" thành
+  "nghẽn `too many clients`".
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.6 — Partition `orders` theo tháng (declarative) + đo p99 list
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | `SL-4.1` (đo list paging) · đi cùng `SL-4.9` rất hợp |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+`orders` + `order_items` tăng mãi theo thời gian, trong khi 99% truy vấn chỉ cần **đơn gần đây**. Partition theo tháng cắt vấn
+đề theo **thời gian** — nhưng chỉ có lợi nếu query có **partition pruning**; nếu không, mọi query quét **tất cả** partition
+(tệ hơn trước).
+
+**Mục tiêu**
+
+1. `orders` thành bảng **partition theo tháng** (`RANGE (created_at)`), dữ liệu cũ migrate xong, hành vi đọc/ghi không đổi.
+2. Chứng minh **pruning** bằng `EXPLAIN` + đo p99 list ở độ sâu lớn trước/sau.
+3. Có cơ chế **tạo partition kế tiếp** — không để "tháng sau hệ chết vì thiếu partition".
+
+**In scope**
+
+- Migration: `orders` partitioned (parent) + copy dữ liệu + đổi tên; giữ PK/FK/constraint (`order_items` FK → parent); partition
+  `orders_YYYY_MM` cho 3 tháng gần nhất + tháng hiện tại + 1 tháng tới.
+- Job tạo partition tháng kế tiếp (`@Scheduled` hoặc migration theo tháng — chọn + ghi lý do).
+- Đảm bảo query list có `created_at` (hoặc `id`+`created_at`) trong WHERE để pruning hoạt động.
+- Đo trước/sau: `EXPLAIN (ANALYZE, BUFFERS)` list sâu + p99 `GET /v1/orders` ở bậc tải `SL-4.1`.
+- Cập nhật `architecture.md` §8 schema + ghi chú vận hành.
+
+**Out of scope**
+
+- Không sharding theo `user_id` (Phase 8) · không partition `order_items` (truy vấn theo `order_id`) — ghi rõ là **quyết định**.
+- Không retention/xoá đơn cũ (bài toán nghiệp vụ, không phải scale).
+
+**Acceptance Criteria**
+
+- [ ] `orders` là partitioned table: `relkind='p'` + ≥ 6 partition (dán `\d+ orders`).
+- [ ] Dữ liệu migrate đủ: số row trước = sau, `sum(total)` trước = sau (assert bằng SQL).
+- [ ] `EXPLAIN` list sâu cho thấy **chỉ 1–2 partition** được đọc (dán output) — quét tất cả ⇒ ticket **chưa xong**.
+- [ ] p99 `GET /v1/orders` (list sâu ≥ 10k đơn) **giảm ≥ 30%** hoặc ghi rõ "không giảm vì ..." kèm số.
+- [ ] Tháng kế tiếp: chạy job/migration tạo partition ⇒ insert đơn mới thành công (không "no partition of relation").
+- [ ] `e2e-checkout` 27 + `e2e-async` 48 xanh sau migrate.
+
+**Ghi chú kỹ thuật**
+
+- **FK tới bảng partitioned**: `order_items.order_id` → `orders(id)` chỉ hợp lệ nếu `orders` khai **PK chứa cả cột partition**
+  (`PRIMARY KEY (id, created_at)`) — ràng buộc của Postgres, phải nói trước chứ không phát hiện giữa đường.
+- **Không dùng trigger** route insert: declarative partitioning tự route theo `created_at`.
+- **Query không có `created_at` sẽ quét mọi partition** ⇒ rà lại repository/report; đây là chỗ dễ regression hơn cả migration.
+- Migration trên volume dev có thể lock bảng — chấp nhận downtime local; cách làm ở môi trường thật (create new + backfill +
+  swap) là **ngoài scope**.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.7 — Flash sale (1/2): atomic stock counter (Redis Lua) + pre-warm
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | `SL-4.3` (rate limit chặn phần lớn tải ở biên) · `SL-4.1` (đo) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+`architecture.md` §6.3: 1 SKU / 10.000 sản phẩm / hàng trăm nghìn người bấm mua. Hiện `inventory-service` reserve bằng
+**conditional `UPDATE`** trên Postgres — đúng và chống oversell, nhưng **mọi** request đều chạm DB. Với 10k stock và 100k
+request, DB nhận 100k update để bán được 10k: đúng nhưng phí, và p99 của **luồng khác** bị kéo theo.
+
+**Mục tiêu**
+
+1. Chặn phần lớn request **trước khi** chạm DB bằng **atomic counter trên Redis** (`DECRBY` trong Lua) ⇒ chỉ ~stock request đi
+   tiếp vào DB.
+2. **Không oversell**: DB vẫn là nguồn sự thật cuối; counter chỉ là "cửa hẹp", phải **reconcile** được khi lệch.
+3. **Pre-warm**: nạp stock vào Redis trước giờ mở bán (không để request đầu tiên tự làm việc đó).
+
+**In scope**
+
+- `inventory-service`: `POST /v1/admin/flash-sale/{skuId}/warm` (admin) nạp `flash:stock:<skuId>` = `on_hand - reserved` + bật
+  cờ `flash:<skuId>:active` (TTL).
+- Reserve path: SKU đang flash-sale ⇒ Lua (`if stock >= qty then stock-qty; return 1 else return 0`) rồi mới gọi reserve DB;
+  hết counter ⇒ `409` nhanh, **không chạm DB**.
+- Compensate: bước sau fail (payment/saga) ⇒ **trả counter** (`INCRBY`) cùng chỗ compensating hiện có, idempotent theo `orderId`.
+- Reconcile: job so `flash:stock + sold` với DB; lệch ⇒ log ERROR + sửa theo **DB thắng**.
+- Đo: k6 flash-sale (1 SKU, N buyer, 60 s) ⇒ `pg_stat_database.xact_commit` delta **≈ số bán được**, không phải N.
+
+**Out of scope**
+
+- Không queue/"xếp hàng chờ mua" hay backpressure thật (đó là `SL-4.8` + Phase 5).
+- Không làm counter cho voucher (cùng khuôn, làm sau nếu cần) · không đổi API public của checkout.
+
+**Acceptance Criteria**
+
+- [ ] Flash-sale scenario (N buyer theo chuẩn đo phase) ⇒ **sold == stock** chính xác (0 oversell, 0 thiếu) — dán số.
+- [ ] Số transaction DB phát sinh **≤ stock × 2**, **không** ≈ N — đây là toàn bộ điểm của ticket.
+- [ ] Hết hàng ⇒ `409` với p99 **< 20 ms** và **không** tăng `xact_commit` (chặn trước DB).
+- [ ] Compensating: 1 đơn fail ở bước payment ⇒ counter được trả lại (assert giá trị Redis + bán lại được).
+- [ ] Reconcile: cố tình sửa Redis lệch (+5) ⇒ job phát hiện, log ERROR, sửa về đúng DB.
+- [ ] `e2e-checkout` 27 + `e2e-async` 48 xanh (luồng thường **không** bị ảnh hưởng khi SKU không flash-sale).
+
+**Ghi chú kỹ thuật**
+
+- **Redis là "cửa hẹp", không phải nguồn sự thật**: mất Redis = mất counter ⇒ phải có đường **tắt flash-sale** (cờ active TTL
+  ngắn) để quay về reserve DB thường, thay vì bán sai.
+- **Lua để atomic**: `GET` rồi `DECR` ở 2 lệnh là race (bán quá stock). Một `EVAL` là đủ.
+- **Compensating idempotent**: retry mà cộng counter 2 lần là bán khống ⇒ key `flash:compensated:<orderId>` + `SETNX`.
+- **Đo phải so baseline `SL-4.1`**: không có baseline thì "nhanh hơn" chỉ là cảm giác.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.8 — Flash sale (2/2): degradation + backpressure + báo cáo spike
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | `SL-4.3` (429 ở biên) · `SL-4.7` (counter) · `SL-4.2` (cache giảm tải đọc khi spike) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+`SL-4.7` lo "bán đúng". Ticket này lo phần còn lại của câu "**không sập, không treo API khác**": khi hàng trăm nghìn người cùng
+bấm mua, hệ phải **hy sinh có chủ ý** phần không critical để giữ luồng checkout sống — thay vì để mọi thứ chậm đều rồi cùng chết.
+
+**Mục tiêu**
+
+1. Có **công tắc degradation** (runtime, không build lại): tắt/giảm luồng phụ khi spike.
+2. Có **bằng chứng**: khi bật degradation, checkout giữ error + p99 trong ngưỡng, phần bị hy sinh trả lỗi **có kiểm soát**
+   (429/503 + `Retry-After`), không phải timeout treo.
+3. Có **báo cáo spike** with/without degradation trên cùng scenario.
+
+**In scope**
+
+- Config degradation (endpoint admin hoặc env + refresh — **không cần restart**):
+  - `search` tắt ⇒ gateway trả `503` + `Retry-After` ngay (không gọi service).
+  - `notification` consumer tạm dừng — email chậm, **không mất** (event chờ trong queue).
+  - rate limit checkout siết (vd 10 → 5 rps/burst 10) trong cửa sổ spike.
+- Gateway: nhánh `503` "tạm tắt" cho route bị degrade (format `ApiError`, có `Retry-After`) + `GET /debug/degradation`.
+- k6 `flash-sale.js`: đo **without** và **with** degradation trên cùng bậc tải.
+- Báo cáo: checkout p99/error, search p99/error, số 429/503, CPU container, và **hệ có tự phục hồi** sau spike không.
+
+**Out of scope**
+
+- Không circuit breaker tự động theo lỗi (Phase 5) — ở đây là **công tắc có người bấm** + rate limit.
+- Không autoscaling (Phase 7), không hàng đợi thật (Phase 5 backpressure) · không đổi schema/DB.
+
+**Acceptance Criteria**
+
+- [ ] Bật/tắt degradation **không cần restart**; trạng thái đọc được qua `GET /debug/degradation` (khi debug bật).
+- [ ] Cùng scenario flash-sale: **without** degradation ⇒ checkout error > 1% **hoặc** p99 vượt 500 ms (ghi số thật); **with**
+      degradation ⇒ checkout error ≤ 1% và p99 < 500 ms (hoặc ghi rõ không đạt + lý do).
+- [ ] Khi `search` bị degrade: search trả `503` p99 **< 50 ms** (không phải timeout 2 s) + `Retry-After`; checkout không bị
+      ảnh hưởng (error/p99 trong ngưỡng).
+- [ ] Sau spike: tắt degradation ⇒ hệ về bình thường **không restart** (e2e sau spike xanh + p99 về mức baseline).
+- [ ] Báo cáo `docs/reports/scale-phase-4-baseline.md` (mục flash sale) có bảng before/after + **hệ số quy đổi NFR**.
+
+**Ghi chú kỹ thuật**
+
+- **"Danh sách hy sinh" phải rõ**: search/notification là eventual-consistent nên hy sinh được; **không bao giờ** hy sinh
+  `inventory`/`payment`/`order` (đúng/sai dữ liệu).
+- **503 khác 429**: 429 = "bạn gửi nhiều quá" (client tự chịu); 503 + `Retry-After` = "hệ đang tự bảo vệ" (server chịu). Dùng đúng
+  loại thì client/proxy xử lý đúng.
+- **Công tắc phải quan sát được**: không ai biết degradation đang bật ⇒ nó sẽ bật mãi (bài học "im lặng" của Phase 3).
+- Runbook (`SL-4.12`) phải ghi: **ai bật, bật cái gì, tắt khi nào, kiểm gì sau khi tắt**.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.9 — Keyset pagination cho list (trả `TD-6`)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | `SL-4.1` (đo p99 ở độ sâu lớn) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+`GET /v1/products` dùng **offset pagination**: `OFFSET 100000` buộc Postgres đọc rồi **bỏ** 100k row trước khi trả 20 row ⇒ p99
+tăng tuyến tính theo độ sâu trang. Đây là `TD-6` với điều kiện revisit "Phase 4 khi đo được p99 của list" — giờ đã đo được.
+
+**Mục tiêu**
+
+1. Có **keyset pagination** (`after` + `created_at`/`id`) cho list, trả kết quả **ổn định** (không nhảy/lặp row khi có insert).
+2. Đo p99 ở **trang sâu** trước/sau trên cùng dataset.
+3. Giữ **tương thích**: client cũ dùng `page` vẫn chạy (deprecated) — hoặc cắt hẳn nếu contract cho phép (ghi rõ chọn gì).
+
+**In scope**
+
+- API: `GET /v1/products?limit=20&after=<cursor>` (cursor = base64 của `created_at|id`), trả `nextCursor` (null khi hết).
+- Repository: keyset (`WHERE (created_at, id) < (?, ?) ORDER BY created_at DESC, id DESC LIMIT ?`) + index khớp.
+- OpenAPI cập nhật + `docs/api/openapi.yaml` regenerate (`tools/export-openapi.sh`).
+- Đo: p99 `page=1` vs `page=5000` (offset) so với `after=<cursor sâu>` (keyset) trên 1.000 product + 200k row sinh thêm.
+- Test: unit (cursor encode/decode, thứ tự), IT (không lặp/không mất row khi insert chen giữa), e2e cũ vẫn xanh.
+
+**Out of scope**
+
+- Không đổi **mọi** endpoint list trong 1 ticket: chỉ list được đo là chậm; endpoint khác để ticket sau (`TD-6` ghi phần còn lại).
+- Không làm cursor cho search (`search-service` có paging riêng).
+
+**Acceptance Criteria**
+
+- [ ] p99 trang sâu: keyset **≥ 5× nhanh hơn** offset (hoặc ghi rõ số nếu khác) + `EXPLAIN` cho thấy **Index Scan** thay vì
+      `Bitmap/Seq + Sort` (dán output).
+- [ ] Trang sâu trả **đúng** số row + không trùng `id` giữa 2 trang liên tiếp.
+- [ ] Insert 1 product **giữa lúc đang phân trang** ⇒ không lặp và không mất row (chứng minh bằng test đối chiếu 2 cách).
+- [ ] `docs/api/openapi.yaml` có `after`/`nextCursor`, validate PASS; client cũ (`page`) vẫn qua e2e.
+- [ ] `mvn verify` xanh + `e2e-smoke` 17 xanh.
+
+**Ghi chú kỹ thuật**
+
+- **Cursor phải chứa đủ khoá sắp xếp**: `(created_at, id)` chứ không chỉ `id` — sort theo thời gian, `id` chỉ là tie-breaker
+  (nhiều row cùng giây).
+- **Index phải khớp `ORDER BY`**: `(created_at DESC, id DESC)` — thiếu index thì keyset vẫn chậm, chỉ là chậm kiểu khác.
+- **`OFFSET` không "sai" với dữ liệu tĩnh**: nó chỉ sai khi có insert/delete chen giữa ⇒ phải chứng minh bằng test có insert
+  chen giữa, không chỉ đo tốc độ.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.10 — Retention cho `checkout_sagas` + `checkout_saga_steps` (trả `TD-24`)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | `SL-4.0` (đã có khuôn retention + hạ tầng job) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+`SL-4.0` dọn `outbox`/`processed_events`/`notification_logs`, nhưng **2 bảng saga** vẫn phình: `checkout_sagas` +
+`checkout_saga_steps` ghi 1 dòng/bước/lần checkout (`TD-24`). Load test Phase 4 tạo **hàng chục nghìn** saga trong vài phút —
+đúng lúc không nên để bảng audit này lớn vô hạn.
+
+**Mục tiêu**
+
+Dọn saga đã **kết thúc** (terminal state) theo tuổi, giữ đủ lâu để điều tra, và **không bao giờ** chạm saga đang chạy.
+
+**In scope**
+
+- `order-service`: mở rộng `RetentionSweeper` (đã có) — xoá `checkout_saga_steps` của saga cũ **trước**, rồi `checkout_sagas`
+  (`state IN ('COMPLETED','EXPIRED','FAILED_*','CANCELLED')` và `created_at < cutoff`), batch delete.
+- Ngưỡng `SHOPLAB_ORDER_SAGA_RETENTION` mặc định **30 ngày** (audit), cấu hình được + compose env.
+- IT: saga terminal cũ ⇒ xoá cả steps; saga **đang chạy** (`COMPLETED_START`/`STARTED`) ⇒ giữ; saga mới ⇒ giữ.
+- Runbook: thêm dòng kiểm (đếm saga cũ còn lại) — tổng hợp ở `runbook-phase-4.md` (`SL-4.12`).
+
+**Out of scope**
+
+- Không xoá `orders`/`order_items` (dữ liệu nghiệp vụ, yêu cầu lưu trữ riêng).
+- Không archive sang bảng khác / cold storage (chỉ xoá theo tuổi).
+
+**Acceptance Criteria**
+
+- [ ] Saga terminal cũ hơn ngưỡng bị xoá **cùng steps của nó**; saga đang chạy + saga mới **còn nguyên** (assert ở IT).
+- [ ] Không còn `checkout_saga_steps` mồ côi (steps trỏ tới saga đã xoá) — assert bằng query `left join`.
+- [ ] Drill trên compose: chèn saga backdate → job xoá đúng số, log INFO có số row (dán output).
+- [ ] `e2e-checkout` 27 + `e2e-checkout-fail` 41 xanh (saga vẫn chạy đúng).
+- [ ] `TD-24` đánh dấu ✅ đã trả trong §7.
+
+**Ghi chú kỹ thuật**
+
+- **Thứ tự xoá**: steps trước, saga sau (FK). Xoá saga trước thì FK chặn hoặc cascade ngoài ý muốn.
+- **Terminal state liệt kê tường minh**, không dùng `state <> 'STARTED'` — state mới thêm sau này sẽ **âm thầm** bị dọn.
+- **30 ngày** chọn theo "điều tra sự cố" chứ không theo dung lượng; ghi lý do để lần sau không đổi bừa.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.11 — Khử flaky theo tải (`CheckoutSagaIT`, `inventory` IT) — trả `TD-36` + `TD-23`
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | — (làm **trước** khi chạy load test hàng loạt) |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Hai IT đã đỏ **vì tải**, không vì logic: `CheckoutSagaIT.sweeperExpiresOverdueOrder` (`TD-36`, payment-window 1 s) và
+`inventory.commitAfterExpiryReturnsGone` (`TD-23`, sweeper 300 ms trong IT). Phase 4 sẽ chạy k6 + 15 container **đồng thời** với
+`mvn verify` ⇒ hai test này đỏ thường xuyên và **che lỗi thật**.
+
+**Mục tiêu**
+
+1. Hai IT **deterministic**: không phụ thuộc thời gian thực/nhịp sweeper.
+2. Chứng minh bằng cách chạy lặp **dưới tải** (compose up + k6 chạy nền) mà vẫn xanh.
+
+**In scope**
+
+- `CheckoutSagaIT`: mốc `created_at` **tường minh** cho **mọi** saga trong test; nâng payment-window IT lên ≥ 5 s (hoặc cả hai).
+- `inventory` IT: tắt sweeper trong test (`sweep-interval-ms` rất lớn) hoặc `expires_at` tường minh + gọi sweeper **thủ công**
+  thay vì chờ.
+- Chạy lặp 5 lần mỗi class **khi** compose đang chạy + k6 read-catalog nền ⇒ 5/5 xanh (dán log).
+
+**Out of scope**
+
+- Không đổi logic nghiệp vụ (sweeper/expiry) — chỉ đổi **cách test điều khiển thời gian**.
+- Không sửa `TD-23`/`TD-36` ngoài phạm vi 2 test này.
+
+**Acceptance Criteria**
+
+- [ ] `CheckoutSagaIT` + class chứa test expiry của `inventory` chạy **5 lần liên tiếp** dưới tải ⇒ **5/5 xanh** (dán log tóm tắt).
+- [ ] Test **vẫn kiểm đúng hành vi**: cố tình sửa code (vd bỏ điều kiện EXPIRED) ⇒ test **đỏ** (chứng minh không làm yếu test để
+      dễ xanh — dán kết quả lần đỏ đó).
+- [ ] `mvn -B -ntp verify` xanh khi **không** có tải và khi **có** compose chạy.
+- [ ] `TD-23` + `TD-36` đánh dấu ✅ đã trả trong §7.
+
+**Ghi chú kỹ thuật**
+
+- **Nguyên tắc**: test không được **chờ** thời gian thật; mọi mốc thời gian do test **đặt**. Chờ = flaky.
+- **Chứng minh test còn giá trị** (mutation nhỏ: bỏ điều kiện ⇒ thấy đỏ) là bước hay bị bỏ — không có nó thì "test xanh" chỉ là
+  test rỗng.
+- Ticket **nhỏ nhưng chặn**: đỏ ngẫu nhiên trong Phase 4 sẽ làm mất niềm tin vào `mvn verify` (thứ đang là hàng rào chính).
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
+
+### SL-4.12 — Báo cáo scale tổng hợp + DoD Phase 4 (runbook · archive · tag)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | Todo |
+| **Phase** | 4 — Scale & performance |
+| **Phụ thuộc** | **mọi** ticket `SL-4.1` … `SL-4.11` `Done` |
+| **Ước lượng** | S |
+
+**Bối cảnh**
+
+Mỗi ticket Phase 4 đo một pattern, nhưng **câu hỏi của phase** chỉ trả lời được khi gom lại: pattern nào giúp bao nhiêu, pattern
+nào **không** giúp, và trần của hệ bây giờ là bao nhiêu. Không có ticket này thì Phase 4 kết thúc bằng 10 báo cáo rời rạc — đúng
+thứ `AGENTS.md` §3.3 muốn tránh.
+
+**Mục tiêu**
+
+1. `docs/reports/scale-phase-4.md`: **một** bảng before/after cho mọi pattern + hệ số quy đổi NFR + "cái gì **không** giúp".
+2. `docs/runbook-phase-4.md`: vận hành khi tải cao (429/503 · replica lag · degradation · flash sale · partition).
+3. Đóng Phase 4 theo DoD (`AGENTS.md` §5, ADR-0005): archive · `docs/phases/phase-4.md` · tag `phase-4` + release.
+
+**In scope**
+
+- `docs/reports/scale-phase-4.md` — bảng: pattern · trước · sau · Δ% · điều kiện đo · **kết luận 1 dòng**; mục "**không** giúp /
+  gây hại" + "trần hiện tại của hệ" (RPS + điểm vỡ mới) + giới hạn đã biết.
+- `docs/runbook-phase-4.md` — đọc số liệu khi tải cao: **429 ở route nào** · **replica lag** (lệnh + ngưỡng) · **degradation**
+  (bật/tắt/kiểm) · **flash sale** (pre-warm, counter, reconcile) · **partition** (tháng mới, kiểm pruning) · pool.
+- `docs/phases/phase-4.md` + `docs/phases/README.md` + bảng archive + `architecture.md` §12 = ✅ Done.
+- Archive `SL-4.x` → `Backlog-phase-4.md`; `Backlog.md` chỉ còn trạng thái + link.
+- Tag annotated `phase-4` trên merge commit của PR này + GitHub Release (notes tái dùng `Backlog-phase-4.md`).
+
+**Out of scope**
+
+- Không đo thêm pattern mới (Phase 5) — thiếu số thì **mở ticket**, không nhét vào đây.
+- Không sửa code service (bug phát hiện ⇒ ticket mới).
+
+**Acceptance Criteria**
+
+- [ ] `docs/reports/scale-phase-4.md` có **≥ 6 dòng** pattern với before/after **lấy từ ticket tương ứng** (không chép lại từ trí
+      nhớ) + hệ số quy đổi NFR + mục "không giúp".
+- [ ] `docs/runbook-phase-4.md` có ≥ **6 mục** và **mỗi lệnh chạy được thật** (dán output).
+- [ ] `Backlog-phase-4.md` đủ ticket + header; `Backlog.md` **không còn** `### SL-4.x`; `docs/phases/phase-4.md` có số liệu phase.
+- [ ] `docker compose down -v` → `up -d --build` ⇒ **15 container healthy** (thêm replica) + 4 script e2e xanh.
+- [ ] `mvn -B -ntp verify` xanh; CI xanh trên PR (CI đang bật — `SL-3.9`).
+- [ ] Tag `phase-4` + Release; `docs/phases/README.md` + bảng archive + `architecture.md` §12 = ✅ Done.
+
+**Ghi chú kỹ thuật**
+
+- **Số liệu phải có nguồn**: mỗi ô trong báo cáo tổng hợp trỏ về ticket/`/tmp/load-*` đã sinh ra nó — không có "khoảng 2×".
+- **"Không giúp" là phần giá trị nhất**: pattern fail (vd cache hit thấp vì key phân tán) dạy nhiều hơn pattern thành công; phải
+  ghi kèm số.
+- DoD phase: tag gắn **sau merge** (tag trên merge commit đóng phase), release notes tái dùng `Backlog-phase-4.md`.
+- **CI đang bật** ⇒ PR docs-only sẽ **không** có run (`paths-ignore`); nếu có commit code (vd regenerate `openapi.yaml`) thì phải
+  chờ CI xanh.
+
+**Kết quả verify** *(điền khi Done)*
+
+**Learning note** *(điền khi Done)*
 
 ### Phase 5 — Resilience
 Mục tiêu: hệ vẫn phục vụ luồng critical khi một phần chết.
@@ -827,3 +1543,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-09 | `SL-3.8` → `Done`: thêm **`tools/bench-async.sh`** (5 phép đo, in bảng markdown + lưu raw) và **`docs/reports/async-phase-3.md`** — số đo thật: checkout p50 42,7→43,1 ms (async **không** làm nhanh hơn), confirm→email p50 552/p95 1011 ms, webhook→CONFIRMED p50 29/p95 46 ms, relay **63,7 msg/s** (trần 100 ⇒ nghẽn relay polling), DLQ **0** trong 300 s với 100 checkout + 100 update (phát = xử lý 100/100 ở cả 3 luồng, 0 email trùng), degradation: consumer chết ⇒ checkout p95 44,6 ms + 20 event chờ ⇒ bật lại xử lý đủ 20/20. Nợ mới `TD-35` (outbox không có job dọn). `README` + `architecture.md` trỏ tới báo cáo. |
 | 2026-11-11 | `SL-3.9` → `Done`: **đóng Phase 3** — `docs/runbook-phase-3.md` (4 tầng debug · 8 lỗi · ca debug thật "email không tới" từ fail-mode) · `docs/phases/phase-3.md` · archive 12/12 ticket sang `Backlog-phase-3.md` (giờ "54 ticket chi tiết") · verify snapshot từ volume rỗng: **14/14 container healthy** + 4 script E2E (17/27/41/**48**) + `mvn verify` **805 test** + OpenAPI 42/51/48 · **CI bật lại** (`gh variable delete CI_ENABLED`, `TD-28` → đã trả) · gộp `TD-35` vào `TD-29`, thêm `TD-36` (IT order flaky theo tải) · tag `phase-3` + release. |
 | 2026-11-11 | `SL-4.0` → `Done` (**trả `TD-29` + `TD-30`**): **retention job** cho `outbox` (chỉ `SENT`, 7d) · `processed_events` (7d) · `notification_logs` (90d); `ProcessedEventRetention` ở commons + 5 `RetentionSweeper` per service (`@Scheduled` `fixedDelay`, batch delete, log số row) · migration **partial index** `idx_outbox_sent` ở 3 DB · env + compose cho 5 service · **fix bug** `dedup.auto-create-schema` không bind (nested `dedup`) · runbook §3.7 (kiểm retention) + `architecture.md` §8.1 (nguyên tắc 4b + bất biến `dedup.retention ≥ outbox.retention`). Verify: **829 test** (684 unit + 145 IT) · IT backdate assert không xoá `PENDING`/row mới/`sent_at NULL` · drill compose `oldSENT=0 newSENT=1 oldPENDING=1` + log `giữ PT168H`/`PT2160H` · `e2e-async 48` + `e2e-checkout 27` + DLQ 0. |
+| 2026-11-11 | **Breakdown Phase 4** → **13 ticket**: `SL-4.0` (retention — Done) · `4.1` k6 harness + baseline · `4.2` cache-aside catalog · `4.3` rate limit gateway · `4.4` read replica streaming · `4.5` connection pool · `4.6` partition `orders` · `4.7` flash sale (atomic counter) · `4.8` flash sale (degradation + báo cáo) · `4.9` keyset pagination (`TD-6`) · `4.10` saga retention (`TD-24`) · `4.11` khử flaky theo tải (`TD-36`+`TD-23`) · `4.12` báo cáo + DoD phase. **Chuẩn đo của phase**: **điểm vỡ** + **hệ số quy đổi NFR** (không bám 50k RPS tuyệt đối), k6 qua Docker, dataset 1.000 product / 200 buyer. **Quyết định**: replica = streaming thật · partition theo tháng (sharding → Phase 8) · flash sale tách 2 ticket · circuit breaker/metric → Phase 5/6 | bạn + AI |
