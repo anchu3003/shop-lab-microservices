@@ -48,6 +48,12 @@ class AbstractEventConsumerTest {
     public void unmarkProcessed(String consumer, EventEnvelope envelope) {
       processed.remove(consumer + "|" + envelope.eventId());
     }
+
+    /** Không dùng ở test của consumer — chỉ để thoả interface (`SL-4.0` thêm method retention). */
+    @Override
+    public int deleteProcessedBefore(java.time.Instant cutoff, int batch) {
+      return 0;
+    }
   }
 
   private static final class TestConsumer extends AbstractEventConsumer {

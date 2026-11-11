@@ -35,7 +35,8 @@ public class EventProperties {
    * Commons tự tạo bảng {@code processed_events} nếu chưa có (tắt khi service quản DDL bằng
    * Flyway).
    */
-  private boolean autoCreateSchema = true;
+  /** Cấu hình bảng dedupe {@code processed_events} ({@code shoplab.events.dedup.*}). */
+  private Dedup dedup = new Dedup();
 
   /**
    * Có tự start {@code @RabbitListener} khi app khởi động không (mặc định bật).
@@ -84,19 +85,72 @@ public class EventProperties {
     this.retryDelays = retryDelays;
   }
 
-  public boolean isAutoCreateSchema() {
-    return autoCreateSchema;
-  }
-
-  public void setAutoCreateSchema(boolean autoCreateSchema) {
-    this.autoCreateSchema = autoCreateSchema;
-  }
-
   public boolean isConsumerAutoStartup() {
     return consumerAutoStartup;
   }
 
   public void setConsumerAutoStartup(boolean consumerAutoStartup) {
     this.consumerAutoStartup = consumerAutoStartup;
+  }
+
+  public Dedup getDedup() {
+    return dedup;
+  }
+
+  public void setDedup(Dedup dedup) {
+    this.dedup = dedup == null ? new Dedup() : dedup;
+  }
+
+  /**
+   * Cấu hình bảng dedupe {@code processed_events} của **DB service này**.
+   *
+   * <p><b>Vì sao là object lồng nhau, không phải field flat</b> (bẫy thật, `SL-4.0`): 3 service
+   * khai {@code shoplab.events.dedup.auto-create-schema: false} trong `application.yml` nhưng
+   * property tương ứng lại là {@code shoplab.events.auto-create-schema} (flat) ⇒ khoá YAML **không
+   * bind**, DDL auto-create vẫn chạy, và không có lỗi nào để thấy. Cấu trúc lồng nhau làm khoá YAML
+   * đúng nghĩa "đây là cấu hình của bảng dedupe".
+   */
+  public static class Dedup {
+
+    /** Commons tự tạo bảng nếu chưa có (tắt khi service quản DDL bằng Flyway). */
+    private boolean autoCreateSchema = true;
+
+    /**
+     * Giữ row dedupe bao lâu (mặc định 7 ngày).
+     *
+     * <p><b>Ràng buộc với outbox</b>: giá trị này phải <b>≥ retention của bảng {@code outbox}</b>.
+     * Marker dedupe là thứ chặn việc xử lý lại cùng một event; nếu nó hết hạn **trước** khi row
+     * outbox bị xoá thì một lần replay DLQ (hoặc redeliver muộn) sau đó sẽ được xử lý **lần hai** —
+     * email gửi 2 lần. Đây là bất biến cấu hình, không phải bất biến code: job không thể kiểm hộ
+     * service khác.
+     */
+    private Duration retention = Duration.ofDays(7);
+
+    /** Số row mỗi nhịp job dọn — nhỏ để transaction DELETE ngắn, không khoá bảng lâu. */
+    private int cleanupBatchSize = 1000;
+
+    public boolean isAutoCreateSchema() {
+      return autoCreateSchema;
+    }
+
+    public void setAutoCreateSchema(boolean autoCreateSchema) {
+      this.autoCreateSchema = autoCreateSchema;
+    }
+
+    public Duration getRetention() {
+      return retention;
+    }
+
+    public void setRetention(Duration retention) {
+      this.retention = retention;
+    }
+
+    public int getCleanupBatchSize() {
+      return cleanupBatchSize;
+    }
+
+    public void setCleanupBatchSize(int cleanupBatchSize) {
+      this.cleanupBatchSize = cleanupBatchSize;
+    }
   }
 }

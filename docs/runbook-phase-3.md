@@ -54,6 +54,11 @@ catalog-service ─┘     │ rk=product.archived.v1  ──► q.search       
 | `SHOPLAB_NOTIFICATION_FAIL_MODE` | `false` | **bơm lỗi có chủ đích** để thử DLQ (chỉ có tác dụng khi `APP_ENV=local`) |
 | `SHOPLAB_SEARCH_RECONCILE_BATCH` | `100` | batch của reindex (gọi tay `/v1/admin/search/reindex`) |
 | `SHOPLAB_SEARCH_DRIFT_INTERVAL` | `10m` | nhịp job so số row index vs catalog (chỉ **WARN**, không tự sửa) |
+| `SHOPLAB_RETENTION_SWEEP_INTERVAL` | `1h` | nhịp job dọn bảng phụ (mọi service) — `fixedDelay` |
+| `SHOPLAB_OUTBOX_RETENTION` | `7d` | giữ row `outbox` `SENT` bao lâu (`PENDING` **không bao giờ** bị xoá) |
+| `SHOPLAB_EVENTS_DEDUP_RETENTION` | `7d` | giữ `processed_events` bao lâu — **phải ≥** `SHOPLAB_OUTBOX_RETENTION` |
+| `SHOPLAB_NOTIFICATION_LOG_RETENTION` | `90d` | giữ `notification_logs` (dữ liệu nghiệp vụ) |
+
 
 
 ## 3. Kiểm tra từng tầng (copy-paste được)
@@ -203,6 +208,51 @@ $ docker exec shoplab-postgres psql -U shoplab -d order -tAc \
 
 `PENDING_PAYMENT` **không** chuyển tiếp sau khi provider đã báo thanh toán ⇒ event `payment.succeeded.v1` chưa tới
 `q.order` (kiểm 3.1) hoặc `q.order` không có consumer (kiểm `consumers=0`).
+
+### 3.7. Tầng retention — bảng phụ có được dọn không?
+
+Job dọn chạy **in-process** (`@Scheduled`, `fixedDelay` = `SHOPLAB_RETENTION_SWEEP_INTERVAL`, mặc định 1 h) ở
+`order` · `catalog` · `payment` (outbox) · `notification` (`notification_logs` + dedupe) · `search` (dedupe).
+
+```console
+$ docker exec shoplab-postgres psql -U shoplab -d order -c \
+    "select status, count(*), min(sent_at), max(sent_at) from outbox group by status"
+ status | count |              min              |             max
+--------+-------+-------------------------------+------------------------------
+ SENT   |    16 | 2026-11-11 13:46:32.281395+00 | 2026-11-11 16:09:20.93792+00
+```
+
+Đọc: `SENT` mà `sent_at` cũ hơn **7 ngày** thì job **phải** đã xoá (hoặc job chưa chạy ⇒ xem log).
+
+```console
+$ for db in order notification search; do
+    docker exec shoplab-postgres psql -U shoplab -d $db -tAc \
+      "select '$db: ' || count(*) || ' row cũ hơn 7 ngày' from processed_events where processed_at < now() - interval '7 days'"; done
+order: 0 row cũ hơn 7 ngày
+notification: 0 row cũ hơn 7 ngày
+search: 0 row cũ hơn 7 ngày
+```
+
+> ⚠️ **Đừng chèn row `PENDING` giả vào `outbox` để thử** khi relay đang chạy: relay sẽ **publish** nó ngay (đó là việc của
+> nó), và nếu routing key không có binding thì message mất — trạng thái bạn muốn kiểm sẽ biến mất vì lý do **khác** với
+> retention. Muốn kiểm "PENDING không bị xoá" thì tắt relay (`SHOPLAB_EVENTS_ENABLED=false`) hoặc assert ngay trong IT
+> (đã làm ở `OrderServiceApplicationIT.retentionDeletesOnlyOldSentRows`).
+
+**Job có chạy không** — grep log (chỉ log khi có row bị xoá, để không spam):
+
+```console
+$ docker logs --since 2h shoplab-order-service 2>&1 | grep 'outbox retention'
+… "msg":"outbox retention: đã xoá 3 row SENT cũ hơn 2026-11-04T10:00:00Z (giữ PT168H · batch 1000)"
+$ docker logs --since 2h shoplab-notification-service 2>&1 | grep 'notification_logs retention'
+```
+
+| Hiện tượng | Nghĩa / xử lý |
+|---|---|
+| Không có log retention **và** có row quá hạn | Job chưa tới nhịp (chờ `interval`), hoặc service không có `@EnableScheduling`, hoặc cấu hình sai (log ERROR khi lỗi) |
+| Có log nhưng bảng vẫn to | Bảng lớn hơn `batch` ⇒ mỗi nhịp chỉ xoá `batch` row; nâng `SHOPLAB_RETENTION_SWEEP_INTERVAL`/batch, và kiểm index `idx_outbox_sent` có tồn tại |
+| `PENDING` bị xoá | **Không thể xảy ra** theo thiết kế (điều kiện `status='SENT'`); nếu thấy ⇒ dừng job, kiểm ngay bản deploy |
+| Replay DLQ sau nhiều ngày bị xử lý **2 lần** | `SHOPLAB_EVENTS_DEDUP_RETENTION` < `SHOPLAB_OUTBOX_RETENTION` ⇒ marker dedupe đã hết hạn. Đây là bất biến cấu hình, không phải bug code |
+
 
 
 ## 4. Bảng lỗi — triệu chứng người trực thấy trước

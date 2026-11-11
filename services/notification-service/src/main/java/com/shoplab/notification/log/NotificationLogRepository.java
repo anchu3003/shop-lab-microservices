@@ -1,5 +1,6 @@
 package com.shoplab.notification.log;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -95,6 +96,36 @@ public class NotificationLogRepository {
       String status,
       Instant createdAt,
       Instant sentAt) {}
+
+  /**
+   * Xoá log cũ hơn {@code cutoff} (job retention — `TD-30`, `SL-4.0`).
+   *
+   * <p>Điều kiện tuổi dùng {@code sent_at} (không `created_at`): thứ khách tra là "email tôi
+   * **nhận** lúc nào". Row chưa gửi được (`sent_at IS NULL`) **không** bị xoá bởi job này — chúng
+   * là dấu vết của một lần gửi **hỏng**, cần người xem chứ không phải dữ liệu cũ.
+   *
+   * <p>Batch + subquery: xem {@code JdbcProcessedEventStore.deleteProcessedBefore} (Postgres không
+   * nhận {@code LIMIT} trong DELETE).
+   *
+   * @param cutoff xoá row có {@code sent_at < cutoff}
+   * @param batch số row tối đa mỗi lần gọi
+   * @return số row đã xoá
+   */
+  @Transactional
+  public int deleteOlderThan(Instant cutoff, int batch) {
+    return jdbc.update(
+        """
+        DELETE FROM notification_logs
+        WHERE id IN (
+          SELECT id FROM notification_logs
+          WHERE sent_at IS NOT NULL AND sent_at < ?
+          ORDER BY sent_at
+          LIMIT ?
+        )
+        """,
+        Timestamp.from(cutoff),
+        batch);
+  }
 
   private RowMapper<NotificationLog> rowMapper() {
     return (rs, i) ->

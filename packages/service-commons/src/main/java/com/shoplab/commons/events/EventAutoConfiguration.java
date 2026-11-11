@@ -1,6 +1,7 @@
 package com.shoplab.commons.events;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -66,10 +67,28 @@ public class EventAutoConfiguration {
   @ConditionalOnBean(JdbcTemplate.class)
   public ProcessedEventStore processedEventStore(JdbcTemplate jdbc, EventProperties properties) {
     JdbcProcessedEventStore store = new JdbcProcessedEventStore(jdbc);
-    if (properties.isAutoCreateSchema()) {
+    if (properties.getDedup().isAutoCreateSchema()) {
       store.initSchema();
     }
     return store;
+  }
+
+  /**
+   * Job retention của bảng dedupe (`TD-30`, `SL-4.0`) — **không tự schedule**; service tự gọi
+   * {@link ProcessedEventRetention#sweep()} từ sweeper của nó (xem javadoc class đó để biết vì
+   * sao).
+   *
+   * <p>Dùng {@link Clock} của service nếu có (đa số service khai bean riêng để test được thời
+   * gian), không thì {@link java.time.Clock#systemUTC()}.
+   */
+  @Bean
+  @ConditionalOnMissingBean
+  @ConditionalOnBean(ProcessedEventStore.class)
+  public ProcessedEventRetention processedEventRetention(
+      ProcessedEventStore store,
+      EventProperties properties,
+      org.springframework.beans.factory.ObjectProvider<java.time.Clock> clock) {
+    return new ProcessedEventRetention(store, properties, clock.getIfAvailable(Clock::systemUTC));
   }
 
   /**

@@ -31,4 +31,19 @@ public interface OutboxRepository {
 
   /** Đếm row theo trạng thái — dùng cho test/verify nhanh và log nhịp quét. */
   long countByStatus(OutboxStatus status);
+
+  /**
+   * Xoá row {@code SENT} cũ hơn {@code cutoff} — job retention (`TD-29`, `SL-4.0`).
+   *
+   * <p><b>Chỉ {@code SENT}</b>: row {@code PENDING} là event **chưa gửi**, xoá là mất event thật.
+   * Điều kiện tuổi dùng {@code sent_at} (không phải {@code created_at}): thứ quyết định "còn cần
+   * giữ để điều tra" là lúc nó **đã gửi**.
+   *
+   * <p>Xoá theo batch để transaction ngắn (không khoá bảng, không tạo WAL khổng lồ).
+   *
+   * @param cutoff xoá row có {@code sent_at < cutoff}
+   * @param batch số row tối đa mỗi lần gọi
+   * @return số row đã xoá (0 ⇒ bảng đã sạch tới ngưỡng)
+   */
+  int deleteSentOlderThan(Instant cutoff, int batch);
 }

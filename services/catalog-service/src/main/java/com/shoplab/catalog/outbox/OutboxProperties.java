@@ -35,6 +35,18 @@ public class OutboxProperties {
    */
   private Duration claimTimeout = Duration.ofSeconds(30);
 
+  /**
+   * Giữ row {@code SENT} bao lâu trước khi job retention xoá (`TD-29`). Mặc định 7 ngày: đủ để điều
+   * tra một sự cố async gần đây, đủ ngắn để bảng không phình theo traffic.
+   *
+   * <p><b>Ràng buộc</b>: phải ≤ retention của {@code processed_events} ở consumer — marker dedupe
+   * sống lâu hơn event thì replay muộn mới không bị xử lý trùng.
+   */
+  private Duration retention = Duration.ofDays(7);
+
+  /** Số row mỗi nhịp job retention — nhỏ để DELETE ngắn, không khoá bảng lâu. */
+  private int cleanupBatchSize = 1000;
+
   public Duration getInterval() {
     return interval;
   }
@@ -65,5 +77,21 @@ public class OutboxProperties {
 
   public void setClaimTimeout(Duration claimTimeout) {
     this.claimTimeout = claimTimeout;
+  }
+
+  public Duration getRetention() {
+    return retention;
+  }
+
+  public void setRetention(Duration retention) {
+    this.retention = retention;
+  }
+
+  public int getCleanupBatchSize() {
+    return cleanupBatchSize;
+  }
+
+  public void setCleanupBatchSize(int cleanupBatchSize) {
+    this.cleanupBatchSize = cleanupBatchSize;
   }
 }

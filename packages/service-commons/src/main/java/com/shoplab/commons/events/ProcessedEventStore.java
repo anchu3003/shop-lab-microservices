@@ -29,4 +29,20 @@ public interface ProcessedEventStore {
    * việc xử lý đã **thành công**.
    */
   void unmarkProcessed(String consumer, EventEnvelope envelope);
+
+  /**
+   * Xoá marker cũ hơn {@code cutoff} — job retention của service gọi định kỳ (`TD-30`, `SL-4.0`).
+   *
+   * <p><b>Vì sao phải có</b>: bảng tăng 1 row/event/consumer **vĩnh viễn** nếu không dọn. Nhưng
+   * <b>không được xoá sớm</b>: marker là thứ chặn xử lý trùng, nên retention phải <b>≥ retention
+   * của bảng {@code outbox}</b> — nếu marker hết hạn trước khi event bị xoá khỏi outbox thì một lần
+   * replay/redeliver sau đó sẽ được xử lý lần hai.
+   *
+   * <p>Xoá **theo batch** để transaction ngắn (không khoá bảng, không tạo WAL khổng lồ).
+   *
+   * @param cutoff xoá row có {@code processed_at < cutoff}
+   * @param batch số row tối đa mỗi lần gọi
+   * @return số row đã xoá (0 ⇒ bảng đã sạch tới ngưỡng)
+   */
+  int deleteProcessedBefore(java.time.Instant cutoff, int batch);
 }

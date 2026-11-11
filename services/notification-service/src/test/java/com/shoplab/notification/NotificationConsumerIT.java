@@ -185,7 +185,13 @@ class NotificationConsumerIT {
   void shouldRetryThenNackWhenHandlerFails() throws Exception {
     OrderEventConsumer failing =
         consumerWith(
-            new NotificationProperties("local", true, List.of(Duration.ZERO, Duration.ZERO), 50));
+            new NotificationProperties(
+                "local",
+                true,
+                List.of(Duration.ZERO, Duration.ZERO),
+                50,
+                Duration.ofDays(90),
+                1000));
 
     failing.onMessage(message(confirmed(null)), channel);
 
@@ -201,7 +207,9 @@ class NotificationConsumerIT {
   @DisplayName("fail-mode nhưng env!=local → bỏ qua bơm lỗi (fail-closed), vẫn gửi bình thường")
   void shouldIgnoreFailModeOutsideLocal() throws Exception {
     OrderEventConsumer prodLike =
-        consumerWith(new NotificationProperties("prod", true, List.of(Duration.ZERO), 50));
+        consumerWith(
+            new NotificationProperties(
+                "prod", true, List.of(Duration.ZERO), 50, Duration.ofDays(90), 1000));
 
     prodLike.onMessage(message(confirmed(null)), channel);
 

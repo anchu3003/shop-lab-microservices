@@ -91,6 +91,27 @@ public class JdbcOutboxRepository implements OutboxRepository {
         "UPDATE outbox SET last_error = ?, claimed_at = NULL WHERE id = ?", trim(error), id);
   }
 
+  /**
+   * Xoá row {@code SENT} cũ (job retention — `TD-29`, `SL-4.0`). Subquery {@code LIMIT} vì Postgres
+   * không nhận {@code LIMIT} trực tiếp trong DELETE; {@code status = 'SENT'} là điều kiện **bắt
+   * buộc** — thiếu nó là xoá mất event chưa gửi.
+   */
+  @Override
+  public int deleteSentOlderThan(Instant cutoff, int batch) {
+    return jdbc.update(
+        """
+        DELETE FROM outbox
+        WHERE id IN (
+          SELECT id FROM outbox
+          WHERE status = 'SENT' AND sent_at < ?
+          ORDER BY sent_at
+          LIMIT ?
+        )
+        """,
+        Timestamp.from(cutoff),
+        batch);
+  }
+
   @Override
   public long countByStatus(OutboxStatus status) {
     Long count =

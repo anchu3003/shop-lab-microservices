@@ -79,4 +79,31 @@ public class JdbcProcessedEventStore implements ProcessedEventStore {
         java.util.UUID.fromString(envelope.eventId()),
         consumer);
   }
+
+  /**
+   * Xoá marker cũ (bảng dedupe phình 1 row/event/consumer — `TD-30`, `SL-4.0`).
+   *
+   * <p>Dùng {@code ctid} làm "khoá tạm" cho subquery {@code LIMIT}: {@code ctid} là địa chỉ vật lý
+   * của row trong bảng nên luôn có sẵn (không cần thêm cột/index), và điều kiện xoá vẫn là {@code
+   * processed_at} + khoá chính — nếu một row bị UPDATE giữa subquery và DELETE thì Postgres chỉ đơn
+   * giản là không xoá nó ở nhịp này (lần sau xoá tiếp), không có chuyện xoá nhầm row mới.
+   *
+   * <p><b>Không dùng {@code DELETE … LIMIT} trực tiếp</b>: Postgres không hỗ trợ {@code LIMIT}
+   * trong DELETE (khác MySQL) — phải qua subquery.
+   */
+  @Override
+  public int deleteProcessedBefore(java.time.Instant cutoff, int batch) {
+    return jdbc.update(
+        """
+        DELETE FROM processed_events
+        WHERE ctid IN (
+          SELECT ctid FROM processed_events
+          WHERE processed_at < ?
+          ORDER BY processed_at
+          LIMIT ?
+        )
+        """,
+        java.sql.Timestamp.from(cutoff),
+        batch);
+  }
 }
