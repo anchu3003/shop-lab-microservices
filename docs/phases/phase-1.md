@@ -69,7 +69,7 @@ mvn -B -ntp verify             # 299 test (unit + IT Testcontainers) + lint + co
 
 ## Bài học đáng nhớ của phase
 
-(đầy đủ ở [`Backlog-phase-1.md`](../../Backlog-phase-1.md) + `Backlog.md` §6 Learning log)
+(đầy đủ ở [`Backlog-phase-1.md`](../../Backlog-phase-1.md) + [`Backlog-log-archive.md`](../../Backlog-log-archive.md) §Learning log)
 
 - **Xanh không có nghĩa là đã kiểm**: `mvn verify` xanh mà 2 bug thật (**403 thành 500**, **`@Version` trả số
   cũ**) vẫn lọt — chỉ lộ khi **gọi HTTP thật**. Hành vi liên quan transaction/flush phải test bằng IT.

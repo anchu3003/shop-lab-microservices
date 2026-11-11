@@ -91,7 +91,7 @@ mvn -B -ntp verify               # 805 test (662 unit + 143 IT) + lint + coverag
 
 ## Bài học đáng nhớ của phase
 
-(đầy đủ ở [`Backlog-phase-3.md`](../../Backlog-phase-3.md) + `Backlog.md` §6 Learning log)
+(đầy đủ ở [`Backlog-phase-3.md`](../../Backlog-phase-3.md) + [`Backlog-log-archive.md`](../../Backlog-log-archive.md) §Learning log)
 
 - **"Chuyển sang async cho nhanh hơn" là câu sai, và số đo chứng minh**: checkout p50 42,7 → 43,1 ms. Async mua
   **decoupling** (consumer chết, checkout p95 vẫn 44,6 ms) và **độ trễ có trần** (~1 s/chặng) — không mua latency.

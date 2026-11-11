@@ -14,7 +14,8 @@ không làm tràn scope, không build một loạt.
 4. **Build**: code theo convention (`AGENTS.md` §6). Chia nhỏ, giữ diff nhỏ để review được.
 5. **Verify**: chạy lint + test + lệnh thật của ticket (xem skill `shoplab-verify`). **Dán output thật**.
 6. **Document**: điền "Kết quả verify" + "Learning note"; đổi trạng thái ticket; update
-   `architecture.md` + ADR nếu design đổi; thêm dòng vào Learning log.
+   `architecture.md` + ADR nếu design đổi. Không có Learning log tổng/Changelog trong `Backlog.md` — bài học chỉ ở
+   "Learning note" của ticket, lịch sử tra bằng `git log`.
    → **Ngay trong nhánh này**: gộp mark done vào **commit cuối của ticket** (`git reset --soft origin/main && git commit`,
    hoặc `rebase -i` squash) rồi push **một lần** (`--force-with-lease`) ⇒ 1 run CI trên PR. Không tạo commit docs rời,
    không để dành cho PR sau (`.clinerules/10-git-workflow.md`).

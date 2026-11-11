@@ -149,7 +149,8 @@ Chi tiết ngôn ngữ/framework xem `architecture.md` §11. Quy ước chung:
   chỉ tạo nhánh + PR riêng khi **không còn ticket kế tiếp** (hết phase / dừng dự án).
   ⚠️ Thay đổi **có code** thì **không** được gộp — phải là ticket riêng (§3.1).
 - **Archive theo phase**: phase xong → tách phần chi tiết (ticket + verify + learning note) sang
-  `Backlog-phase-<N>.md`; `Backlog.md` giữ việc đang làm + bảng archive + Learning log + Changelog.
+  `Backlog-phase-<N>.md`; `Backlog.md` giữ việc đang làm + bảng archive + bảng nợ (`§7`). **Bài học** nằm ở `Learning note`
+  của từng ticket; **lịch sử** tra bằng `git log` — không còn Learning log/Changelog tổng trong `Backlog.md` (`§6`).
 - **Folder**: service dùng `kebab-case` — `order-service`, `api-gateway`.
 - **Config**: 12-factor — đọc từ env, `.env.example` commit lên, `.env` **không** commit.
 - **Log**: structured JSON, luôn có `traceId`, `service`, `level`, `msg`.

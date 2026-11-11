@@ -40,7 +40,7 @@ Rule behavioral. Base convention ở `AGENTS.md` §6; hướng dẫn đầy đ�
 
 ## Mark done — gộp vào commit CUỐI của ticket (không để dành PR sau)
 
-- Sau khi **verify thật**, sửa `Backlog.md` (status `Done` + Kết quả verify + Learning note + bảng phase + Changelog)
+- Sau khi **verify thật**, sửa `Backlog.md` (status `Done` + Kết quả verify + Learning note + bảng phase)
   **ngay trong nhánh của ticket** → rồi gộp vào commit cuối:
   ```bash
   git reset --soft origin/main && git commit -m "..."   # hoặc: git rebase -i origin/main → squash
