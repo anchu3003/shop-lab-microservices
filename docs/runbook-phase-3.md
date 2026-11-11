@@ -90,6 +90,11 @@ $ bash tools/rabbit-topology.sh
 Đọc 3 cột của queue: `consumers=0` ⇒ **không ai tiêu thụ** (service chết / đang restart / `auto-startup=false`);
 `ready` tăng liên tục ⇒ consumer chết hoặc chậm; `unacked > 0` lâu ⇒ consumer đang **retry** hoặc thread kẹt.
 
+> ⚠️ **Ngay sau `docker compose up` topology có thể RỖNG** (`chưa có queue nào — service có AMQP đã chạy chưa?`) vì
+> topology do **service khai báo lúc khởi động** (`EventTopologyDeclarer`), không phải do broker tự có. Trên máy này
+> phải chờ **~45 s**. Đừng kết luận "mất topology" khi mới `up` 5 s.
+
+
 ```console
 $ curl -s -u "$RABBITMQ_USER:$RABBITMQ_PASSWORD" \
     'http://localhost:15672/api/queues/%2F/q.notification' \
@@ -144,12 +149,13 @@ payment outbox: SENT 5
 
 ```console
 $ docker exec shoplab-postgres psql -U shoplab -d notification -tAc \
-    "select consumer, event_type, count(*) from processed_events group by 1,2"
-notification-service|order.confirmed.v1|48
+    "select event_id, consumer, event_type, to_char(processed_at,'HH24:MI:SS')
+       from processed_events where event_id='a43d3d11-…'"
+a43d3d11-…|notification-service|order.confirmed.v1|13:46:50
 $ docker exec shoplab-postgres psql -U shoplab -d notification -tAc \
-    "select template, status, recipient, to_char(sent_at,'HH24:MI:SS') from notification_logs
-      where order_id='<orderId>'"
-order.confirmed|SENT|user-61063b1c@shoplab.local|13:46:50
+    "select event_id, template, status, recipient, to_char(sent_at,'HH24:MI:SS')
+       from notification_logs where order_id='<orderId>'"
+a43d3d11-…|order.confirmed|SENT|user-61063b1c@shoplab.local|13:46:50
 ```
 
 | Hiện tượng | Nghĩa |
@@ -171,17 +177,18 @@ status=200
 
 ```console
 $ docker exec shoplab-postgres psql -U shoplab -d search -tAc \
-    "select status, count(*) from search_product group by 1"
-ACTIVE|21
+    "select status, count(*) from search_product group by 1 order by 1"
+ACTIVE|25
+ARCHIVED|1
 $ curl -s 'localhost:8080/v1/search?q=ao%20thun&size=1'
-{"content":[{"productId":"22222222-2222-4222-8222-000000000011","name":"Ao thun oversize","minPrice":249000.00,…}],…}
+{"content":[{"productId":"22222222-…-000000000011","name":"Ao thun oversize","minPrice":249000.00,…}],…}
 ```
 
 Index **rỗng sau khi dựng lại volume** là bình thường (index chỉ được bơm bằng event hoặc reindex tay):
 
 ```console
 $ curl -s -X POST localhost:8080/v1/admin/search/reindex -H "Authorization: Bearer $ADMIN"
-{"scanned":21,"upserted":21,"archived":0}
+{"scanned":25,"upserted":25,"archived":0}
 ```
 
 ### 3.6. Tầng nghiệp vụ — order có tự chốt không?
