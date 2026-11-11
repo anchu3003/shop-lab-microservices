@@ -26,8 +26,8 @@ git switch -c maint/phase-0 phase-0
 | **0** — Foundation | `phase-0` | [`phase-0.md`](phase-0.md) | [`Backlog-phase-0.md`](../../Backlog-phase-0.md) | Java 21 · Spring Boot 4.1.2 · Docker Compose · GitHub Actions | ✅ Done 2026-11-03 |
 | **1** — Walking skeleton | `phase-1` | [`phase-1.md`](phase-1.md) | [`Backlog-phase-1.md`](../../Backlog-phase-1.md) | + `api-gateway` · `identity-service` · `catalog-service` · JWT RS256 + refresh rotate (grace 30s) · OpenAPI | ✅ Done 2026-11-06 |
 | **2** — Core commerce flow | `phase-2` | [`phase-2.md`](phase-2.md) | [`Backlog-phase-2.md`](../../Backlog-phase-2.md) | + cart (Redis) · inventory (reserve/commit + sweeper) · promotion (voucher lock) · order (**checkout saga** + idempotency) · payment (intent + mock + webhook) | ✅ Done 2026-11-08 |
-| **3** — Async & event-driven | `phase-3` | `phase-3.md` | `Backlog-phase-3.md` | + RabbitMQ · outbox (polling relay) · event contract (ADR-0007) · `notification` (DLQ) · `search` (Postgres FTS) | 🟡 Đang làm — breakdown xong **10 ticket** |
-| **4** — Scale & performance | `phase-4` | `phase-4.md` | `Backlog-phase-4.md` | + cache-aside · rate limit · read replica · partition · k6 | ⚪ Todo |
+| **3** — Async & event-driven | `phase-3` | [`phase-3.md`](phase-3.md) | [`Backlog-phase-3.md`](../../Backlog-phase-3.md) | + RabbitMQ · outbox (polling relay) · event contract (ADR-0007) · `notification` (retry + DLQ) · `search` (Postgres FTS + reconcile) · service-to-service auth (ADR-0008) | ✅ Done 2026-11-11 |
+| **4** — Scale & performance | `phase-4` | `phase-4.md` | `Backlog-phase-4.md` | + cache-aside · rate limit · read replica · partition · k6 | 🟡 Breakdown tiếp theo |
 | **5** — Resilience | `phase-5` | `phase-5.md` | `Backlog-phase-5.md` | + timeout/retry · circuit breaker · bulkhead · backpressure | ⚪ Todo |
 | **6** — Observability & SRE | `phase-6` | `phase-6.md` | `Backlog-phase-6.md` | + OpenTelemetry · Prometheus/Grafana · SLO/SLI · alert | ⚪ Todo |
 | **7** — Deployment & infra | `phase-7` | `phase-7.md` | `Backlog-phase-7.md` | + K8s (kind) · Helm · HPA · blue-green/canary · registry | ⚪ Todo |
