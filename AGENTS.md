@@ -191,11 +191,10 @@ Chi tiết ngôn ngữ/framework xem `architecture.md` §11. Quy ước chung:
 - ❌ Commit secret, token, connection string thật
 - ❌ Đánh dấu ticket `Done` khi chưa chạy verify thật
 - ❌ Merge PR khi CI chưa xanh hoặc chưa có comment tóm tắt (dùng `tools/merge-pr.sh` để không bỏ sót)
-  - ⚠️ **Ngoại lệ tạm thời `SL-3.10`**: CI đang **TẮT** (`gh variable get CI_ENABLED` → `false`) để tăng tốc
-    merge. Trong giai đoạn này, merge bằng `bash tools/merge-pr.sh <PR> --summary-file f --skip-ci-check`
-    (script in cảnh báo + ghi "CI: BỎ QUA" vào comment evidence). **Điều kiện thay thế**: mỗi ticket phải dán
-    output `mvn -B -ntp verify` **và** e2e local vào `Kết quả verify`. **Bật lại** khi hết Phase 3:
-    `gh variable delete CI_ENABLED`. Theo dõi ở `Backlog.md` §7 `TD-28`.
+  - *(Đã hết hiệu lực: ngoại lệ tạm thời `SL-3.10` — CI tắt để tăng tốc Phase 3 — được **bật lại ở `SL-3.9`**
+    (2026-11-11, `gh variable delete CI_ENABLED`). Cờ `--skip-ci-check` vẫn còn trong script nhưng **chỉ dùng khi
+    CI hỏng hạ tầng**, không dùng để "đi nhanh". Nếu CI sập kéo dài: mở ticket process riêng + ghi `TD` như `TD-28`.)*
+
 - ❌ Viết doc dài dòng, không có ví dụ / số liệu cụ thể
 - ❌ Tự ý đổi scope của ticket đang làm — có gì mới thì tạo ticket mới
 

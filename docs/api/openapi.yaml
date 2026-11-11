@@ -443,6 +443,54 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+  /v1/auth/service-token:
+    post:
+      tags:
+      - Auth
+      operationId: serviceToken
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceTokenRequest'
+        required: true
+      responses:
+        '200':
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: '#/components/schemas/ServiceTokenResponse'
+        '400':
+          description: Input không hợp lệ (xem `details` theo từng field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: 'Chưa xác thực: thiếu/sai/hết hạn token'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '403':
+          description: Đã xác thực nhưng thiếu quyền
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '404':
+          description: Không tìm thấy tài nguyên
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '409':
+          description: Xung đột dữ liệu (trùng mã, version lệch...)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
   /v1/carts:
     delete:
       tags:
@@ -3190,6 +3238,36 @@ components:
         updatedAt:
           type: string
           format: date-time
+    ServiceTokenRequest:
+      type: object
+      properties:
+        clientId:
+          type: string
+          minLength: 1
+        clientSecret:
+          type: string
+          minLength: 1
+        audience:
+          type: string
+          minLength: 1
+      required:
+      - audience
+      - clientId
+      - clientSecret
+    ServiceTokenResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+        expiresIn:
+          type: integer
+          format: int64
+        audience:
+          type: string
+        serviceId:
+          type: string
     SetItemRequest:
       type: object
       properties:

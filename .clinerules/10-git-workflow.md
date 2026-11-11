@@ -76,11 +76,10 @@ Rule behavioral. Base convention ở `AGENTS.md` §6; hướng dẫn đầy đ�
 2. CI **xanh** trên PR (`gh run list --branch <branch> --limit 1` → `success`).
 3. Đã **comment tóm tắt** lên PR (người đọc PR biết đã verify cái gì).
 
-> ⚠️ **Ngoại lệ tạm thời `SL-3.10`** (2026-11-08): CI đang **TẮT** bằng kill-switch
-> (`gh variable set CI_ENABLED --body false`) để tăng tốc merge Phase 3. Khi đó điều kiện 2 thay bằng:
-> **dán `mvn -B -ntp verify` + e2e local vào ticket**, và merge bằng
-> `bash tools/merge-pr.sh <PR> --summary-file f --skip-ci-check` (script in cảnh báo + ghi
-> `CI: BỎ QUA` vào comment evidence). **Bật lại**: `gh variable delete CI_ENABLED`. Theo dõi `TD-28`.
+> *(Ngoại lệ tạm thời `SL-3.10` — CI tắt bằng kill-switch `CI_ENABLED=false` để tăng tốc Phase 3 — **đã kết thúc ở
+> `SL-3.9`** (2026-11-11, `gh variable delete CI_ENABLED`). Điều kiện 2 ở trên áp dụng lại đầy đủ. Cờ
+> `--skip-ci-check` chỉ dùng khi CI hỏng hạ tầng, và phải ghi lý do vào comment evidence.)*
+
 
 → Chạy:
 
