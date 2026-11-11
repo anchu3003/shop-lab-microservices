@@ -67,6 +67,7 @@ class NotificationServiceApplicationIT {
 
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ObjectMapper objectMapper;
+  @Autowired private com.shoplab.notification.retention.RetentionSweeper retentionSweeper;
 
   private final HttpClient httpClient =
       HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
@@ -175,6 +176,71 @@ class NotificationServiceApplicationIT {
         subject,
         java.sql.Timestamp.from(createdAt),
         java.sql.Timestamp.from(createdAt));
+  }
+
+  // ==========================================================================
+  // Retention (TD-30, SL-4.0)
+  // ==========================================================================
+
+  @Test
+  @DisplayName(
+      "retention: xoá notification_logs cũ hơn 90 ngày + processed_events cũ; GIỮ log mới và log chưa gửi")
+  void retentionDeletesOnlyOldSentLogs() {
+    java.time.Instant now = java.time.Instant.now();
+    UUID oldLog = insertLog(now.minus(java.time.Duration.ofDays(120)), true);
+    UUID recentLog = insertLog(now.minus(java.time.Duration.ofDays(1)), true);
+    UUID neverSent = insertLog(now.minus(java.time.Duration.ofDays(120)), false);
+
+    UUID oldDedupe = UUID.randomUUID();
+    UUID newDedupe = UUID.randomUUID();
+    insertProcessedEvent(oldDedupe, now.minus(java.time.Duration.ofDays(10)));
+    insertProcessedEvent(newDedupe, now.minus(java.time.Duration.ofHours(2)));
+
+    retentionSweeper.sweep();
+
+    assertThat(count("select count(*) from notification_logs where id = ?", oldLog)).isZero();
+    assertThat(count("select count(*) from notification_logs where id = ?", recentLog))
+        .isEqualTo(1);
+    // sent_at NULL = lần gửi HỎNG ⇒ không phải "dữ liệu cũ", phải giữ để người xem.
+    assertThat(count("select count(*) from notification_logs where id = ?", neverSent))
+        .isEqualTo(1);
+    assertThat(count("select count(*) from processed_events where event_id = ?", oldDedupe))
+        .isZero();
+    assertThat(count("select count(*) from processed_events where event_id = ?", newDedupe))
+        .isEqualTo(1);
+  }
+
+  private UUID insertLog(java.time.Instant sentAt, boolean sent) {
+    UUID id = UUID.randomUUID();
+    UUID userId = UUID.randomUUID();
+    jdbc.update(
+        """
+        INSERT INTO notification_logs (id, event_id, user_id, order_id, channel, template, recipient,
+                                       subject, body, status, created_at, sent_at)
+        VALUES (?, ?, ?, ?, 'EMAIL', 'order.confirmed', ?, 's', 'b', ?, ?, ?)
+        """,
+        id,
+        UUID.randomUUID(),
+        userId,
+        UUID.randomUUID(),
+        "retention@shoplab.local",
+        sent ? "SENT" : "FAILED",
+        java.sql.Timestamp.from(sentAt),
+        sent ? java.sql.Timestamp.from(sentAt) : null);
+    return id;
+  }
+
+  private void insertProcessedEvent(UUID eventId, java.time.Instant processedAt) {
+    jdbc.update(
+        "INSERT INTO processed_events (event_id, consumer, event_type, processed_at) "
+            + "VALUES (?, 'notification-service', 'order.confirmed.v1', ?)",
+        eventId,
+        java.sql.Timestamp.from(processedAt));
+  }
+
+  private long count(String sql, UUID arg) {
+    Long value = jdbc.queryForObject(sql, Long.class, arg);
+    return value == null ? 0 : value;
   }
 
   private HttpResponse<String> get(String path, String token) throws Exception {

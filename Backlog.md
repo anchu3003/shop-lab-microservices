@@ -6,8 +6,8 @@
 
 | | | |
 |---|---|---|
-| **Ticket đang làm** | — (Phase 3 ✅ **Done** — `SL-3.9`: `docs/runbook-phase-3.md` + DoD Phase 3, tag `phase-3`) |
-| **Ticket tiếp theo** | Phase 4 — **breakdown epic** (scale & performance: cache-aside · rate limit · read replica · load test k6) |
+| **Ticket đang làm** | — (`SL-4.0` ✅ **Done** — retention job trả `TD-29` + `TD-30`) |
+| **Ticket tiếp theo** | Phase 4 — **breakdown epic** (load test k6 · cache-aside · rate limit · read replica · partition) |
 | **Số ticket chi tiết hiện có** | 54 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 · Phase 3: **12** — đều đã archive) |
 
 ---
@@ -20,7 +20,7 @@
 | 1 | Walking skeleton | ✅ Done (tag `phase-1`) | 19 / 19 |
 | 2 | Core commerce flow | ✅ Done (tag `phase-2`) | 15 / 15 |
 | 3 | Async & event-driven | ✅ Done (tag `phase-3`, 12 ticket) | 12 / 12 |
-| 4 | Scale & performance | 🟡 Breakdown tiếp theo (epic) | — |
+| 4 | Scale & performance | 🟡 Đang làm (1/…) — trả nợ xong, épic chưa breakdown | 1 / 1 |
 | 5 | Resilience | ⚪ Todo (epic) | — |
 | 6 | Observability & SRE | ⚪ Todo (epic) | — |
 | 7 | Deployment & infra | ⚪ Todo (epic) | — |
@@ -303,7 +303,177 @@ Mục tiêu: có số liệu chứng minh mỗi pattern giúp gì.
 - `SL-4.x` Kịch bản **flash sale** 500k request/60s → báo cáo before/after
 - `SL-4.x` Connection pooling: đo điểm gãy khi số connection vượt pool size
 
----
+> Phase 4 **chưa breakdown** đầy đủ (làm khi tới lượt — `AGENTS.md` §3.1). Ticket `SL-4.0` dưới đây là ticket
+> **phát sinh trả nợ** (`TD-29` + `TD-30`), làm trước load test vì bảng phụ phình theo đúng traffic mà load test tạo ra.
+
+### SL-4.0 — Retention job cho `outbox` · `processed_events` · `notification_logs` (trả `TD-29` + `TD-30`)
+
+| Trường | Giá trị |
+|---|---|
+| **Trạng thái** | ✅ Done (2026-11-11) |
+| **Phase** | 4 — Scale & performance *(phát sinh: trả nợ Phase 3 trước khi load test)* |
+| **Phụ thuộc** | Phase 3 `Done` (`SL-3.3` outbox · `SL-3.2` dedupe · `SL-3.4` notification) |
+| **Ước lượng** | M |
+
+**Bối cảnh**
+
+Ba bảng phụ tăng **tuyến tính theo traffic** và hiện **không có job dọn**:
+
+| Bảng | Ở đâu | Tăng khi nào | Nguồn nợ |
+|---|---|---|---|
+| `outbox` | DB `order` · `payment` · `catalog` | 1 row/event | `TD-29` (sau 1 buổi đo `SL-3.8`: 715 / 380 / 359 row) |
+| `processed_events` | DB của **mỗi consumer** (`order` · `notification` · `search`) | 1 row/event/consumer, **không xoá được vì dedupe cần** | `TD-30` |
+| `notification_logs` | DB `notification` | 1 row/đơn đã confirm | `TD-30` |
+
+Điều kiện revisit của cả hai là **"trước load test Phase 4"** — load test sinh đúng loại traffic làm các bảng này phình, nên
+dọn sau khi đo là dọn trong lúc bảng đã to. Không có job retention thì kết quả load test bị nhiễu bởi bảng lớn dần trong lúc
+đo, và `VACUUM`/backup phải làm việc với dữ liệu chết.
+
+**Mục tiêu**
+
+1. Mỗi bảng phụ có **job dọn theo tuổi**, xoá **theo batch** (transaction ngắn), cấu hình bằng env.
+2. Không bao giờ xoá dữ liệu còn cần: **`outbox` chỉ xoá `SENT`** (không chạm `PENDING`), `processed_events`/`notification_logs`
+   chỉ xoá theo tuổi.
+3. Tài liệu hoá **ràng buộc thứ tự retention** (dedupe phải sống ≥ outbox) — nếu sai, replay DLQ sau này gửi trùng.
+
+**In scope**
+
+- `packages/service-commons`
+  - `ProcessedEventStore.deleteProcessedBefore(cutoff, batch)` + impl JDBC (batch `DELETE … LIMIT`).
+  - `EventProperties`: **nested `dedup`** (`auto-create-schema` · `retention` · `cleanup-batch-size`) — kèm **fix bug**:
+    3 service đang khai `shoplab.events.dedup.auto-create-schema: false` nhưng khoá này **không bind** (property đang flat)
+    ⇒ DDL auto-create vẫn chạy. Sửa để `false` có tác dụng thật.
+  - `ProcessedEventRetention` (bean, có `sweep()` + log) — **không** tự `@Scheduled` trong commons.
+- 5 service: mỗi service **một** `RetentionSweeper` (`@Scheduled(fixedDelay)`, `try/catch`, log số row) gọi các cleaner
+  áp dụng cho DB của nó:
+  - `order`: outbox + `processed_events` · `catalog`/`payment`: outbox
+  - `notification`: `notification_logs` + `processed_events` · `search`: `processed_events`
+- Repository mới: `OutboxRepository.deleteSentOlderThan(cutoff, batch)` (×3 service),
+  `NotificationLogRepository.deleteOlderThan(cutoff, batch)`.
+- Default retention: **outbox 7 ngày** · **`processed_events` 7 ngày** · **`notification_logs` 90 ngày** (override bằng env).
+- `.env.example` + `README` (bảng config) + `architecture.md` (§6.x + nơi mô tả retention).
+- `runbook-phase-3.md` §3: thêm mục kiểm retention (SQL đếm row theo tuổi + kiểm job có chạy trong log).
+
+**Out of scope**
+
+- `checkout_sagas` / `checkout_saga_steps` (`TD-24`) — cùng họ nhưng DB/ngữ nghĩa khác, ticket riêng.
+- Refund (`TD-31`) · gộp outbox vào commons (`TD-32`) · flaky test theo tải (`TD-36`).
+- Job runner ngoài app (cron/K8s CronJob) — Phase 7. Ở phase này job in-process là đủ (giống sweeper đã có).
+- Partition theo tháng cho các bảng này — `SL-4.x` partition (`orders` trước).
+
+**Acceptance Criteria**
+
+- [ ] `outbox`: row `SENT` cũ hơn `retention` bị xoá; row **`PENDING`** và row `SENT` **mới hơn** mặc định **còn nguyên**
+      (assert ở IT với dữ liệu backdate).
+- [ ] `processed_events` + `notification_logs`: chỉ xoá row cũ hơn ngưỡng, giữ row mới — IT có cả 2 loại row.
+- [ ] Job chạy được trên stack compose: chèn row backdate → bật interval ngắn → log in số row đã xoá, số row đúng kỳ vọng.
+- [ ] `shoplab.events.dedup.auto-create-schema: false` **thật sự có tác dụng** (test bind: `false` ⇒ không gọi `initSchema`).
+- [ ] Default retention ghi ở **một** chỗ (properties) + override được bằng env; `.env.example`/`README` có tên biến.
+- [ ] `mvn -B -ntp verify` xanh (unit + IT mới) · `Backlog.md` §7 đánh dấu `TD-29`/`TD-30` ✅ đã trả.
+
+**Ghi chú kỹ thuật**
+
+- **Khuôn**: `IdempotencySweeper` (đã trả `TD-14`) — `@Scheduled(fixedDelayString)`, tham số từ env, bắt `RuntimeException`
+  để một nhịp lỗi không giết scheduler, log **số row đã xoá** (không có metric thì log là chỗ duy nhất biết job sống).
+- **Batch delete** (`DELETE … WHERE <pk> IN (SELECT <pk> … LIMIT n)`): transaction ngắn, không khoá bảng lâu, không tạo WAL
+  khổng lồ. Xoá **một batch mỗi nhịp** (không loop tới hết) để job không chiếm DB khi bảng lớn.
+- **Ràng buộc thứ tự**: `processed_events` retention **≥** `outbox` retention. Nếu marker dedupe hết hạn trước khi row outbox
+  bị xoá thì replay DLQ sau đó sẽ **xử lý lại** (gửi email 2 lần). Mặc định 7d/7d thoả; đổi phải giữ bất biến này.
+- **Không xoá `PENDING`**: đó là event **chưa gửi**; xoá = mất event thật.
+- **Timezone**: mọi cột là `timestamptz`, so sánh với `Instant` (UTC) — không dùng `now()` trong SQL để test backdate được.
+- **Index**: `outbox` đã có `idx_outbox_pending (status, created_at) WHERE status='PENDING'`; job xoá theo `sent_at` nên cần
+  cân nhắc index `(status, sent_at)` nếu bảng lớn — đo trước, chưa thêm ở ticket này.
+
+**Kết quả verify** *(2026-11-11)*
+
+**1) Unit test mới — 5 sweeper + retention của commons + fix bind `dedup`:**
+
+```text
+$ mvn -B -ntp -pl services/{order,catalog,payment,notification,search}-service -am \
+      -Dtest='RetentionSweeperTest,ProcessedEventRetentionTest,EventAutoConfigurationTest' test
+com.shoplab.commons.events.ProcessedEventRetentionTest    Tests run: 4, Failures: 0
+com.shoplab.commons.events.EventAutoConfigurationTest     Tests run: 7, Failures: 0   (+2 mới: bind dedup, bean retention)
+com.shoplab.order.retention.RetentionSweeperTest          Tests run: 5, Failures: 0
+com.shoplab.catalog.retention.RetentionSweeperTest        Tests run: 3, Failures: 0
+com.shoplab.payment.retention.RetentionSweeperTest        Tests run: 3, Failures: 0
+com.shoplab.notification.retention.RetentionSweeperTest   Tests run: 3, Failures: 0
+com.shoplab.search.retention.RetentionSweeperTest         Tests run: 2, Failures: 0
+```
+
+**2) IT Postgres thật — chỉ xoá row đúng tuổi, `PENDING`/row mới/`sent_at NULL` còn nguyên:**
+
+```text
+OrderServiceApplicationIT.retentionDeletesOnlyOldSentRows        PASS
+  outbox:   SENT 10 ngày → xoá · SENT 1 giờ → giữ · PENDING 10 ngày → giữ
+  processed_events: 10 ngày → xoá · 1 giờ → giữ
+NotificationServiceApplicationIT.retentionDeletesOnlyOldSentLogs PASS
+  notification_logs: SENT 120 ngày → xoá · SENT 1 ngày → giữ · FAILED(sent_at NULL) 120 ngày → giữ
+  processed_events: 10 ngày → xoá · 2 giờ → giữ
+```
+
+**3) Chạy thật trên stack compose** (`up -d --build`, `SHOPLAB_RETENTION_SWEEP_INTERVAL=15s`,
+`SHOPLAB_RETENTION_SWEEP_INITIAL_DELAY=20s` ⇒ chứng minh luôn **env → placeholder `@Scheduled` bind được**):
+
+```console
+# chèn row backdate rồi chờ 35 s
+  order/catalog/payment outbox : oldSENT=0  newSENT=1  oldPENDING=1     ← PENDING KHÔNG bị xoá
+  order/notification/search processed_events : old=0  new=1
+  notification_logs            : oldSENT=0  newSENT=1  oldNoSentAt=1     ← gửi hỏng phải giữ
+
+$ docker logs shoplab-order-service | grep 'retention: đã xoá'
+  outbox retention: đã xoá 1 row SENT cũ hơn 2026-11-04T16:07:28Z (giữ PT168H · batch 1000)
+  processed_events retention: đã xoá 1 row cũ hơn 2026-11-04T16:07:28Z (giữ PT168H · batch 1000)
+$ docker logs shoplab-notification-service | grep 'retention: đã xoá'
+  notification_logs retention: đã xoá 1 row cũ hơn 2026-08-13T16:07:27Z (giữ PT2160H · batch 1000)  ← 90d
+  processed_events retention: đã xoá 1 row cũ hơn 2026-11-04T16:07:27Z (giữ PT168H)
+$ docker logs shoplab-catalog-service|shoplab-payment-service|shoplab-search-service | grep retention
+  … đã xoá 1 row … (PT168H)        ← mỗi service đúng phần bảng của nó
+```
+
+> **Bẫy gặp ngay trong drill**: row `PENDING` giả chèn vào `outbox` bị **relay publish** ngay (đó là việc của relay) rồi được đánh `SENT` với `sent_at = now()` ⇒ nhìn `group by status` sẽ **không còn `PENDING`**. Đừng đọc thành "retention xoá PENDING": assert đúng phải là *PENDING không bị xoá* **và** *PENDING vẫn là PENDING* — điều thứ hai chỉ kiểm được khi tắt nhịp nền của relay (`shoplab.outbox.interval=1h` trong IT; IT order giờ assert cả `status = 'PENDING'`).
+
+**4) Không regress luồng async** (retention không chạm `PENDING`, không chạm marker mới):
+
+```text
+bash tools/e2e-async.sh   → 48 PASS / 0 FAIL · 38 request · 35 590 ms
+bash tools/e2e-checkout.sh→ 27 PASS / 0 FAIL · 14 request ·  1 096 ms
+bash tools/dlq.sh list    → q.notification.dlq 0 · q.order.dlq 0 · q.search.dlq 0
+```
+
+**5) Toàn repo:** `mvn -B -ntp verify` → **BUILD SUCCESS** · **829 test** (684 unit + 145 IT · trước ticket: 805).
+
+**6) Bug phát hiện thêm (đã fix trong ticket):** `shoplab.events.dedup.auto-create-schema: false` ở **3 service**
+(`catalog`, `notification`, `search`) là **no-op** — property là field flat (`shoplab.events.auto-create-schema`) nên khoá
+YAML lồng nhau **không bind**, DDL auto-create vẫn chạy. Bằng chứng: `payment` (không khai gì) và `catalog` (khai `false`)
+đều có bảng `processed_events`. Đã chuyển thành object lồng `dedup` + test bind.
+
+**Learning note**
+
+- **Nợ "không có job dọn" không chỉ là chuyện dung lượng — nó là chuyện `VACUUM`/backup/độ nhiễu của load test.** Job
+  retention không làm hệ nhanh hơn hôm nay, nhưng nếu để tới Phase 4 thì mọi số đo load test đều rơi vào một DB đang lớn
+  dần **trong lúc đo** — tự làm nhiễu chính bài đo.
+- **Thứ tự retention là một bất biến hệ thống, không phải tham số tuỳ ý**: `processed_events` phải sống **≥** `outbox`.
+  Nếu dedupe hết hạn trước, replay DLQ muộn sẽ gửi email lần 2 — mà triệu chứng lại xuất hiện ở **notification**, cách
+  chỗ gây lỗi (cấu hình retention của outbox) 2 service. Đây là loại lỗi phải chặn bằng **tài liệu + mặc định an toàn**,
+  không chặn được bằng code của một service.
+- **Điều kiện "không xoá nhầm" mới là phần khó, không phải câu DELETE**: `outbox` chỉ được xoá `SENT` (PENDING = event
+  **chưa gửi**), `notification_logs` chỉ xoá row **đã gửi** (`sent_at IS NOT NULL` — row `FAILED` là dấu vết lần gửi hỏng,
+  phải giữ). Cả 3 điều kiện này đều được assert bằng IT với dữ liệu backdate, không tin vào "SQL nhìn đúng".
+- **Sweeper trong lib vs trong service** (quyết định kiến trúc của ticket): SQL + ngữ nghĩa để ở `commons` (một chỗ),
+  nhưng **nhịp chạy** để ở service. Cái giá là 5 class mỏng ~40 dòng; cái được là **không có scheduler ẩn** — đọc code
+  service thấy ngay job nào chạy ở đâu, và tắt job ở một service không kéo theo service khác.
+- **Một bug im lặng tìm thấy nhờ đụng đúng vùng cấu hình**: 3 service khai `shoplab.events.dedup.auto-create-schema: false`
+  suốt từ `SL-3.2` mà **chưa bao giờ có tác dụng** (property flat ≠ khoá YAML lồng nhau). Không có gì đỏ, không log, chỉ
+  là "DDL vẫn chạy dù mình bảo đừng". Bài học: **khoá YAML chỉ đúng khi có test bind**, và cách chắc nhất là dựng object
+  lồng nhau đúng hình dạng khoá.
+- **Compose phải khai env mới thì mới set được**: thêm property mà quên `infra/docker-compose.yml` ⇒ knob chỉ dùng được
+  khi chạy jar ngoài Docker. Đã thêm cho cả 5 service, kèm drill chứng minh `SHOPLAB_RETENTION_SWEEP_INTERVAL=15s` có tác
+  dụng thật (log `giữ PT168H` xuất hiện sau ~35 s thay vì 1 h).
+- **Index phải đi cùng job**: `DELETE … WHERE status='SENT' AND sent_at < ?` không có index là **seq scan mỗi nhịp** ⇒ job
+  dọn trở thành nguồn tải. Thêm partial index `idx_outbox_sent (sent_at) WHERE status='SENT'` ngay trong ticket này thay
+  vì để "khi nào chậm thì tính" (đó chính là cách nợ `TD-29` sinh ra).
+
+
 
 ### Phase 5 — Resilience
 Mục tiêu: hệ vẫn phục vụ luồng critical khi một phần chết.
@@ -505,6 +675,8 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 
 | 2026-11-09 | SL-3.6 | **Index lệch là trạng thái bình thường — cái phải có là phát hiện + dựng lại**. Ba tính chất giữ cho index đáng tin: outbox ghi **cùng transaction**, consumer **idempotent** (UPSERT theo khoá tự nhiên), reconcile chạy lại bao nhiêu lần cũng ra một kết quả. `unaccent()` **không IMMUTABLE** ⇒ không dùng được generated column, phải ghi `search_vector` trong **chính câu UPSERT** (một chỗ tính, không hai); `plainto_tsquery` xoá cả lớp bug wildcard của `LIKE` nhưng **không** stem/đồng nghĩa tiếng Việt (nói thật, đừng hứa quá). UPSERT phải có **chốt thời gian** `updated_at <= EXCLUDED` (event lệch thứ tự không kéo dữ liệu cũ trở lại); reconcile cần **watermark** `updated_at < mốc bắt đầu quét` và phải **viết tay nhánh rỗng** (Spring đổi `NOT IN (:ids)` rỗng thành `NOT IN (NULL)` ⇒ "báo xong mà không làm gì"). `upserted` = số row **được ghi**, không phải số row đổi. Bẫy hạ tầng lặp lần 3: `RestClient.Builder` **không có** trong context service mới (Boot 4 tách auto-config) ⇒ JDK `HttpClient` + Jackson tường minh; và **đừng tin sort của service khác** (`sort=updatedAt` bị catalog trả 400 — chỉ e2e bắt được). |
 | 2026-11-09 | SL-3.8 | **"Async cho nhanh" sai về bản chất — và số đo chứng minh**: checkout p50 42,7 → 43,1 ms (+0,9%). Email/index chưa bao giờ nằm trên đường checkout ⇒ thứ async mua được là **isolation** (consumer chết, checkout p95 vẫn 44,6 ms; 20 event chờ trong queue rồi xử lý đủ) và **độ trễ có trần** (p95 confirm→email 1011 ms ≈ relay 1 s). `p95` chênh +10,7 ms là **nhiễu tải trên cùng Postgres**, không phải phụ thuộc đồng bộ — chứng minh bằng phép đo ngược (consumer chết ⇒ p95 44,6 ms). Relay 63,7 msg/s so với trần 100 (batch 100 × 1 s) + đuôi 0,26 s ⇒ nghẽn là **relay polling**, không phải broker. Đo độ trễ event phải **ghép 2 database** (không JOIN xuyên DB được). Và **script đo cũng phải có test**: 4 lỗi tự gây (bash `local` + `set -u`, `psql -tA` separator `|`, chờ queue rỗng thay vì chờ email, checkout đồng thời không thanh toán) — trong đó lỗi separator cho ra `n=0` **không báo lỗi**, nguy hiểm hơn crash. Số đo tự chỉ ra nợ: `outbox` 715/380/359 row không có job dọn ⇒ `TD-35`. |
+| 2026-11-11 | SL-3.9 | **Đóng phase là đọc lại toàn bộ tài liệu — và nó luôn tìm ra lỗi**: lượt này lộ 1 nợ trùng (`TD-35`≈`TD-29`), 1 dòng trạng thái sai trong bảng nợ (`TD-29` ghi "đã trả (chưa)"), 1 heading sai port (8090 vs **8091**), 1 contract snapshot **thiếu** endpoint (`/v1/auth/service-token` của `SL-3.11`) và 1 IT flaky **theo tải** (`CheckoutSagaIT`: đỏ khi 14 container chạy, xanh khi máy rảnh ⇒ đừng "chạy lại tới khi xanh", hãy chứng minh bằng 3 phép rồi ghi `TD` kèm hướng sửa). `down -v` bắt được lớp lỗi `up -d` che mất: **volume Postgres giữ credential cũ** ⇒ 14 container không lên. Runbook chỉ đáng tin khi dùng chính nó để debug: ca fail-mode thật dạy `SENT` ≠ "đã xử lý", `processed_events` **rỗng đúng thiết kế** khi handler fail, log "sau **4** lần thử" khi cấu hình 3 retry, và `dlq.sh move` **ack khỏi DLQ** (sai routing key là mất message). Cuối cùng: **tắt CI là quyết định, bật lại cũng là quyết định** — điều kiện revisit "khi đóng Phase 3" là thứ khiến `TD-28` được trả sau đúng 3 ngày. |
+| 2026-11-11 | SL-4.0 | **Retention là bất biến hệ thống, không phải tham số tuỳ ý**: `processed_events` phải sống **>=** `outbox` — dedupe hết hạn trước thì replay DLQ muộn gửi email lần 2, mà triệu chứng nằm ở **service khác** chỗ gây lỗi (không service nào tự kiểm hộ được ⇒ chặn bằng mặc định an toàn + doc, không bằng code). Phần khó không phải câu DELETE mà là **điều kiện không xoá nhầm**: outbox chỉ `SENT` (PENDING = event chưa gửi), `notification_logs` chỉ row **đã gửi** (`sent_at IS NOT NULL`; row `FAILED` là dấu vết lần gửi hỏng, phải giữ) — cả 3 assert bằng IT với dữ liệu backdate. Quyết định: SQL + ngữ nghĩa ở **commons**, **nhịp chạy ở service** ⇒ không có scheduler ẩn, tắt job ở 1 service không kéo theo service khác. Đụng đúng vùng cấu hình thì lộ **bug im lặng**: `shoplab.events.dedup.auto-create-schema: false` ở 3 service **chưa bao giờ có tác dụng** (property flat ≠ khoá YAML lồng nhau) — khoá YAML chỉ đúng khi có **test bind**. Và: thêm property mà quên khai trong `infra/docker-compose.yml` thì knob chỉ dùng được ngoài Docker; index phải đi cùng job (không index ⇒ seq scan mỗi nhịp ⇒ job dọn thành nguồn tải). |
 | 2026-11-09 | SL-3.7 | **Async test = poll state cuối, không assert sau khi gọi API** (xanh vì "chưa kịp chạy" là kiểu xanh nguy hiểm nhất). **Hai timeout**: 5 s cho luồng event thường, **15 s cho DLQ** vì retry `200ms,1s,3s` ≈ 4,2 s *trước khi* nack — và `/api/queues` của RabbitMQ là **metrics làm mới ~5 s** nên `messages_ready` còn `1` sau khi message đã đi (timeout phải lớn hơn chu kỳ làm mới của metrics, không chỉ thời gian xử lý). Bẫy thật: (1) xoá product ⇒ SKU `ARCHIVED` ⇒ checkout 409 hiện ra ở **bước DLQ** (tạo SKU riêng + assert cả `PUT /carts/items`); (2) `PUT /carts/items/{sku}` là **thêm** chứ không phải thay giỏ ⇒ giỏ còn SKU cũ ⇒ saga chết ở `PRICE` (`DELETE /v1/carts` đầu mỗi checkout); (3) `$RANDOM` **không** đủ làm khoá idempotency (bash lặp giá trị ⇒ 409 request-hash mismatch) ⇒ prefix + số thứ tự. Fail-mode bind lúc boot ⇒ chỉ bật bằng recreate container, **bắt buộc `trap` tắt lại**; replay **sau khi** tắt lỗi (sửa nguyên nhân rồi mới replay). Đo replay bằng **DB** (`notification_logs` có row), không bằng "DLQ rỗng" — DLQ rỗng cũng đúng khi message **mất**. |
 | 2026-11-09 | SL-3.5 | **Hai đường confirm: cái khó là *thứ tự kiểm tra*, không phải idempotency** — chốt đơn theo `payment.succeeded.v1` phải loại dần 5 khả năng (không saga · saga đã `CONFIRMED` · saga chưa `COMPLETED_START` · `paymentIntentId` lệch · đơn không còn `PENDING_PAYMENT`) trước khi chạm downstream; bỏ bước nào cũng là **chốt nhầm đơn đã trả tiền** (lỗi không sửa được bằng code). Bằng chứng thanh toán *đổi chỗ*: đường client hỏi payment (`verifyPayment`), đường event không hỏi lại (event phát ngay sau CAS `SUCCEEDED`) nhưng vẫn ghi `PAYMENT_VERIFY:SKIPPED` vào audit. `paymentIntentId` trong payload là **khoá đối chiếu**, không phải trang trí. **Ack cho kết cục nghiệp vụ, retry cho lỗi hạ tầng** (đơn `EXPIRED` + tiền đã thu = hoàn tiền tay ⇒ ack + log ERROR; inventory 503 = retry). `TD-25` release-trước-CAS mở cửa sổ bán quá tồn kho ⇒ chặn bằng kiểm `PENDING_PAYMENT` trước khi release + WARN khi CAS trả `false`. Và bài học cũ lặp lại: `@ConfigurationProperties` inject bean `ObjectMapper` (Jackson 2) không tồn tại ⇒ **context fail cả IT** — hạ tầng commons **không được giả định bean nào có mặt**. |
 
@@ -548,9 +720,9 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | ✅ đã trả (SL-3.5) |
 | `TD-26` | `build-image` (CI) **flaky** khi Maven Central tạm thời không trả artifact: mỗi image `mvn package` từ đầu KHÔNG cache Maven ⇒ gặp hiccup là đỏ oan (gặp thật ở `SL-2.8`: `spring-boot-dependencies:4.1.2 … absent in central`, rerun thì xanh) | SL-2.8 (run `42451712993`) | Phase 7: registry + **cache layer Maven** (`--mount=type=cache` hoặc image builder có `.m2` ấm) ⇒ build nhanh và bớt phụ thuộc Central | thấp |
 | `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
-| `TD-29` | Bảng `outbox` ở **3 service** (`order` · `payment` · `catalog`) **không có job dọn** row `SENT` ⇒ 1 row/event, phình dần (sau 1 buổi đo `SL-3.8`: 715 / 380 / 359 row). Index `WHERE status = 'PENDING'` vẫn nhanh, nhưng backup/disk lớn lên | SL-3.3 | Khi bảng > 10⁶ row **hoặc** trước load test Phase 4: gộp **1 job retention** cho `outbox` (SENT > 7 ngày) + `processed_events` + `notification_logs` — xem `TD-30` | trung bình |
+| `TD-29` | Bảng `outbox` ở **3 service** (`order` · `payment` · `catalog`) phình 1 row/event (sau 1 buổi đo `SL-3.8`: 715 / 380 / 359 row) — index `PENDING` vẫn nhanh, nhưng backup/disk lớn lên | SL-3.3 | **✅ đã trả (`SL-4.0`)** — job retention xoá row `SENT` > 7d theo batch (`SHOPLAB_OUTBOX_RETENTION`), chỉ `SENT`; thêm index partial `idx_outbox_sent` | ✅ đã trả (SL-4.0) |
 | `TD-28` | *(đã trả)* **CI từng TẮT tạm thời** (`vars.CI_ENABLED=false`, từ `SL-3.10`) để tăng tốc merge Phase 3 ⇒ mất 3 hàng rào tự động: `test` + JaCoCo gate độc lập, `lint` trong môi trường sạch, và **`build-image` matrix** (chốt duy nhất bắt lỗi Dockerfile/COPY pom khi thêm module/service). Verify chuyển sang **local** (`mvn verify` + e2e) do người/AI tự khai | SL-3.10 | ✅ **đã trả (`SL-3.9`)** — `gh variable delete CI_ENABLED` (2026-11-11), CI chạy lại bình thường; gỡ ngoại lệ ở `AGENTS.md` §9 + `.clinerules/10-git-workflow.md` + `README.md` | — |
-| `TD-30` | `notification_logs` + `processed_events` **không có job dọn**: `processed_events` tăng 1 row/event/consumer **vĩnh viễn** (không xoá được vì dedupe cần), `notification_logs` tăng 1 row/đơn đã confirm — sau 1 năm là chục triệu row ở cả 2 bảng | SL-3.4 | Gộp vào **cùng job retention** với `TD-29`: `processed_events` giữ ≥ 7 ngày (đủ dài hơn max retry + replay tay), `notification_logs` giữ theo yêu cầu nghiệp vụ (≥ 90 ngày). Revisit khi bảng > 10⁶ row **hoặc** khi làm `SL-3.7`/`SL-3.9` (job/runbook) | trung bình |
+| `TD-30` | `notification_logs` + `processed_events` phình: `processed_events` 1 row/event/consumer **vĩnh viễn** (không xoá được vì dedupe cần), `notification_logs` 1 row/đơn đã confirm | SL-3.4 | **✅ đã trả (`SL-4.0`)** — `processed_events` 7d (`SHOPLAB_EVENTS_DEDUP_RETENTION`), `notification_logs` 90d (`SHOPLAB_NOTIFICATION_LOG_RETENTION`); **bất biến**: dedup retention ≥ outbox retention | ✅ đã trả (SL-4.0) |
 | `TD-31` | **Không có refund**: ca `payment.succeeded` cho đơn đã `EXPIRED`/`CANCELLED` (tiền đã thu, hàng đã trả) hiện chỉ log ERROR `TIỀN ĐÃ THU … cần hoàn tiền tay`. Chưa có bảng `refunds`/`transactions`, chưa có API hoàn tiền | SL-3.5 | Phase 6 (refund) hoặc ngay khi có ≥ 1 ca thật cần hoàn tiền trong môi trường chạy thật | cao |
 | `TD-32` | **Outbox bị copy 3 lần** (`order` SL-3.3, `payment` SL-3.5, `catalog` SL-3.6): ~500 dòng gần giống nhau (record/repository/relay/properties/DDL) ở mỗi service | SL-3.5 | ✅ **đã trả (SL-3.6)** — chấp nhận copy lần 3 có ý thức: giữ `SL-3.6` đúng scope (diff nhỏ, review được) thay vì trộn refactor 2 service cũ vào ticket service mới. Extract `OutboxAutoConfiguration` vào commons khi có **producer thứ 4** hoặc khi lên OpenSearch (Phase 8 — lúc đó hình dạng outbox có thể phải đổi, extract sớm sẽ phải làm lại) | trung bình |
 | `TD-33` | `search_product.min_price` = **giá niêm yết của product**, KHÔNG phải min qua `sku.price_override` (index chưa biết SKU) ⇒ `minPrice` filter sai lệch với SKU có override thấp hơn | SL-3.6 | Khi search cần lọc/sort theo giá SKU thật, hoặc khi có yêu cầu "từ giá X" trên UI — lúc đó thêm field SKU vào payload event + reindex theo SKU | trung bình |
@@ -654,3 +826,4 @@ Ghi lại những thứ học được trong quá trình làm — đây là **ou
 | 2026-11-09 | `SL-3.7` → `Done`: thêm **`tools/e2e-async.sh`** — 48 assert, chứng minh 4 luồng async trên stack thật: `order.confirmed.v1` ⇒ email (`notification_logs`) · `payment.succeeded.v1` ⇒ order **tự** `CONFIRMED` (không gọi `/confirm`) · `product.updated/archived` ⇒ index search (giá mới + row `ARCHIVED`) · lỗi ⇒ **DLQ** ⇒ tắt fail-mode ⇒ `dlq.sh move` ⇒ xử lý lại. Poll có timeout (`POLL_FAST=5s`, `POLL_DLQ=15s` cho retry budget + độ trễ metrics của RabbitMQ), `trap` dọn state (fail-mode off + purge DLQ) kể cả khi bị kill, `DELETE /v1/carts` trước mỗi checkout, idempotency key = prefix + số thứ tự (không dùng `$RANDOM`). `e2e.yml`: thêm bước **E2E async (Phase 3)** chạy cuối (vì nó recreate `notification-service`) + job name `11 thành phần`; README mục **E2E async — SL-3.7**. Verify: script xanh **2 lần liên tiếp** (48/0 · 27,8 s và 48/0 · 30,9 s) · trap kiểm thật bằng `kill -TERM` (`FAIL_MODE true → false`, DLQ 0) · `e2e.yml` parse OK (10 step) · 3 script cũ 17/17 · 27/27 · 41/41 · `mvn -B -ntp verify` BUILD SUCCESS (805 test). |
 | 2026-11-09 | `SL-3.8` → `Done`: thêm **`tools/bench-async.sh`** (5 phép đo, in bảng markdown + lưu raw) và **`docs/reports/async-phase-3.md`** — số đo thật: checkout p50 42,7→43,1 ms (async **không** làm nhanh hơn), confirm→email p50 552/p95 1011 ms, webhook→CONFIRMED p50 29/p95 46 ms, relay **63,7 msg/s** (trần 100 ⇒ nghẽn relay polling), DLQ **0** trong 300 s với 100 checkout + 100 update (phát = xử lý 100/100 ở cả 3 luồng, 0 email trùng), degradation: consumer chết ⇒ checkout p95 44,6 ms + 20 event chờ ⇒ bật lại xử lý đủ 20/20. Nợ mới `TD-35` (outbox không có job dọn). `README` + `architecture.md` trỏ tới báo cáo. |
 | 2026-11-11 | `SL-3.9` → `Done`: **đóng Phase 3** — `docs/runbook-phase-3.md` (4 tầng debug · 8 lỗi · ca debug thật "email không tới" từ fail-mode) · `docs/phases/phase-3.md` · archive 12/12 ticket sang `Backlog-phase-3.md` (giờ "54 ticket chi tiết") · verify snapshot từ volume rỗng: **14/14 container healthy** + 4 script E2E (17/27/41/**48**) + `mvn verify` **805 test** + OpenAPI 42/51/48 · **CI bật lại** (`gh variable delete CI_ENABLED`, `TD-28` → đã trả) · gộp `TD-35` vào `TD-29`, thêm `TD-36` (IT order flaky theo tải) · tag `phase-3` + release. |
+| 2026-11-11 | `SL-4.0` → `Done` (**trả `TD-29` + `TD-30`**): **retention job** cho `outbox` (chỉ `SENT`, 7d) · `processed_events` (7d) · `notification_logs` (90d); `ProcessedEventRetention` ở commons + 5 `RetentionSweeper` per service (`@Scheduled` `fixedDelay`, batch delete, log số row) · migration **partial index** `idx_outbox_sent` ở 3 DB · env + compose cho 5 service · **fix bug** `dedup.auto-create-schema` không bind (nested `dedup`) · runbook §3.7 (kiểm retention) + `architecture.md` §8.1 (nguyên tắc 4b + bất biến `dedup.retention ≥ outbox.retention`). Verify: **829 test** (684 unit + 145 IT) · IT backdate assert không xoá `PENDING`/row mới/`sent_at NULL` · drill compose `oldSENT=0 newSENT=1 oldPENDING=1` + log `giữ PT168H`/`PT2160H` · `e2e-async 48` + `e2e-checkout 27` + DLQ 0. |

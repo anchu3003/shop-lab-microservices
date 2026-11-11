@@ -72,7 +72,11 @@ import tools.jackson.databind.ObjectMapper;
       // (bài học SL-3.4: `spring.rabbitmq.listener.simple.auto-startup` của Boot không áp cho
       // factory
       // tự khai ⇒ thiếu cờ này là `FatalListenerStartupException` làm đỏ cả context).
-      "shoplab.events.consumer-auto-startup=false"
+      "shoplab.events.consumer-auto-startup=false",
+      // SL-4.0: IT tự gọi `relay.drain()` khi cần ⇒ tắt nhịp nền (mặc định 1 s) để test retention
+      // kiểm được đúng trạng thái PENDING thay vì bị relay publish chen giữa. Đây cũng là cách khử
+      // một nguồn nondeterminism có sẵn của class này.
+      "shoplab.outbox.interval=1h"
     })
 @Testcontainers
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
@@ -91,6 +95,7 @@ class OrderServiceApplicationIT {
   @Autowired private IdempotencyService idempotencyService;
   @Autowired private CheckoutOutbox finalizer;
   @Autowired private OutboxRelay relay;
+  @Autowired private com.shoplab.order.retention.RetentionSweeper retentionSweeper;
 
   /** Stub: IT chạy Postgres thật nhưng KHÔNG có RabbitMQ ⇒ thay publisher bằng mock. */
   @MockitoBean private EventPublisher outboxPublisher;
@@ -632,6 +637,69 @@ class OrderServiceApplicationIT {
     } catch (Exception ex) {
       throw new IllegalStateException("HTTP call failed: " + method + " " + path, ex);
     }
+  }
+
+  // ==========================================================================
+  // Retention (TD-29 + TD-30, SL-4.0)
+  // ==========================================================================
+
+  @Test
+  @DisplayName("retention: xoá outbox SENT cũ + processed_events cũ; GIỮ outbox PENDING và row mới")
+  void retentionDeletesOnlyOldSentRows() {
+    Instant now = Instant.now();
+    UUID oldSent = UUID.randomUUID();
+    UUID newSent = UUID.randomUUID();
+    UUID oldPending = UUID.randomUUID();
+    insertOutbox(oldSent, "SENT", now.minus(Duration.ofDays(10)), now.minus(Duration.ofDays(10)));
+    insertOutbox(newSent, "SENT", now.minus(Duration.ofHours(1)), now.minus(Duration.ofHours(1)));
+    insertOutbox(oldPending, "PENDING", now.minus(Duration.ofDays(10)), null);
+
+    UUID oldDedupe = UUID.randomUUID();
+    UUID newDedupe = UUID.randomUUID();
+    insertProcessedEvent(oldDedupe, now.minus(Duration.ofDays(10)));
+    insertProcessedEvent(newDedupe, now.minus(Duration.ofHours(1)));
+
+    retentionSweeper.sweep();
+
+    // outbox: chỉ row SENT cũ bị xoá. PENDING cũ = event CHƯA gửi ⇒ phải còn.
+    assertThat(count("select count(*) from outbox where id = ?", oldSent)).isZero();
+    assertThat(count("select count(*) from outbox where id = ?", newSent)).isEqualTo(1);
+    // PENDING (event CHƯA gửi) không thuộc phạm vi retention — assert cả trạng thái, không chỉ
+    // "row còn tồn tại": nếu SQL quên điều kiện `status='SENT'` thì row sẽ biến mất.
+    assertThat(count("select count(*) from outbox where id = ? and status = 'PENDING'", oldPending))
+        .isEqualTo(1);
+    // processed_events: marker cũ bị xoá, marker mới còn.
+    assertThat(count("select count(*) from processed_events where event_id = ?", oldDedupe))
+        .isZero();
+    assertThat(count("select count(*) from processed_events where event_id = ?", newDedupe))
+        .isEqualTo(1);
+  }
+
+  private void insertOutbox(UUID id, String status, Instant createdAt, Instant sentAt) {
+    jdbc.update(
+        """
+        INSERT INTO outbox (id, aggregate_type, aggregate_id, event_type, payload, status,
+                            attempts, created_at, sent_at)
+        VALUES (?, 'ORDER', ?, 'order.confirmed.v1', '{}'::jsonb, ?, 1, ?, ?)
+        """,
+        id,
+        UUID.randomUUID(),
+        status,
+        java.sql.Timestamp.from(createdAt),
+        sentAt == null ? null : java.sql.Timestamp.from(sentAt));
+  }
+
+  private void insertProcessedEvent(UUID eventId, Instant processedAt) {
+    jdbc.update(
+        "INSERT INTO processed_events (event_id, consumer, event_type, processed_at) "
+            + "VALUES (?, 'order-service', 'payment.succeeded.v1', ?)",
+        eventId,
+        java.sql.Timestamp.from(processedAt));
+  }
+
+  private long count(String sql, UUID arg) {
+    Long value = jdbc.queryForObject(sql, Long.class, arg);
+    return value == null ? 0 : value;
   }
 
   private record HttpResult(int status, String body, java.net.http.HttpHeaders headers) {}

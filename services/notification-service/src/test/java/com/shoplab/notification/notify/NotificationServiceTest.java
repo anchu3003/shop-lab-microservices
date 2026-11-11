@@ -33,7 +33,8 @@ class NotificationServiceTest {
   private static final UUID USER = UUID.fromString("11111111-1111-4111-8111-000000000001");
   private static final UUID ORDER = UUID.fromString("22222222-2222-4222-8222-000000000002");
   private static final NotificationProperties LOCAL =
-      new NotificationProperties("local", false, List.of(Duration.ofMillis(10)), 50);
+      new NotificationProperties(
+          "local", false, List.of(Duration.ofMillis(10)), 50, Duration.ofDays(90), 1000);
 
   private final NotificationLogRepository logs = mock(NotificationLogRepository.class);
   private final TemplateRenderer renderer = new TemplateRenderer();
@@ -101,7 +102,8 @@ class NotificationServiceTest {
   @DisplayName("fail-mode ở env=local → ném lỗi, KHÔNG ghi dòng nào (để test retry/DLQ)")
   void shouldFailWhenFailModeInLocal() {
     NotificationProperties failing =
-        new NotificationProperties("local", true, List.of(Duration.ofMillis(10)), 50);
+        new NotificationProperties(
+            "local", true, List.of(Duration.ofMillis(10)), 50, Duration.ofDays(90), 1000);
 
     assertThatThrownBy(() -> service(failing).onOrderConfirmed(confirmedEvent()))
         .isInstanceOf(IllegalStateException.class)
@@ -113,7 +115,8 @@ class NotificationServiceTest {
   @DisplayName("fail-mode=true nhưng env!=local → bỏ qua (fail-closed), vẫn gửi bình thường")
   void shouldIgnoreFailModeOutsideLocal() {
     NotificationProperties prod =
-        new NotificationProperties("prod", true, List.of(Duration.ofMillis(10)), 50);
+        new NotificationProperties(
+            "prod", true, List.of(Duration.ofMillis(10)), 50, Duration.ofDays(90), 1000);
     when(logs.findTemplate("order.confirmed"))
         .thenReturn(Optional.of(new NotificationLogRepository.Template("s", "b")));
 

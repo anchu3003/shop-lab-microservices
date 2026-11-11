@@ -232,7 +232,7 @@ cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutt
 | `inventory-service` | Tồn kho theo SKU × warehouse; **reserve / commit / release** (conditional `UPDATE`, ADR-0006) | `stock`, `reservations` (+`reservation_items`), `stock_ledger` | PostgreSQL | REST | 2 |
 | `promotion-service` | Voucher (PERCENT/FIXED), rule tính giảm giá, **lock/commit/release** 1 lượt dùng | `vouchers`, `voucher_locks` | PostgreSQL | REST | 2 |
 | `order-service` | Vòng đời order (**idempotent** theo `Idempotency-Key`), snapshot giá; orchestrator Saga (SL-2.6) | `orders`, `order_items`, `order_status_history`, `idempotency_keys`, `outbox` | PostgreSQL | REST + event | 2 |
-| `payment-service` | Payment intent (**idempotent**), nhận webhook provider (**idempotent** theo khoá tự nhiên), mock provider cho Phase 2; refund để Phase 6 | `payments`, `payment_webhook_events`, `idempotency_keys` (`transactions`/`refunds`/`outbox` chưa có) | PostgreSQL | REST + webhook | 2 |
+| `payment-service` | Payment intent (**idempotent**), nhận webhook provider (**idempotent** theo khoá tự nhiên), mock provider cho Phase 2; refund để Phase 6 | `payments`, `payment_webhook_events`, `idempotency_keys`, **`outbox`** (`SL-3.5`); `transactions`/`refunds` chưa có (`TD-31`) | PostgreSQL | REST + webhook | 2 |
 | `notification-service` | Email / SMS / Push theo template | `notification_logs`, `templates` | PostgreSQL | **async consumer** | 3 |
 | `search-service` | Index & query sản phẩm (full-text, filter, sort) | search index (không phải source of truth) | **PostgreSQL FTS** (Phase 3, port **8091**) → OpenSearch (Phase 8) | REST + consumer | 3 |
 | `review-service` | Review, rating, moderation | `reviews`, `ratings` | PostgreSQL | REST + event | 8 |
@@ -475,6 +475,10 @@ tiêu của cả phase, không phải chi tiết triển khai.
 4. **Outbox pattern** cho mọi event phát ra từ service có ghi DB: ghi business data + outbox record
    trong **cùng 1 transaction**, relay đọc outbox và publish. Đảm bảo **at-least-once**, phía consumer
    **phải idempotent**.
+4b. **Bảng phụ nào cũng có retention** (`SL-4.0`): `outbox` (chỉ row `SENT`), `processed_events`,
+   `notification_logs` được job `@Scheduled` dọn theo tuổi + batch (mặc định 7d / 7d / 90d).
+   Bất biến: **retention(`processed_events`) ≥ retention(`outbox`)** — marker dedupe phải sống lâu hơn
+   event mà nó bảo vệ, nếu không thì replay muộn sẽ xử lý lần hai.
 5. **Event envelope chuẩn:**
 
 ```json
@@ -563,8 +567,13 @@ payments(id, order_id, user_id, amount, currency, status, provider, provider_int
   └─ payment_webhook_events(provider_event_id PK, payment_id, provider_txn_id, status, amount,
                             payload_sha256, received_at)   -- dedupe webhook, KHÔNG lưu body thẻ
 
-outbox(id, aggregate_type, aggregate_id, event_type, payload_json,
-       status, created_at, published_at)
+outbox(id, aggregate_type, aggregate_id, event_type, payload_json, status, attempts,
+       last_error, claimed_at, created_at, sent_at)
+  -- status ∈ PENDING|SENT · CHECK (status='SENT') = (sent_at IS NOT NULL)
+  -- retention: xoá row SENT cũ (SL-4.0) · PENDING KHÔNG BAO GIỜ bị xoá (event chưa gửi)
+
+processed_events(event_id, consumer, event_type, processed_at)  -- PK (event_id, consumer)
+  -- retention 7d (SL-4.0) · BẤT BIẾN: retention ở đây >= retention(outbox)
 ```
 
 ---
@@ -880,3 +889,4 @@ Ghi lại các trade-off **đã chấp nhận** để sau này không phải t�
 | 2026-11-09 | `SL-3.6`: thêm **`search-service`** (8091, DB `search`) — index product dựng từ event `product.updated.v1` / `product.archived.v1` (`catalog` phát qua outbox) + `GET /v1/search` (tsvector + GIN + unaccent) + `POST /v1/admin/search/reindex` (reconcile có watermark, idempotent) + job so số row lệch > 1% ⇒ WARN; §6.4 mô tả luồng + 4 quyết định; `TD-32` đóng (copy outbox lần 3 có ý thức), thêm `TD-33` (min_price chưa tính SKU override) | bạn + AI |
 | 2026-11-09 | `SL-3.8`: báo cáo **[`docs/reports/async-phase-3.md`](docs/reports/async-phase-3.md)** + `tools/bench-async.sh` — async **không** cải thiện latency checkout (p50 42,7 → 43,1 ms) nhưng mua decoupling (consumer chết: checkout p95 44,6 ms, 20 event chờ → xử lý đủ 20/20) và trần trễ ~1 s/chặng; relay **63,7 msg/s** (nghẽn relay polling, trần 100); DLQ 0 trong 300 s với 100 checkout + 100 update (phát = xử lý 100/100); nợ mới `TD-35` (outbox không có job dọn) | bạn + AI |
 | 2026-11-11 | `SL-3.9`: **đóng Phase 3** (tag `phase-3`) — 12/12 ticket, chi tiết tách sang `Backlog-phase-3.md`; §12 Phase 3 ✅ Done + Phase 4 là bước tiếp theo; thêm doc [`docs/phases/phase-3.md`](docs/phases/phase-3.md) và runbook [`docs/runbook-phase-3.md`](docs/runbook-phase-3.md) (4 tầng debug · 8 lỗi · ca debug thật); CI **bật lại** (`TD-28` đã trả); hợp nhất nợ trùng `TD-35` → `TD-29`, thêm `TD-36` (IT flaky theo tải) | bạn + AI |
+| 2026-11-11 | `SL-4.0`: **retention job** cho bảng phụ (trả `TD-29` + `TD-30`) — `outbox` chỉ xoá row `SENT` (7d), `processed_events` (7d), `notification_logs` (90d); job `@Scheduled` in-process per service, xoá theo batch; **fix bug bind** `shoplab.events.dedup.auto-create-schema` (3 service khai `false` mà là no-op vì property flat) → nested `dedup`; thêm index partial `idx_outbox_sent`; §8.1 nguyên tắc 4b + bất biến `dedup.retention ≥ outbox.retention` | bạn + AI |

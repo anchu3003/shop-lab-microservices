@@ -69,6 +69,35 @@ class EventAutoConfigurationTest {
   }
 
   @Test
+  @DisplayName(
+      "shoplab.events.dedup.auto-create-schema=false BIND đúng vào object dedup (bug SL-4.0: trước đó là no-op)")
+  void shouldBindNestedDedupProperties() {
+    runner
+        .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
+        .withPropertyValues("shoplab.events.dedup.auto-create-schema=false")
+        .run(
+            context -> {
+              assertThat(context).hasNotFailed();
+              EventProperties properties = context.getBean(EventProperties.class);
+              // Khoá YAML nằm dưới `dedup:` ⇒ property phải là object lồng nhau. Trước SL-4.0 đây
+              // là field flat nên `false` bị bỏ qua **im lặng** (3 service khai sai mà không biết).
+              assertThat(properties.getDedup().isAutoCreateSchema()).isFalse();
+            });
+  }
+
+  @Test
+  @DisplayName("có JdbcTemplate → có luôn ProcessedEventRetention (service tự gọi từ sweeper)")
+  void shouldCreateRetentionBeanWhenJdbcPresent() {
+    runner
+        .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
+        .run(
+            context -> {
+              assertThat(context).hasNotFailed();
+              assertThat(context).hasSingleBean(ProcessedEventRetention.class);
+            });
+  }
+
+  @Test
   @DisplayName("service không có DB (vd cart) → không tạo store dedupe, không lỗi")
   void shouldSkipStoreWithoutJdbc() {
     runner.run(

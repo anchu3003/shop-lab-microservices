@@ -90,6 +90,32 @@ public class JdbcOutboxRepository implements OutboxRepository {
         "UPDATE outbox SET last_error = ?, claimed_at = NULL WHERE id = ?", trim(error), id);
   }
 
+  /**
+   * Xoá row {@code SENT} cũ (job retention — `TD-29`, `SL-4.0`).
+   *
+   * <p>Subquery {@code LIMIT} là cách duy nhất trong Postgres (DELETE không nhận {@code LIMIT});
+   * {@code ORDER BY sent_at} để mỗi nhịp dọn đúng phần cũ nhất, và {@code status = 'SENT'} là điều
+   * kiện **bắt buộc** — thiếu nó là xoá mất event chưa gửi.
+   *
+   * <p><b>Index</b>: dùng {@code idx_outbox_sent (sent_at) WHERE status = 'SENT'}; không có index
+   * này thì job quét cả bảng mỗi nhịp (đo ở `SL-4.0`: chưa cần vì bảng còn nhỏ, xem migration).
+   */
+  @Override
+  public int deleteSentOlderThan(Instant cutoff, int batch) {
+    return jdbc.update(
+        """
+        DELETE FROM outbox
+        WHERE id IN (
+          SELECT id FROM outbox
+          WHERE status = 'SENT' AND sent_at < ?
+          ORDER BY sent_at
+          LIMIT ?
+        )
+        """,
+        Timestamp.from(cutoff),
+        batch);
+  }
+
   @Override
   public long countByStatus(OutboxStatus status) {
     Long count =
