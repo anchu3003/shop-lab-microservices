@@ -74,7 +74,7 @@ mvn -B -ntp verify               # 655 test (537 unit + 118 IT) + lint + coverag
 
 ## Bài học đáng nhớ của phase
 
-(đầy đủ ở [`Backlog-phase-2.md`](../../Backlog-phase-2.md) + `Backlog.md` §6 Learning log)
+(đầy đủ ở [`Backlog-phase-2.md`](../../Backlog-phase-2.md) + [`Backlog-log-archive.md`](../../Backlog-log-archive.md) §Learning log)
 
 - **Compensating chỉ đáng tin khi assert *state*, không phải status**: `503` trả về client **không** chứng minh hàng đã
   được trả — phải đọc `stock.reserved` và `voucher.locked`.

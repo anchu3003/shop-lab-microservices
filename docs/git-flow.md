@@ -114,7 +114,7 @@ Gặp thật 2026-11-05: một commit `docs(process)` sửa `.github/workflows/c
 
 ## Mark done — gộp vào commit CUỐI của ticket (không để dành PR sau)
 
-Verify xong thì sửa `Backlog.md` (status + Kết quả verify + Learning note + bảng phase + Changelog) **ngay trong nhánh
+Verify xong thì sửa `Backlog.md` (status + Kết quả verify + Learning note + bảng phase) **ngay trong nhánh
 của ticket**, rồi gộp vào commit cuối:
 
 ```bash

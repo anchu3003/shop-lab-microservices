@@ -46,5 +46,5 @@ description: Tạo mới hoặc cập nhật ticket trong Backlog.md của ShopL
 
 - Cập nhật bảng **Trạng thái theo phase** (số Done / tổng).
 - Cập nhật header: **Ticket đang làm** / **Ticket tiếp theo**.
-- Thêm dòng vào **Changelog**.
+- **Không** thêm dòng Changelog/Learning log: `Backlog.md` §6 đã tách (xem `Backlog-log-archive.md`).
 - Mơ hồ ảnh hưởng design → **hỏi user trước**, không đoán.

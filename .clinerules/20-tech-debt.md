@@ -41,4 +41,5 @@ class").
 ## Liên quan
 
 - `AGENTS.md` §4 (quy trình ticket) · §9 (việc không được làm)
-- `Backlog.md` § 7 (bảng nợ) · Learning log § 6 (bài học, khác mục đích: bài học = điều đã hiểu, nợ = việc còn phải làm)
+- `Backlog.md` § 7 (bảng nợ) · `Learning note` trong từng ticket (bài học = điều đã hiểu, khác mục đích với nợ = việc còn phải
+  làm) · `Backlog-log-archive.md` (log cũ Phase 0–4, đóng băng — **không ghi thêm**)

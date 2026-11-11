@@ -11,7 +11,7 @@ viết như BA đã define xong.
 3. Sinh ticket theo đúng thứ tự mục: Bối cảnh → Mục tiêu → In scope → Out of scope →
    Acceptance Criteria → Ghi chú kỹ thuật → Kết quả verify → Learning note.
 4. ID dạng `SL-<phase>.<số>`, không đổi ID cũ; ước lượng `S`/`M`/`L`; nếu `L` → tách nhỏ.
-5. Đặt ticket vào đúng phase trong `Backlog.md`; cập nhật bảng "Trạng thái theo phase",
-   header (Ticket tiếp theo), và Changelog.
+5. Đặt ticket vào đúng phase trong `Backlog.md`; cập nhật bảng "Trạng thái theo phase" + header (Ticket tiếp theo).
+   **Không** còn Changelog/Learning log tổng trong `Backlog.md` (`§6`) — đừng thêm dòng vào đó.
 6. Không breakdown phase xa thành ticket chi tiết khi chưa tới lượt.
 </detailed_sequence_of_steps>
