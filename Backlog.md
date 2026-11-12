@@ -4,10 +4,10 @@
 > `Trạng thái` + điền `Kết quả verify` + `Learning note`, rồi mới sang ticket tiếp theo.
 > **Không** breakdown các phase xa thành ticket chi tiết khi chưa tới lượt.
 
-| | | |
-|---|---|---|
-| **Ticket đang làm** | — (Phase 4 đã breakdown **13 ticket**; kế tiếp là `SL-4.1`) |
-| **Ticket tiếp theo** | `SL-4.1` — k6 harness + baseline (tìm **điểm vỡ** đầu tiên, trước khi tối ưu gì) |
+| | |
+|---|---|
+| **Ticket đang làm** | — |
+| **Ticket tiếp theo** | `SL-4.2` — Cache-aside `catalog` (TTL + jitter + single-flight) — có baseline để so |
 | **Số ticket chi tiết hiện có** | 66 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 · Phase 3: 12 — đã archive · Phase 4: **13** — đang mở) |
 
 ---
@@ -314,7 +314,7 @@ chặn Phase 4**) · `TD-31` (không có refund) · `TD-33` (`min_price` chưa t
 | # | Ticket | Nội dung | Ước lượng | Trạng thái |
 |---|---|---|---|---|
 | 0 | `SL-4.0` | *(phát sinh)* **Retention job** `outbox` · `processed_events` · `notification_logs` (trả `TD-29`+`TD-30`) | M | ✅ Done |
-| 1 | `SL-4.1` | **k6 harness + baseline**: 3 scenario · seed · `tools/load.sh` · tìm **điểm vỡ** đầu tiên | M | Todo |
+| 1 | `SL-4.1` | **k6 harness + baseline**: 3 scenario · seed · `tools/load.sh` · tìm **điểm vỡ** đầu tiên | M | ✅ Done |
 | 2 | `SL-4.2` | **Cache-aside `catalog`** (TTL + jitter + **single-flight**) — trả phần cache của `TD-22` | M | Todo |
 | 3 | `SL-4.3` | **Rate limit ở gateway** (token bucket Redis + Lua) — trả `TD-21` + phần limit của `TD-22` | M | Todo |
 | 4 | `SL-4.4` | **Read replica** (streaming thật) + routing read/write + đo **replica lag** | M | Todo |
@@ -515,7 +515,7 @@ YAML lồng nhau **không bind**, DDL auto-create vẫn chạy. Bằng chứng: 
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done (2026-11-12) |
 | **Phase** | 4 — Scale & performance |
 | **Phụ thuộc** | — (ticket đầu tiên; `SL-4.0` xong để bảng phụ không phình trong lúc đo) |
 | **Ước lượng** | M |
@@ -547,13 +547,13 @@ không có scenario đọc catalog (thứ chiếm 20:1 traffic theo `architectur
 
 **Acceptance Criteria**
 
-- [ ] `bash tools/load/seed.sh` chạy 2 lần: lần 2 **không** tạo thêm row, in cùng bộ ID.
-- [ ] `bash tools/load.sh --scenario read-catalog` chạy từ máy sạch (chỉ cần Docker + stack up), in bảng markdown theo bậc VU,
+- [x] `bash tools/load/seed.sh` chạy 2 lần: lần 2 **không** tạo thêm row, in cùng bộ ID.
+- [x] `bash tools/load.sh --scenario read-catalog` chạy từ máy sạch (chỉ cần Docker + stack up), in bảng markdown theo bậc VU,
       raw lưu `/tmp/load-read-catalog-<ts>/`.
-- [ ] Có **điểm vỡ** cho `read-catalog` và `checkout`: bậc VU + RPS **ngay trước** điểm vỡ + lý do (p99 vượt ngưỡng hay
+- [x] Có **điểm vỡ** cho `read-catalog` và `checkout`: bậc VU + RPS **ngay trước** điểm vỡ + lý do (p99 vượt ngưỡng hay
       error > 1%) + **hệ số quy đổi NFR**.
-- [ ] Script **dừng đúng** khi qua điểm vỡ và cảnh báo nếu **k6 chạm trần CPU** (điểm vỡ của client).
-- [ ] `docs/reports/scale-phase-4-baseline.md` có 3 bảng + kết luận "nghẽn đầu tiên ở đâu" kèm bằng chứng.
+- [x] Script **dừng đúng** khi qua điểm vỡ và cảnh báo nếu **k6 chạm trần CPU** (điểm vỡ của client).
+- [x] `docs/reports/scale-phase-4-baseline.md` có 3 bảng + kết luận "nghẽn đầu tiên ở đâu" kèm bằng chứng.
 
 **Ghi chú kỹ thuật**
 
@@ -563,9 +563,93 @@ không có scenario đọc catalog (thứ chiếm 20:1 traffic theo `architectur
 - **Checkout cần state riêng**: pool 200 buyer, VU xoay vòng; `Idempotency-Key` = `<runId>-<vu>-<iter>` (bài học `SL-3.8`).
 - **Đo trước, tối ưu sau**: baseline không được chứa thay đổi của `SL-4.2`+.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-12, máy dev WSL2 12 thread · Docker 29.9.3 · stack 13 container)*
 
-**Learning note** *(điền khi Done)*
+**1) Seed idempotent (AC #1)** — chạy `bash tools/load/seed.sh --buyers 400` **2 lần**:
+
+```console
+# lần 1
+-- category: tạo mới 20 · đã có 0
+-- product: tạo mới 1000 · đã có 0
+-- sku: tạo mới 2000 · đã có 0
+-- buyer: tạo mới 400 · đã có 0
+   HTTP 200 {"scanned":1029,"upserted":1029,"archived":0}     ← reindex search
+-- DB sau khi seed: catalog: 20 category / 2000 sku · identity: 400 buyer
+-- fingerprint : d1412cc7427a84a8
+
+# lần 2 — KHÔNG tạo row nào, cùng fingerprint
+-- category: tạo mới 0 · đã có 20
+-- product: tạo mới 0 · đã có 1000
+-- sku: tạo mới 0 · đã có 2000
+-- buyer: tạo mới 0 · đã có 400
+-- DB sau khi seed: catalog: 20 category / 2000 sku · identity: 400 buyer
+-- fingerprint : d1412cc7427a84a8
+```
+
+**2) Ba baseline** (mỗi lệnh tự dừng ở bậc vỡ):
+
+```console
+$ bash tools/load.sh --scenario read-catalog
+| 50 | 3842.9 | 11.9 | 25.5 | 35.2 | 0.00 | 125.28 |
+| 100 | 3795.6 | 24.5 | 57.2 | 81.4 | 0.00 | 132.21 |
+| 200 | 3505.0 | 53.7 | 132.2 | 189.9 | 0.00 | 149.16 |
+   p99 theo endpoint: products_list=190 product_detail=188 skus_lookup=191
+   ⇒ ĐIỂM VỠ ở 200 VU (p99 189.9 ms > NFR 150 ms) — dừng ramp
+>> Bậc cuối ĐẠT: 100 VU · 3795.6 req/s · p99 81.4 ms ⇒ 1/13 mục tiêu NFR
+
+$ bash tools/load.sh --scenario read-search
+| 50 | 4917.3 | 8.4 | 21.7 | 30.7 | 0.00 | 144.67 |
+| 100 | 4757.5 | 17.5 | 51.9 | 75.7 | 0.00 | 151.99 |
+| 200 | 4598.3 | 31.0 | 118.9 | 177.3 | 0.00 | 167.52 |
+   ⇒ ĐIỂM VỠ ở 200 VU (p99 177.3 ms > NFR 150 ms) — dừng ramp
+>> Bậc cuối ĐẠT: 100 VU · 4757.5 req/s ⇒ 1/11 mục tiêu NFR
+
+$ bash tools/load.sh --scenario checkout
+| 50 | 225.2 | 209.6 | 314.7 | 370.9 | 0.00 | 14.36 |
+| 100 | 230.6 | 411.6 | 649.6 | 761.5 | 0.00 | 14.82 |
+   ⇒ ĐIỂM VỠ ở 100 VU (p99 761.5 ms > NFR 500 ms) — dừng ramp
+>> Bậc cuối ĐẠT: 50 VU · 225.2 req/s ⇒ 1/222 mục tiêu NFR
+```
+
+**3) Nghẽn ở đâu** — probe 1 bậc đúng bằng bậc vỡ + `docker stats` mỗi 3 s cho **mọi** container
+(bảng chi tiết ở báo cáo §5):
+
+```console
+catalog @200 VU (tái lập: RPS 3442 · p99 184.9):
+  shoplab-catalog-service 286% · shoplab-api-gateway 248% · shoplab-postgres 207% · k6 195%
+checkout @100 VU (tái lập: RPS 229.8 · p99 764):
+  shoplab-order-service 273% · shoplab-postgres 208% · shoplab-rabbitmq 152% · inventory 47%
+  (identity 372% chỉ ở 2 sample ĐẦU = setup login 400 buyer; sau đó 0.1–2.4%)
+PG: lock-wait 0 · buffer hit ratio 99.9–100% · conn 18–34 (pool 10/service) · active đỉnh 8
+```
+
+→ **DB không nghẽn, client không nghẽn.** Đọc nghẽn ở CPU service/gateway (p99 của 3 endpoint chênh
+< 2% ⇒ hàng đợi chung, không phải 1 query); ghi nghẽn ở chuỗi saga đồng bộ. Báo cáo đầy đủ:
+`docs/reports/scale-phase-4-baseline.md`. Raw: `/tmp/load-{read-catalog-1794494252,read-search-1794494659,checkout-1794494968}`.
+
+**Learning note**
+
+1. **"Điểm vỡ" không có nghĩa là lỗi — nó là chỗ latency bắt đầu nứt.** Cả 3 scenario vỡ với error
+   **0,00%**: hệ chỉ chậm, chưa sai. Vì vậy ngưỡng phải là **p99 vs NFR**, không phải "khi nào có 5xx" —
+   chờ 5xx mới gọi là vỡ là bỏ qua đúng vùng cần tối ưu.
+2. **Số RPS tuyệt đối vô nghĩa nếu thiếu cửa sổ đo + điều kiện dataset.** Cùng máy: search "đạt" 4,7k
+   RPS vì index chỉ **1.029 row**; catalog 3,8k RPS vì nằm trọn trong buffer (`blks_read = 0`, hit 100%).
+   Ghi con số mà bỏ 2 điều kiện này là tạo cảm giác an toàn giả.
+3. **Ba endpoint chi phí query khác nhau nhưng p99 giống hệt (< 2%) ⇒ nghẽn không ở query.** Bằng chứng
+   *loại trừ* này rất rẻ: chỉ cần **tag theo endpoint** rồi so p99 giữa chúng. Không tag thì ta sẽ đi
+   `EXPLAIN`/thêm index và không hiểu vì sao p99 không đổi.
+4. **Harness cũng tạo "điểm vỡ giả" được — và cách chặn là dựng trước tình huống đó:**
+   - Checkout 3 request/iteration ⇒ p99 là p99 của *3 request*. Kiểm bằng probe (checkout **không** xoá
+     giỏ) rồi dựng giỏ 1 lần trong `setup()` ⇒ iteration còn **1 request**.
+   - 400 VU / 200 buyer ⇒ 2 VU tranh 1 giỏ ⇒ 422. Seed 400 buyer + `load.sh` **tự cảnh báo** khi
+     `max(VU) > số buyer`.
+   - `setup()` login 400 buyer (BCrypt) làm `identity-service` 372% CPU trong **15 s đầu** — nhìn `max`
+     mà không nhìn **chuỗi thời gian** là kết luận sai "identity là nút cổ chai".
+5. **RPS = count ÷ cửa sổ, không dùng `rate` của k6** khi `setup()` nặng: `rate` chia cho cả thời gian
+   setup ⇒ báo thấp hơn thực tế. Sai số "trông khoa học" (2 chữ số thập phân) nhưng lệch hệ thống.
+6. **k6 v2 đổi chỗ số liệu** (`metrics[x].values.p(99)` thay vì `metrics[x].p(99)`) và image chạy bằng
+   user `k6` nên thư mục mount phải `chmod 777` — cả hai đều làm harness "im lặng ra số 0" nếu không
+   kiểm bằng một lần chạy thật trước khi tin nó.
 
 ### SL-4.2 — Cache-aside cho `catalog` (TTL + jitter + single-flight)
 
@@ -1285,3 +1369,5 @@ Mục tiêu: các pattern nâng cao, chỉ làm khi đã vững nền.
 | `TD-34` | `tools/export-openapi.sh` chưa gộp spec của `notification-service` + `search-service` ⇒ `docs/api/openapi.yaml` thiếu toàn bộ API Phase 3 | SL-3.6 | Khi cần spec đầy đủ (DoD Phase 3/4 hoặc có client sinh code từ spec) — sửa 1 lần: thêm 2 nguồn vào script merge | thấp |
 | `TD-35` | *(đã gộp)* Bảng `outbox` 3 service không có job dọn — **trùng `TD-29`**, phát hiện lại khi viết báo cáo `SL-3.8`; gộp vào `TD-29` ở `SL-3.9` (một nguồn sự thật, không 2 dòng nợ cho cùng 1 việc) | SL-3.8 | ✅ đã gộp vào `TD-29` (`SL-3.9`) | — |
 | `TD-36` | IT `order`: `CheckoutSagaIT.sweeperExpiresOverdueOrder` **flaky theo tải** — payment-window trong IT chỉ **1 s**, máy đang chạy 14 container compose thì một saga của test trước vừa quá hạn ⇒ lần `expireDue()` thứ 2 trả `1` thay vì `0` (gặp thật ở `SL-3.9`, `mvn verify` xanh lại ngay khi `docker compose down`; chạy riêng class cũng xanh) | SL-3.9 | Lần tới test này đỏ **hoặc** khi CI chạy song song với e2e: cô lập bằng `created_at` tường minh cho **mọi** saga trong test (không dựa vào `now()`) hoặc nâng payment-window IT lên ≥ 5 s | trung bình |
+| `TD-37` | `tools/load.sh` chỉ sample CPU của **k6**; muốn biết nghẽn ở service nào phải probe tay bằng `docker stats` trong một lần chạy riêng (đã làm ở `SL-4.1` §5 để tìm nghẽn đầu tiên) | SL-4.1 | Ngay ở `SL-4.2` (cache): cần so CPU **catalog-service/redis** trước–sau trên cùng bậc, làm tay 2 lần là đủ thấy phải tự động hoá | thấp |
+| `TD-38` | Harness dùng `grafana/k6:latest` (không pin tag/digest) ⇒ image đổi hành vi giữa 2 lần đo thì số before/after không còn so sánh được (đã dính 1 lần: k6 v2 chuyển số liệu vào `metrics[x].values` làm parser ra toàn 0) | SL-4.1 | Khi pin version cho cả stack (Phase 7) hoặc khi 2 lần chạy cùng điều kiện lệch > 20% không giải thích được | thấp |
