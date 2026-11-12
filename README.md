@@ -875,6 +875,25 @@ q.notification`. Không có trap thì lần chạy sau thấy DLQ đầy message
 `bash tools/bench-async.sh` (`SL-3.8`). Tóm tắt: async **không** làm checkout nhanh hơn (p50 42,7 → 43,1 ms);
 nó mua **decoupling** (consumer chết, checkout p95 vẫn 44,6 ms) và **độ trễ có trần** (~1 s/chặng).
 
+### Load test — `SL-4.1` (harness của Phase 4)
+
+`bench-async.sh` đo **một luồng** (tuần tự + 20 song song). Phase 4 cần đo **tải tổng** và tìm **điểm vỡ**,
+nên có bộ harness riêng: k6 chạy trong Docker (`grafana/k6`), ramp theo **bậc VU**, tự dừng ở bậc đầu tiên
+`error > 1%` hoặc `p99 > NFR` (read 150 ms · checkout 500 ms).
+
+```bash
+bash tools/load/seed.sh --buyers 400     # dataset cố định, IDEMPOTENT (chạy lại không tạo row mới)
+bash tools/load.sh --scenario read-catalog   # hoặc read-search / checkout
+```
+
+- Script in **bảng markdown** (`VU · RPS · p50 · p95 · p99 · error% · CPU k6`) + hệ số quy đổi NFR
+  (`50.000 ÷ RPS`) + cảnh báo khi **k6 chạm trần CPU** (điểm vỡ của client, không phải server).
+- Raw lưu `/tmp/load-<scenario>-<ts>/` (mỗi bậc: `summary.json` · `k6.log` · `cpu.txt` · `pg.txt`).
+- Baseline đo được (máy dev 12 thread, commit `3a05d7f`): **catalog vỡ ở 200 VU** (3.795 RPS ⇒ 1/13 NFR) ·
+  **search 200 VU** (4.758 RPS ⇒ 1/11) · **checkout vỡ ở 100 VU** (225 RPS ⇒ **1/222**). Nghẽn: CPU
+  `catalog`/gateway ở đường đọc, chuỗi saga đồng bộ ở đường ghi — DB **không** nghẽn.
+  Chi tiết + bằng chứng: [`docs/reports/scale-phase-4-baseline.md`](docs/reports/scale-phase-4-baseline.md).
+
 ### E2E smoke — `SL-1.3` → `SL-1.7`
 
 Bằng chứng end-to-end **cả Phase 1** bằng **1 lệnh**: `client → gateway → identity/catalog → DB`.
