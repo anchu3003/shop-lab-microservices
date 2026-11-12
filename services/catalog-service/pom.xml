@@ -61,6 +61,20 @@
     </dependency>
 
     <!--
+      SL-4.2: cache-aside cho đường ĐỌC (product detail/list, sku lookup, categories).
+      - `spring-boot-starter-data-redis` kéo Lettuce + `StringRedisTemplate` — đủ cho GET/SET/MGET
+        + Lua compare-and-delete của lock. Chép khuôn cart-service (đã dùng Redis từ Phase 2).
+      - KHÔNG khai `commons-pool2`: một instance, đo nghẽn pool ở SL-4.5 rồi mới thêm. Thêm pool
+        bây giờ chỉ tạo thêm một tầng cấu hình có thể sai.
+      - Cache là **tuỳ chọn lúc chạy** (`shoplab.catalog.cache.enabled` + fail-open): Redis chết thì
+        service vẫn đọc DB và trả 200 (AC #5), nên dependency này không nằm trên critical path.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+
+    <!--
       PHẢI dùng starter, không dùng `flyway-core` trần: Spring Boot 4 tách auto-configuration
       thành module riêng ⇒ khai sai là Flyway im lặng không chạy (đã gặp thật ở SL-1.1).
     -->

@@ -894,6 +894,34 @@ bash tools/load.sh --scenario read-catalog   # hoặc read-search / checkout
   `catalog`/gateway ở đường đọc, chuỗi saga đồng bộ ở đường ghi — DB **không** nghẽn.
   Chi tiết + bằng chứng: [`docs/reports/scale-phase-4-baseline.md`](docs/reports/scale-phase-4-baseline.md).
 
+### Cache-aside catalog — `SL-4.2` (ADR-0009)
+
+`catalog` là service đọc nhiều nhất (read:write ≈ 20:1). Từ `SL-4.2` nó có **cache-aside trên Redis** cho 4 đường đọc:
+`GET /v1/products` (list) · `GET /v1/products/{id}` · `GET /v1/skus?ids=` · `GET /v1/categories`.
+
+```bash
+# đang bật (mặc định)
+curl -s localhost:8082/debug/cache        # hit ratio, dbLoads, bypass, errors (chỉ khi SHOPLAB_DEBUG_ENDPOINTS=true)
+
+# drill 4 tính chất: hit ratio · stampede · invalidation · fail-open (Redis chết)
+bash tools/cache-drill.sh --with-fail-open
+
+# đo before/after trên CÙNG image
+SHOPLAB_CATALOG_CACHE_ENABLED=false docker compose -f infra/docker-compose.yml up -d catalog-service
+bash tools/load.sh --scenario read-catalog
+docker compose -f infra/docker-compose.yml up -d catalog-service     # bật lại (mặc định true)
+```
+
+- **Số đo** (cùng máy, cùng seed, cùng image): p99 ở 100 VU **101,2 → 70,0 ms (−31 %)**, điểm vỡ **200 → 400 VU**,
+  `xact_commit` của cả lần đo **−97 %**, hit ratio **99,6 %**. Chi tiết + bảng đầy đủ:
+  [`docs/reports/scale-phase-4-baseline.md`](docs/reports/scale-phase-4-baseline.md) §9.
+- **Redis chết thì catalog vẫn chạy** (fail-open, đọc DB, log WARN rate-limit) — nên Redis **không** nằm trong readiness.
+  Drill `docker stop shoplab-redis` ⇒ 4 endpoint vẫn `200`.
+- **Ghi là invalidate ngay**: update/archive product xoá `product:<id>` + mọi `sku:<id>` của nó và `INCR` generation của
+  list; tạo category xoá `categories`. Quyết định + trade-off: [`docs/adr/0009-catalog-cache-aside.md`](docs/adr/0009-catalog-cache-aside.md).
+- Cấu hình: `SHOPLAB_CATALOG_CACHE_*` trong `.env.example` (TTL, jitter, lock, prefix).
+
+
 ### E2E smoke — `SL-1.3` → `SL-1.7`
 
 Bằng chứng end-to-end **cả Phase 1** bằng **1 lệnh**: `client → gateway → identity/catalog → DB`.

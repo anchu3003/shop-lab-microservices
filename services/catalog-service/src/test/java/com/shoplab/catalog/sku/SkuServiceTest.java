@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.shoplab.catalog.cache.CatalogCache;
 import com.shoplab.catalog.product.ProductRepository;
 import com.shoplab.commons.error.NotFoundException;
 import java.math.BigDecimal;
@@ -25,9 +26,10 @@ class SkuServiceTest {
 
   private final SkuRepository skus = mock(SkuRepository.class);
   private final ProductRepository products = mock(ProductRepository.class);
+  private final CatalogCache catalogCache = mock(CatalogCache.class);
 
   private final SkuService service =
-      new SkuService(skus, products, Clock.fixed(NOW, ZoneOffset.UTC));
+      new SkuService(skus, products, catalogCache, Clock.fixed(NOW, ZoneOffset.UTC));
 
   @Test
   @DisplayName("tạo SKU: trim code, giữ priceOverride null nghĩa là dùng giá product")

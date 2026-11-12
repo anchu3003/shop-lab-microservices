@@ -10,9 +10,15 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,9 +35,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -72,10 +80,20 @@ class CatalogServiceApplicationIT {
   @Container
   static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
 
+  /**
+   * Redis thật cho test cache (SL-4.2). IT dùng Redis thật chứ không fake vì thứ cần kiểm ở đây là
+   * hành vi <b>của Redis</b> dưới cùng lúc nhiều request ({@code SET NX}, MGET), không phải logic
+   * Java — logic đã có unit test với store trong bộ nhớ.
+   */
+  @Container
+  static final GenericContainer<?> REDIS =
+      new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
+
   @LocalServerPort private int port;
 
   @Autowired private JdbcTemplate jdbc;
   @Autowired private ObjectMapper objectMapper;
+  @Autowired private org.springframework.data.redis.core.StringRedisTemplate redis;
 
   private final HttpClient httpClient =
       HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
@@ -96,6 +114,10 @@ class CatalogServiceApplicationIT {
     registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
     registry.add("spring.datasource.username", POSTGRES::getUsername);
     registry.add("spring.datasource.password", POSTGRES::getPassword);
+    // SL-4.2: Redis cho cache-aside. Jitter = 0 để TTL tất định (jitter có test riêng).
+    registry.add("spring.data.redis.host", REDIS::getHost);
+    registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+    registry.add("shoplab.catalog.cache.ttl-jitter-percent", () -> 0);
   }
 
   // ==========================================================================
@@ -630,6 +652,94 @@ class CatalogServiceApplicationIT {
   // ==========================================================================
   // Helpers
   // ==========================================================================
+  // ==========================================================================
+  // SL-4.2 — cache-aside trên Redis thật
+  // ==========================================================================
+
+  @Test
+  @DisplayName("SL-4.2: đọc lần 2 từ cache (hit), update thì detail + list trả dữ liệu MỚI ngay")
+  void cacheServesReadsAndInvalidatesOnWrite() {
+    String token = sellerToken();
+    UUID categoryId = createCategory(token, "Cache IT");
+    UUID productId = createProduct(token, categoryId, "Ao cache IT", "100000.00");
+
+    HttpResult first = get("/v1/products/" + productId);
+    assertThat(first.status()).isEqualTo(200);
+    Map<String, Long> before = cacheCounters();
+
+    HttpResult second = get("/v1/products/" + productId);
+    assertThat(second.status()).isEqualTo(200);
+    // Cùng dữ liệu, nhưng lần 2 KHÔNG được chạm DB.
+    assertThat(second.body()).isEqualTo(first.body());
+    Map<String, Long> after = cacheCounters();
+    assertThat(delta(after, before, "detail.hit")).as("lần đọc 2 phải là cache hit").isPositive();
+    assertThat(delta(after, before, "detail.dbLoad")).as("hit thì không đọc DB").isZero();
+
+    // Update ⇒ vô hiệu hoá NGAY, không chờ TTL 60 s.
+    HttpResult updated =
+        put(
+            "/v1/products/" + productId,
+            token,
+            Map.of("name", "Ao cache MOI", "price", "100000.00"));
+    assertThat(updated.status()).isEqualTo(200);
+
+    assertThat(get("/v1/products/" + productId).body()).contains("Ao cache MOI");
+    // List cũng phải tươi: nếu chỉ xoá key detail mà quên bump generation thì chỗ này đỏ.
+    HttpResult list = get("/v1/products?page=0&size=50&q=ao%20cache%20moi");
+    assertThat(list.status()).isEqualTo(200);
+    assertThat(list.body()).contains("Ao cache MOI");
+  }
+
+  @Test
+  @DisplayName("SL-4.2: 20 request đồng thời trên cùng key vừa xoá ⇒ DB chỉ bị đọc ≤ 2 lần")
+  void singleFlightCollapsesConcurrentMisses() throws Exception {
+    String token = sellerToken();
+    UUID categoryId = createCategory(token, "Stampede IT");
+    UUID productId = createProduct(token, categoryId, "Ao stampede", "1000.00");
+
+    // Dựng cache rồi xoá đúng key ⇒ mọi request đồng thời cùng miss key đó.
+    assertThat(get("/v1/products/" + productId).status()).isEqualTo(200);
+    redis.delete("catalog:v1:product:" + productId);
+
+    Map<String, Long> before = cacheCounters();
+    int threads = 20;
+    ExecutorService pool = Executors.newFixedThreadPool(threads);
+    try {
+      List<Callable<Integer>> tasks = new ArrayList<>();
+      for (int i = 0; i < threads; i++) {
+        tasks.add(() -> get("/v1/products/" + productId).status());
+      }
+      for (Future<Integer> result : pool.invokeAll(tasks)) {
+        assertThat(result.get(15, TimeUnit.SECONDS)).isEqualTo(200);
+      }
+    } finally {
+      pool.shutdownNow();
+    }
+
+    Map<String, Long> after = cacheCounters();
+    // Đây là toàn bộ ý nghĩa của single-flight: 20 request, 1 lần đọc DB (cho phép 2 vì có khe
+    // double-check/lock hết hạn — trên 2 là single-flight hỏng).
+    assertThat(delta(after, before, "detail.dbLoad"))
+        .as("single-flight phải gộp về 1 lần đọc DB")
+        .isLessThanOrEqualTo(2L);
+    assertThat(delta(after, before, "detail.hit")).isGreaterThanOrEqualTo(threads - 2L);
+  }
+
+  /** Bộ đếm cache dạng phẳng từ {@code /debug/cache} (endpoint chỉ tồn tại khi debug bật). */
+  @SuppressWarnings("unchecked")
+  private Map<String, Long> cacheCounters() {
+    HttpResult result = get("/debug/cache");
+    assertThat(result.status()).as("/debug/cache phải bật trong IT").isEqualTo(200);
+    Map<String, Object> body = objectMapper.readValue(result.body(), Map.class);
+    Map<String, Object> counters = (Map<String, Object>) body.get("counters");
+    Map<String, Long> flat = new java.util.HashMap<>();
+    counters.forEach((key, value) -> flat.put(key, ((Number) value).longValue()));
+    return flat;
+  }
+
+  private static long delta(Map<String, Long> after, Map<String, Long> before, String key) {
+    return after.getOrDefault(key, 0L) - before.getOrDefault(key, 0L);
+  }
 
   private String sellerToken() {
     return MINTER.token(UUID.randomUUID(), "SELLER");

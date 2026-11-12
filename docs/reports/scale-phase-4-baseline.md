@@ -183,3 +183,47 @@ bash tools/load.sh --scenario checkout
 ```
 
 Bản nhanh để thử harness (không dùng số này vào báo cáo): `--vus 50 --duration 10 --no-warmup`.
+
+## 9. Sau `SL-4.2` — cache-aside catalog (before/after trên CÙNG image)
+
+Cách đo: **cùng máy, cùng seed (`d1412cc7427a84a8`), cùng một image catalog**, chỉ đổi
+`SHOPLAB_CATALOG_CACHE_ENABLED` ⇒ khác biệt đo được **chỉ** do cache, không do commit khác.
+
+```bash
+# OFF
+SHOPLAB_CATALOG_CACHE_ENABLED=false docker compose -f infra/docker-compose.yml up -d catalog-service
+bash tools/load.sh --scenario read-catalog      # raw: /tmp/load-read-catalog-1794502919
+# ON
+docker compose -f infra/docker-compose.yml up -d catalog-service
+bash tools/load.sh --scenario read-catalog      # raw: /tmp/load-read-catalog-1794502428
+```
+
+| VU | OFF: RPS · p99 | ON: RPS · p99 | chênh |
+|---|---|---|---|
+| 50 | 3.288,9 · 42,5 ms | **4.801,2 · 32,3 ms** | +46 % RPS · −24 % p99 |
+| 100 | 3.120,1 · 101,2 ms | **4.799,0 · 70,0 ms** | +54 % · **−31 % p99** |
+| 200 | 3.267,1 · 189,8 ms ❌ | **4.890,6 · 145,7 ms** | +50 % · −23 % p99 |
+| 400 | *(không chạy — đã vỡ ở 200)* | 5.181,6 · 190,1 ms ❌ | **điểm vỡ lùi 1 bậc** |
+
+| Chỉ số | OFF | ON | Ghi chú |
+|---|---|---|---|
+| Điểm vỡ | **200 VU** | **400 VU** | lùi đúng **1 bậc** (AC: "lùi ≥ 1 bậc") |
+| NFR (50.000 ÷ RPS bậc cuối đạt) | 1/16 | **1/10** | bậc cuối đạt: 100 VU (OFF) → 200 VU (ON) |
+| p99 bậc cuối đạt | 101,2 ms | 70,0 ms | **−31 %** ⇒ AC "p99 giảm ≥ 30 %" cũng đạt |
+| `pg_stat_database.xact_commit` (cả lần đo) | **679.613** | **18.377** | **−97 %** — đây là thứ cache thật sự mua được |
+| `pg_stat_activity` active đỉnh | 3 | **0** | catalog gần như không chạm DB khi đọc |
+| Cache | — | hit **99,61 %** (3,76 M hit / 14,6 k miss) · bypass 0 · error 0 | đọc từ `/debug/cache` (delta trước/sau) |
+
+**Nghẽn chuyển đi đâu?** Không chuyển vào DB — nó vẫn ở **tầng service/gateway**: p99 của 3 endpoint vẫn bằng nhau
+(145/146/146 ms ở 200 VU) ⇒ vẫn là hàng đợi chung, không phải query. Vì vậy bước tiếp theo đúng là chặn tải ở biên
+(`SL-4.3` rate limit) và tách tải đọc (`SL-4.4` read replica), **không** phải tối ưu SQL.
+
+**Drill 4 tính chất** (`bash tools/cache-drill.sh --with-fail-open`, raw `/tmp/cache-drill-1794502415`):
+
+```console
+PASS [1] D1 hit ratio 99.2% ≥ 80%
+PASS [2] D2 stampede: 200 request đồng thời → chỉ 1 lần đọc DB (≤ 2)
+PASS [3] D3 invalidation: detail 16 ms · list 29 ms (≤ 1000)
+PASS [4] D4 fail-open: 4 endpoint catalog vẫn 200 khi Redis chết
+PASS [5] D4b Redis bật lại: cache tự hoạt động lại (hit=1)
+```

@@ -1,5 +1,6 @@
 package com.shoplab.catalog.category;
 
+import com.shoplab.catalog.cache.CatalogCache;
 import java.text.Normalizer;
 import java.time.Clock;
 import java.time.Instant;
@@ -16,10 +17,15 @@ public class CategoryService {
 
   private final CategoryRepository repository;
   private final Clock clock;
+  private final CategoryCache cache;
+  private final CatalogCache catalogCache;
 
-  public CategoryService(CategoryRepository repository, Clock clock) {
+  public CategoryService(
+      CategoryRepository repository, Clock clock, CategoryCache cache, CatalogCache catalogCache) {
     this.repository = repository;
     this.clock = clock;
+    this.cache = cache;
+    this.catalogCache = catalogCache;
   }
 
   /**
@@ -38,12 +44,25 @@ public class CategoryService {
     }
 
     Category saved = repository.save(Category.create(name, slug, Instant.now(clock)));
+    // SL-4.2: danh sách category là MỘT key duy nhất ⇒ xoá thẳng, không cần generation.
+    // Không xoá thì `e2e-smoke` (tạo category rồi list) sẽ đỏ trong 5 phút tới — chính là bug mà
+    // bước verify bắt được.
+    catalogCache.categoriesChanged();
     return CategoryResponse.from(saved);
   }
 
-  /** Toàn bộ category, sắp theo tên — danh sách nhỏ ở Phase 1 nên chưa phân trang. */
+  /**
+   * Toàn bộ category, sắp theo tên — danh sách nhỏ ở Phase 1 nên chưa phân trang.
+   *
+   * <p>Cache TTL dài ({@code categories-ttl}, mặc định 5 phút) vì category gần như không đổi; ghi
+   * vẫn invalidate ngay nên TTL dài không làm dữ liệu cũ.
+   */
   @Transactional(readOnly = true)
   public List<CategoryResponse> findAll() {
+    return cache.all(this::loadAll);
+  }
+
+  private List<CategoryResponse> loadAll() {
     return repository.findAll(Sort.by(Sort.Direction.ASC, "name")).stream()
         .map(CategoryResponse::from)
         .toList();
