@@ -462,6 +462,20 @@ tiêu của cả phase, không phải chi tiết triển khai.
 | 24 | Full-text search + filter linh hoạt | **Inverted index** (OpenSearch) | search | 8 |
 | 25 | Deploy không downtime | Probe + **blue-green / canary** + graceful shutdown | all | 7 |
 
+### 7.1. Caching của catalog — trạng thái sau `SL-4.2` (ADR-0009)
+
+`catalog-service` dùng **cache-aside trên Redis** cho 4 đường đọc (`product` detail · list · `skus?ids=` · `categories`).
+Key schema, TTL/jitter, single-flight và quy tắc fail-open: xem **ADR-0009**. Ba điểm cần nhớ khi đọc code:
+
+| Điều | Vì sao |
+|---|---|
+| **List dùng generation** (`catalog:v1:list:<gen>:…`), ghi = `INCR` | tổ hợp `page × size × category × q × sort` vô hạn ⇒ không thể xoá từng key, `SCAN` ở tải cao là tự sát |
+| **`skus?ids=` cache theo TỪNG SKU**, không theo tổ hợp request | tổ hợp 100 id vô hạn ⇒ cache theo tổ hợp thì hit ratio ~0; theo SKU thì 1 `MGET` phục vụ mọi tổ hợp |
+| **Redis không nằm trong readiness/healthcheck** | cache chết ⇒ service vẫn đọc DB và trả 200 (fail-open); đưa Redis vào probe là biến cache thành điểm chết |
+
+Số đo (cùng máy, cùng seed, bật/tắt bằng `SHOPLAB_CATALOG_CACHE_ENABLED`): p99 ở 100 VU **101,2 → 70,0 ms (−31 %)**, điểm vỡ
+**200 → 400 VU**, `xact_commit` của cả lần đo **−97 %**. Chi tiết: `docs/reports/scale-phase-4-baseline.md` §9.
+
 ---
 
 ## 8. Data architecture

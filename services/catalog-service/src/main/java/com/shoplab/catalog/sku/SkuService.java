@@ -1,5 +1,6 @@
 package com.shoplab.catalog.sku;
 
+import com.shoplab.catalog.cache.CatalogCache;
 import com.shoplab.catalog.product.ProductRepository;
 import com.shoplab.commons.error.NotFoundException;
 import java.time.Clock;
@@ -15,11 +16,14 @@ public class SkuService {
 
   private final SkuRepository skus;
   private final ProductRepository products;
+  private final CatalogCache cache;
   private final Clock clock;
 
-  public SkuService(SkuRepository skus, ProductRepository products, Clock clock) {
+  public SkuService(
+      SkuRepository skus, ProductRepository products, CatalogCache cache, Clock clock) {
     this.skus = skus;
     this.products = products;
+    this.cache = cache;
     this.clock = clock;
   }
 
@@ -39,14 +43,19 @@ public class SkuService {
     if (skus.existsByCode(code)) {
       throw new DuplicateSkuException(code);
     }
-    return SkuResponse.from(
-        skus.save(
-            Sku.create(
-                productId,
-                code,
-                request.priceOverride(),
-                request.stockHint(),
-                Instant.now(clock))));
+    SkuResponse created =
+        SkuResponse.from(
+            skus.save(
+                Sku.create(
+                    productId,
+                    code,
+                    request.priceOverride(),
+                    request.stockHint(),
+                    Instant.now(clock))));
+    // SL-4.2: `GET /v1/products/{id}` trả kèm danh sách SKU ⇒ thêm SKU là detail cũ sai. List thì
+    // không chứa SKU nên không cần bump generation.
+    cache.productDetailChanged(productId);
+    return created;
   }
 
   /** SKU của product, sắp theo mã (dùng cho trang chi tiết). */

@@ -54,6 +54,18 @@ spring:
     publisher-confirm-type: correlated
     # KHÔNG khai listener: catalog không consume event nào (chỉ search-service consume product event).
 
+  # SL-4.2: Redis cho cache-aside đường đọc. `password` rỗng nghĩa là Redis không bật requirepass
+  # (chỉ đúng khi chạy Redis trần local) — compose luôn set REDIS_PASSWORD.
+  # Timeout NGẮN có chủ ý: cache chậm thì thà bỏ qua cache và đọc DB, không để request xếp hàng sau
+  # một Redis đang treo (đây là điều kiện để fail-open có nghĩa).
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT:300ms}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:300ms}
+
 server:
   port: ${SERVER_PORT:8082}
   shutdown: graceful
@@ -94,6 +106,24 @@ shoplab:
     # `processed_events` rỗng trong DB catalog — bảng chết, gây hiểu nhầm là service có consumer.
     dedup:
       auto-create-schema: false
+
+  # SL-4.2 — cache-aside đường đọc (ADR-0009). Toàn bộ knob ở đây, không hard-code trong code.
+  catalog:
+    cache:
+      # Tắt bằng env để chứng minh before/after trên CÙNG một image (không phải so 2 commit).
+      enabled: ${SHOPLAB_CATALOG_CACHE_ENABLED:true}
+      # TTL gốc của detail/list/sku. Jitter ±% để TTL không hết hạn đồng loạt (cache stampede tập thể).
+      ttl: ${SHOPLAB_CATALOG_CACHE_TTL:60s}
+      ttl-jitter-percent: ${SHOPLAB_CATALOG_CACHE_TTL_JITTER_PERCENT:10}
+      # Category đổi rất ít ⇒ TTL dài hơn để bớt 1 query/request.
+      categories-ttl: ${SHOPLAB_CATALOG_CACHE_CATEGORIES_TTL:5m}
+      # Single-flight: lock ngắn (giây) + thời gian request thua lock chờ trước khi tự đọc DB.
+      lock-ttl: ${SHOPLAB_CATALOG_CACHE_LOCK_TTL:2s}
+      lock-wait: ${SHOPLAB_CATALOG_CACHE_LOCK_WAIT:100ms}
+      # Prefix namespace — KHÔNG có "/" hay khoảng trắng; đổi prefix = bỏ toàn bộ cache cũ.
+      key-prefix: ${SHOPLAB_CATALOG_CACHE_KEY_PREFIX:catalog:v1}
+      # Khi Redis lỗi, log WARN theo nhịp này thay vì mỗi request (tránh ngập log lúc sự cố).
+      warn-interval: ${SHOPLAB_CATALOG_CACHE_WARN_INTERVAL:5s}
 
 logging:
   level:

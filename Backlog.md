@@ -7,7 +7,7 @@
 | | |
 |---|---|
 | **Ticket đang làm** | — |
-| **Ticket tiếp theo** | `SL-4.2` — Cache-aside `catalog` (TTL + jitter + single-flight) — có baseline để so |
+| **Ticket tiếp theo** | `SL-4.3` — Rate limit ở gateway (token bucket Redis + Lua) — trả `TD-21` + phần limit của `TD-22` |
 | **Số ticket chi tiết hiện có** | 66 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 · Phase 3: 12 — đã archive · Phase 4: **13** — đang mở) |
 
 ---
@@ -315,7 +315,7 @@ chặn Phase 4**) · `TD-31` (không có refund) · `TD-33` (`min_price` chưa t
 |---|---|---|---|---|
 | 0 | `SL-4.0` | *(phát sinh)* **Retention job** `outbox` · `processed_events` · `notification_logs` (trả `TD-29`+`TD-30`) | M | ✅ Done |
 | 1 | `SL-4.1` | **k6 harness + baseline**: 3 scenario · seed · `tools/load.sh` · tìm **điểm vỡ** đầu tiên | M | ✅ Done |
-| 2 | `SL-4.2` | **Cache-aside `catalog`** (TTL + jitter + **single-flight**) — trả phần cache của `TD-22` | M | Todo |
+| 2 | `SL-4.2` | **Cache-aside `catalog`** (TTL + jitter + **single-flight**) — trả phần cache của `TD-22` | M | ✅ Done |
 | 3 | `SL-4.3` | **Rate limit ở gateway** (token bucket Redis + Lua) — trả `TD-21` + phần limit của `TD-22` | M | Todo |
 | 4 | `SL-4.4` | **Read replica** (streaming thật) + routing read/write + đo **replica lag** | M | Todo |
 | 5 | `SL-4.5` | **Connection pool**: đo điểm gãy (Hikari × pgbouncer) | S | Todo |
@@ -655,7 +655,7 @@ PG: lock-wait 0 · buffer hit ratio 99.9–100% · conn 18–34 (pool 10/service
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done (2026-11-12) |
 | **Phase** | 4 — Scale & performance |
 | **Phụ thuộc** | `SL-4.1` (phải có baseline để so) |
 | **Ước lượng** | M |
@@ -689,14 +689,14 @@ dùng cho catalog.
 
 **Acceptance Criteria**
 
-- [ ] Đo lại `read-catalog` ở **cùng** bậc VU: p99 giảm **≥ 30%** **hoặc** điểm vỡ lùi **≥ 1 bậc** (ghi cả hai nếu đạt); không
+- [x] Đo lại `read-catalog` ở **cùng** bậc VU: p99 giảm **≥ 30%** **hoặc** điểm vỡ lùi **≥ 1 bậc** (ghi cả hai nếu đạt); không
       đạt thì báo cáo phải giải thích **bằng số** (nghẽn chuyển sang đâu).
-- [ ] Hit ratio ≥ **80%** ở scenario read (log `cache=hit/miss` hoặc header debug).
-- [ ] **Stampede test**: xoá key hot rồi bắn **200 request đồng thời** ⇒ query DB cho key đó **≤ 2** (delta
+- [x] Hit ratio ≥ **80%** ở scenario read (log `cache=hit/miss` hoặc header debug).
+- [x] **Stampede test**: xoá key hot rồi bắn **200 request đồng thời** ⇒ query DB cho key đó **≤ 2** (delta
       `pg_stat_database.xact_commit` hoặc log `db-load`).
-- [ ] **Invalidation**: update product ⇒ `GET /v1/products/{id}` + list trả **dữ liệu mới** trong ≤ 1 s (poll).
-- [ ] **Fail-open**: `docker stop shoplab-redis` ⇒ endpoint catalog vẫn `200` (chậm hơn, log WARN), không 500.
-- [ ] `mvn verify` xanh (unit test key/TTL/jitter/single-flight) + `e2e-smoke`/`e2e-checkout` không regress.
+- [x] **Invalidation**: update product ⇒ `GET /v1/products/{id}` + list trả **dữ liệu mới** trong ≤ 1 s (poll).
+- [x] **Fail-open**: `docker stop shoplab-redis` ⇒ endpoint catalog vẫn `200` (chậm hơn, log WARN), không 500.
+- [x] `mvn verify` xanh (unit test key/TTL/jitter/single-flight) + `e2e-smoke`/`e2e-checkout` không regress.
 
 **Ghi chú kỹ thuật**
 
@@ -708,11 +708,81 @@ dùng cho catalog.
   thì bump `catalog:v1`.
 - **Hit ratio phải có nguồn đo**: header `X-Cache` chỉ bật khi `SHOPLAB_DEBUG_ENDPOINTS=true` (khuôn có ở payment `/debug/faults`).
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-12 · máy dev WSL2 12 thread · cùng seed `d1412cc7427a84a8` · cùng image, chỉ đổi `SHOPLAB_CATALOG_CACHE_ENABLED`)*
 
-**Learning note** *(điền khi Done)*
+**1) Before/after `read-catalog`** (AC #1 — đạt **cả hai** điều kiện):
+
+```console
+# OFF: /tmp/load-read-catalog-1794502919     # ON: /tmp/load-read-catalog-1794502428
+VU 50 : 3288.9 RPS · p99 42.5 ms   →  4801.2 RPS · p99 32.3 ms    (+46% RPS · −24% p99)
+VU 100: 3120.1 RPS · p99 101.2 ms  →  4799.0 RPS · p99 70.0 ms    (+54% · −31% p99 ← AC "p99 ≥30%")
+VU 200: 3267.1 RPS · p99 189.8 ms ❌ → 4890.6 RPS · p99 145.7 ms   (+50% · −23%)
+VU 400: (đã vỡ ở 200)              →  5181.6 RPS · p99 190.1 ms ❌  ← điểm vỡ lùi 1 bậc (200 → 400)
+Điểm vỡ: 200 VU → 400 VU · NFR 1/16 → 1/10 · xact_commit 679.613 → 18.377 (−97%)
+```
+
+**2) Hit ratio (AC #2)** — delta `/debug/cache` trong đúng lần đo ON:
+
+```console
+hits=3763535 misses=14639 → hit ratio 99.61% · dbLoads=14506 · bypass=0 · errors=0
+```
+
+**3) + 4) + 5) Drill `bash tools/cache-drill.sh --with-fail-open`** (raw `/tmp/cache-drill-1794502415`):
+
+```console
+PASS [1] D1 hit ratio 99.2% ≥ 80%
+-- D2 stampede: DEL key hot → 200 request đồng thời
+   DB loads=1 · hits=199 · response khác 200: 0
+PASS [2] D2 stampede: 200 request đồng thời → chỉ 1 lần đọc DB (≤ 2)
+-- D3 invalidation: PUT product → poll detail/list
+   write=200 · detail tươi sau 16 ms · list tươi sau 29 ms
+PASS [3] D3 invalidation: detail 16 ms · list 29 ms (≤ 1000)
+-- D4 fail-open: docker stop shoplab-redis
+   detail=200 list=200 skus=200 categories=200 (Redis đang tắt)
+PASS [4] D4 fail-open: 4 endpoint catalog vẫn 200 khi Redis chết
+PASS [5] D4b Redis bật lại: cache tự hoạt động lại (hit=1)
+== Kết quả: 5 PASS / 0 FAIL
+```
+
+**6) Không regress (AC #6)**:
+
+```console
+$ mvn -pl services/catalog-service -am verify
+Tests run: 117, Failures: 0, Errors: 0   (unit — 33 test mới cho cache)
+Tests run:  28, Failures: 0, Errors: 0   (IT: Postgres + Redis Testcontainer, có test single-flight 20 thread)
+BUILD SUCCESS
+$ bash tools/e2e-smoke.sh    → 17 PASS / 0 FAIL
+$ bash tools/e2e-checkout.sh → 27 PASS / 0 FAIL
+```
+
+Quyết định + trade-off: `docs/adr/0009-catalog-cache-aside.md` · số liệu đầy đủ: `docs/reports/scale-phase-4-baseline.md` §9.
+
+**Learning note**
+
+1. **Baseline nói trước nên sửa ở đâu — và nó đúng.** `SL-4.1` cho thấy p99 của 3 endpoint đọc chênh nhau < 2% ⇒ nghẽn là
+   hàng đợi chung, không phải query. Vì vậy ticket này **không** sờ vào SQL/index. Sau khi cache, p99 vẫn bằng nhau
+   (145/146/146 ms ở 200 VU) ⇒ nghẽn **vẫn** ở tầng service/gateway, chỉ lùi xa hơn. Nếu hôm trước đi tối ưu query thì
+   hôm nay đã "thành công" mà p99 không đổi.
+2. **Hit ratio là hệ quả của KEY SCHEMA, không phải của Redis.** Cache `skus?ids=` theo *tổ hợp request* sẽ luôn ~0% vì tổ
+   hợp 100 id là vô hạn; cache theo *từng SKU* cho 99,6%. Cùng endpoint, cùng Redis, khác mỗi cách đặt key.
+3. **Thứ cache mua được là DB rảnh tay, không chỉ p99.** `xact_commit` giảm **97%** trong khi p99 giảm 31% — vì p99 lúc đó
+   bị chi phối bởi CPU gateway/catalog. Phải báo cả hai; chỉ báo p99 thì dễ kết luận "cache không đáng".
+4. **Fail-open chỉ có nghĩa nếu fail ĐÚNG NHANH.** Hai bẫy đã tránh: (a) **không** đưa Redis vào readiness (nếu không,
+   orchestrator đánh unready khi Redis chết ⇒ fail-open vô nghĩa); (b) phân biệt `lock() == false` (có người đang đọc ⇒ chờ
+   đúng ý đồ) với `CacheUnavailableException` (Redis hỏng ⇒ đọc DB **ngay**). Gộp hai thứ này thì lúc Redis chết mọi request
+   ngủ thêm `lock-wait` ⇒ p99 tệ hơn không có cache.
+5. **Invalidate phải đúng cả hai vế: xoá key cũ *và* bump generation.** Update 1 product phải xoá `product:<id>` + **mọi**
+   `sku:<id>` của nó (giá SKU = `priceOverride ?? product.price`) và `INCR` generation của list. Quên vế SKU là bán giá cũ —
+   sai tiền, không phải sai số đo.
+6. **Hai bẫy của CHÍNH script drill** (không phải của hệ): `curl … | grep -q` với `set -o pipefail` ⇒ `grep -q` khớp sớm,
+   `curl` bị SIGPIPE, pipeline trả **non-zero** ⇒ "tìm thấy" bị đọc thành "chưa thấy"; và `date +%s%3N` trên máy này in
+   **epoch+nano** (không cắt 3 số) ⇒ deadline ms bị so với nano ⇒ vòng poll không chạy lần nào. Cả hai đều dễ bị "sửa" bằng
+   cách nới ngưỡng — sai hoàn toàn.
+7. **Nợ đã biết, ghi ngay**: invalidate chạy **trong transaction, trước commit** ⇒ request đọc chen giữa có thể cache lại giá
+   trị cũ (sống tới hết TTL). Ghi `TD-39` với điều kiện revisit định lượng, không để "khi nào rảnh".
 
 ### SL-4.3 — Rate limit ở gateway (token bucket Redis + Lua)
+
 
 | Trường | Giá trị |
 |---|---|
@@ -1354,7 +1424,7 @@ Mục tiêu: các pattern nâng cao, chỉ làm khi đã vững nền.
 | `TD-18` | Webhook dùng **một** HMAC secret tĩnh, không key id/rotation; không lưu raw body (chỉ sha256) nên điều tra tranh chấp phải xin lại provider | SL-2.7 | Khi nối provider thật (Stripe/VNPay) — họ có key id + rotation riêng | thấp |
 | `TD-19` | Idempotency store (`idempotency_keys` + `IdempotencyService`) **copy lần 2** (order, payment) chưa có module chung ở `packages/` | SL-2.7 | Khi có service thứ 3 cần idempotency (dự kiến không có ở Phase 2 ⇒ quyết ở `SL-2.12` hoặc Phase 3) | thấp |
 | `TD-20` | Cart **không** lưu `price_snapshot` và không gọi catalog (quyết định `SL-2.1`) ⇒ hiển thị giá trong giỏ phải gọi catalog riêng; giỏ không phát hiện được SKU đã archive/đổi giá | SL-2.1 | **`SL-2.13` đã có `GET /v1/skus?ids=` (batch)** ⇒ phần còn lại chỉ là UI/gateway gọi endpoint đó (làm ở `SL-2.8`) | trung bình |
-| `TD-22` | `GET /v1/skus?ids=` là **public**, nhận tới 100 id, **chưa rate limit** và **chưa cache** ⇒ 1 client có thể dội tải catalog (100 id/request) hoặc dùng làm đòn bộc phát | SL-2.13 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi đo được p99 list/get của catalog tăng do traffic `/v1/skus` (Phase 4 — cache-aside) | thấp |
+| `TD-22` | `GET /v1/skus?ids=` là **public**, nhận tới 100 id, **chưa rate limit** và ~~chưa cache~~ ⇒ 1 client có thể dội tải catalog (100 id/request) hoặc dùng làm đòn bộc phát | SL-2.13 | **Phần cache ✅ đã trả (`SL-4.2`)** — `skus?ids=` cache theo từng SKU + single-flight (ADR-0009). **Phần rate limit còn mở** → `SL-4.3` (token bucket ở gateway) | thấp |
 | `TD-23` | IT `inventory`: `commitAfterExpiryReturnsGone` **flaky** — test đẩy `expires_at` về quá khứ rồi `commit`, nhưng sweeper trong IT chạy mỗi **300 ms** nên có lúc nó expire trước ⇒ `commit` trả **409** thay vì **410** (đỏ trên CI chậm, xanh ở máy local) | SL-2.13 (CI run `42444551383`) | Lần tới khi sửa test của inventory: tắt sweeper (`sweep-interval-ms` rất lớn) cho test lazy-expire, hoặc assert `status ∈ {410, 409}` + kiểm `reserved = 0` (điều thực sự quan trọng) | trung bình |
 | `TD-24` | `checkout_saga_steps` + `checkout_sagas` **không có job dọn** — 1 dòng/bước/lần checkout ⇒ phình mãi (audit nhưng không ai đọc sau 30 ngày) | SL-2.6a | Khi bảng > 10⁶ row hoặc khi `SL-2.6b` thêm sweeper (gộp 1 `@Scheduled` dọn saga `COMPLETED_START`/`FAILED_*` cũ > 30 ngày) | thấp |
 | `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | ✅ đã trả (SL-3.5) |
@@ -1371,3 +1441,4 @@ Mục tiêu: các pattern nâng cao, chỉ làm khi đã vững nền.
 | `TD-36` | IT `order`: `CheckoutSagaIT.sweeperExpiresOverdueOrder` **flaky theo tải** — payment-window trong IT chỉ **1 s**, máy đang chạy 14 container compose thì một saga của test trước vừa quá hạn ⇒ lần `expireDue()` thứ 2 trả `1` thay vì `0` (gặp thật ở `SL-3.9`, `mvn verify` xanh lại ngay khi `docker compose down`; chạy riêng class cũng xanh) | SL-3.9 | Lần tới test này đỏ **hoặc** khi CI chạy song song với e2e: cô lập bằng `created_at` tường minh cho **mọi** saga trong test (không dựa vào `now()`) hoặc nâng payment-window IT lên ≥ 5 s | trung bình |
 | `TD-37` | `tools/load.sh` chỉ sample CPU của **k6**; muốn biết nghẽn ở service nào phải probe tay bằng `docker stats` trong một lần chạy riêng (đã làm ở `SL-4.1` §5 để tìm nghẽn đầu tiên) | SL-4.1 | Ngay ở `SL-4.2` (cache): cần so CPU **catalog-service/redis** trước–sau trên cùng bậc, làm tay 2 lần là đủ thấy phải tự động hoá | thấp |
 | `TD-38` | Harness dùng `grafana/k6:latest` (không pin tag/digest) ⇒ image đổi hành vi giữa 2 lần đo thì số before/after không còn so sánh được (đã dính 1 lần: k6 v2 chuyển số liệu vào `metrics[x].values` làm parser ra toàn 0) | SL-4.1 | Khi pin version cho cả stack (Phase 7) hoặc khi 2 lần chạy cùng điều kiện lệch > 20% không giải thích được | thấp |
+| `TD-39` | Cache catalog **invalidate trong transaction, trước commit**: một request đọc chen giữa có thể cache lại giá trị cũ (đọc bản đã commit trước đó) và nó sống tới hết TTL (≤ 66 s). Xảy ra khi có traffic đọc **đồng thời** với lúc update | SL-4.2 | Khi có ghi product đồng thời với tải đọc lớn (flash sale `SL-4.7`/`4.8`) hoặc khi phát hiện dữ liệu cũ > 1 s: chuyển invalidate sang **sau commit** (`TransactionSynchronization.afterCommit`) hoặc invalidate theo event outbox | trung bình |

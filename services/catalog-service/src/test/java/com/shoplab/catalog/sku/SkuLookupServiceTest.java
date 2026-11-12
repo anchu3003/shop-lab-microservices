@@ -7,8 +7,12 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.shoplab.catalog.cache.CacheMetrics;
+import com.shoplab.catalog.cache.CacheProperties;
+import com.shoplab.catalog.cache.SkuLineCache;
 import com.shoplab.catalog.product.Product;
 import com.shoplab.catalog.product.ProductRepository;
+import com.shoplab.catalog.testsupport.CacheTestSupport;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -23,6 +27,9 @@ import org.junit.jupiter.api.Test;
  * <p>Ba bất biến được test ở đây (không cần Postgres): giá = {@code priceOverride ??
  * product.price}, SKU/product đã archive <b>không</b> được trả, và thứ tự response = thứ tự client
  * gửi.
+ *
+ * <p>SL-4.2: test chạy với cache <b>TẮT</b> để giữ nguyên ngữ nghĩa cũ; hành vi cache (MGET, hit,
+ * sentinel "không mua được") có test riêng ở {@code SkuLineCacheTest}.
  */
 class SkuLookupServiceTest {
 
@@ -30,8 +37,18 @@ class SkuLookupServiceTest {
 
   private final SkuRepository skus = mock(SkuRepository.class);
   private final ProductRepository products = mock(ProductRepository.class);
+  private final CacheProperties cacheProperties = CacheTestSupport.DISABLED;
 
-  private final SkuLookupService service = new SkuLookupService(skus, products);
+  private final SkuLookupService service =
+      new SkuLookupService(
+          skus,
+          products,
+          new SkuLineCache(
+              new CacheTestSupport.InMemoryCacheStore(),
+              new com.shoplab.catalog.cache.CacheKeys(cacheProperties),
+              cacheProperties,
+              new CacheMetrics(),
+              CacheTestSupport.MAPPER));
 
   @Test
   @DisplayName("giá = priceOverride khi SKU có giá riêng; fallback giá product khi override null")

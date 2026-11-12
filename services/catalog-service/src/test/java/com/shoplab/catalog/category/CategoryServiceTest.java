@@ -9,6 +9,11 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.shoplab.catalog.cache.CacheKeys;
+import com.shoplab.catalog.cache.CacheMetrics;
+import com.shoplab.catalog.cache.CacheProperties;
+import com.shoplab.catalog.cache.CatalogCache;
+import com.shoplab.catalog.testsupport.CacheTestSupport;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -20,11 +25,20 @@ import org.springframework.data.domain.Sort;
 class CategoryServiceTest {
 
   private static final Instant NOW = Instant.parse("2026-11-05T10:00:00Z");
+  private static final CacheProperties PROPS = CacheTestSupport.DISABLED;
 
   private final CategoryRepository repository = mock(CategoryRepository.class);
+  private final CatalogCache catalogCache = mock(CatalogCache.class);
+  private final CategoryCache cache =
+      new CategoryCache(
+          CacheTestSupport.aside(
+              new CacheTestSupport.InMemoryCacheStore(), PROPS, new CacheMetrics()),
+          new CacheKeys(PROPS),
+          PROPS,
+          CacheTestSupport.MAPPER);
 
   private final CategoryService service =
-      new CategoryService(repository, Clock.fixed(NOW, ZoneOffset.UTC));
+      new CategoryService(repository, Clock.fixed(NOW, ZoneOffset.UTC), cache, catalogCache);
 
   @Test
   @DisplayName("tạo category: sinh slug từ tên, timestamps lấy từ Clock (test tất định)")
