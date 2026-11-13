@@ -12,7 +12,7 @@
 // ==============================================================================
 import http from 'k6/http';
 import { check } from 'k6';
-import { BASE, SEED, stages, SUMMARY_STATS, pick, randomInt } from './common.js';
+import { BASE, SEED, stages, SUMMARY_STATS, pick, randomInt, track429 } from './common.js';
 
 export const options = {
   scenarios: {
@@ -45,6 +45,7 @@ export default function () {
     'status 200': (r) => r.status === 200,
     'có field content': (r) => r.status !== 200 || r.body.indexOf('"content"') >= 0,
   });
+  track429(res);
 }
 
 export function handleSummary(data) {

@@ -14,6 +14,9 @@ class ErrorCodeTest {
     assertThat(ErrorCode.fromHttpStatus(400)).isEqualTo(ErrorCode.VALIDATION_ERROR);
     assertThat(ErrorCode.fromHttpStatus(401)).isEqualTo(ErrorCode.UNAUTHORIZED);
     assertThat(ErrorCode.fromHttpStatus(403)).isEqualTo(ErrorCode.FORBIDDEN);
+    // SL-4.3: 429 phải map đúng mã riêng, KHÔNG rơi vào REQUEST_ERROR chung — client cần phân biệt
+    // "bị chặn tần suất, thử lại sau" với "request sai".
+    assertThat(ErrorCode.fromHttpStatus(429)).isEqualTo(ErrorCode.TOO_MANY_REQUESTS);
     assertThat(ErrorCode.fromHttpStatus(404)).isEqualTo(ErrorCode.NOT_FOUND);
     assertThat(ErrorCode.fromHttpStatus(409)).isEqualTo(ErrorCode.CONFLICT);
     // SL-2.2: 410 phải giữ đúng nghĩa "đã chết" (reservation hết hạn), không rơi vào REQUEST_ERROR

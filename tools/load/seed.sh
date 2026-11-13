@@ -104,8 +104,30 @@ req() { # method path [token] [json-body] → STATUS, BODY
   # Xoá body TRƯỚC khi curl: connection-refused thì curl không mở `-o` ⇒ không xoá trước là
   # ta đọc body của lần trước (bẫy đã gặp ở SL-1.7).
   : > "$TMP_BODY"
-  STATUS="$(curl "${args[@]}" 2>/dev/null || true)"
-  BODY="$(cat "$TMP_BODY")"
+  local attempt=0
+  while :; do
+    STATUS="$(curl "${args[@]}" 2>/dev/null || true)"
+    BODY="$(cat "$TMP_BODY")"
+    # SL-4.3: seed dồn vài nghìn request qua gateway ⇒ IP bucket (200 rps mặc định) chặn giữa đường.
+    # Đó là hành vi ĐÚNG của rate limit với một client thô, nên harness phải biết chờ chứ không được
+    # "sửa" bằng cách nới ngưỡng. Chờ theo Retry-After, tối đa 5 lần rồi báo lỗi rõ ràng.
+    if [ "$STATUS" = "429" ] && [ "$attempt" -lt 5 ]; then
+      attempt=$((attempt + 1))
+      local wait_s
+      wait_s="$(printf '%s' "$BODY" | python3 -c 'import sys,json
+try: print(max(1,int(json.load(sys.stdin).get("message","").split("sau ")[1].split(" ")[0])))
+except Exception: print(1)' 2>/dev/null || echo 1)"
+      sleep "$wait_s"
+      continue
+    fi
+    if [ "$STATUS" = "429" ]; then
+      echo "LỖI: bị rate limit chặn 5 lần (429) khi seed qua gateway." >&2
+      echo "     Seed dồn request qua biên nên bucket per-IP của gateway chặn — chạy lại với limiter tắt:" >&2
+      echo "       RATE_LIMIT_ENABLED=false docker compose -f infra/docker-compose.yml up -d --no-deps api-gateway" >&2
+      echo "       bash tools/load/seed.sh && docker compose -f infra/docker-compose.yml up -d --no-deps api-gateway" >&2
+    fi
+    break
+  done
 }
 
 jget() { # field → giá trị (chuỗi) hoặc rỗng

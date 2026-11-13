@@ -19,7 +19,7 @@
 import http from 'k6/http';
 import { check } from 'k6';
 import { Trend, Counter } from 'k6/metrics';
-import { BASE, SEED, stages, SUMMARY_STATS } from './common.js';
+import { BASE, SEED, stages, SUMMARY_STATS, track429 } from './common.js';
 
 const checkoutMs = new Trend('checkout_ms', true);
 const checkoutReq = new Counter('checkout_requests');
@@ -99,6 +99,7 @@ export default function (data) {
 
   checkoutMs.add(res.timings.duration);
   checkoutReq.add(1);
+  track429(res);
   const ok = check(res, { 'checkout 201': (r) => r.status === 201 });
   if (!ok) {
     checkoutFail.add(1);

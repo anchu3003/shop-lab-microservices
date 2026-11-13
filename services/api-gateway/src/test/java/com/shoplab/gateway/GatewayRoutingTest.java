@@ -77,6 +77,10 @@ class GatewayRoutingTest {
     registry.add("shoplab.gateway.jwt.issuer", () -> JwtFixture.ISSUER);
     registry.add("shoplab.gateway.timeouts.connect", () -> "1s");
     registry.add("shoplab.gateway.timeouts.read", () -> "2s");
+    // SL-4.3: test này kiểm routing/auth, KHÔNG kiểm rate limit. Để bật thì mỗi request sẽ thử nói
+    // chuyện Redis (không có trong test này) và fail-open kèm timeout 100 ms × N — chậm mà không
+    // kiểm thêm được gì. Rate limit có IT riêng (RateLimitIT).
+    registry.add("shoplab.gateway.rate-limit.enabled", () -> "false");
   }
 
   private static void addRoute(

@@ -7,7 +7,7 @@
 | | |
 |---|---|
 | **Ticket đang làm** | — |
-| **Ticket tiếp theo** | `SL-4.3` — Rate limit ở gateway (token bucket Redis + Lua) — trả `TD-21` + phần limit của `TD-22` |
+| **Ticket tiếp theo** | `SL-4.4` — Read replica cho `catalog` + `order` (streaming thật) + routing read/write + đo replica lag |
 | **Số ticket chi tiết hiện có** | 66 (Phase 0: 8 · Phase 1: 19 · Phase 2: 15 · Phase 3: 12 — đã archive · Phase 4: **13** — đang mở) |
 
 ---
@@ -316,7 +316,7 @@ chặn Phase 4**) · `TD-31` (không có refund) · `TD-33` (`min_price` chưa t
 | 0 | `SL-4.0` | *(phát sinh)* **Retention job** `outbox` · `processed_events` · `notification_logs` (trả `TD-29`+`TD-30`) | M | ✅ Done |
 | 1 | `SL-4.1` | **k6 harness + baseline**: 3 scenario · seed · `tools/load.sh` · tìm **điểm vỡ** đầu tiên | M | ✅ Done |
 | 2 | `SL-4.2` | **Cache-aside `catalog`** (TTL + jitter + **single-flight**) — trả phần cache của `TD-22` | M | ✅ Done |
-| 3 | `SL-4.3` | **Rate limit ở gateway** (token bucket Redis + Lua) — trả `TD-21` + phần limit của `TD-22` | M | Todo |
+| 3 | `SL-4.3` | **Rate limit ở gateway** (token bucket Redis + Lua) — trả `TD-21` + phần limit của `TD-22` | M | ✅ Done |
 | 4 | `SL-4.4` | **Read replica** (streaming thật) + routing read/write + đo **replica lag** | M | Todo |
 | 5 | `SL-4.5` | **Connection pool**: đo điểm gãy (Hikari × pgbouncer) | S | Todo |
 | 6 | `SL-4.6` | **Partition `orders` theo tháng** + pruning + đo p99 list | M | Todo |
@@ -339,7 +339,9 @@ chặn Phase 4**) · `TD-31` (không có refund) · `TD-33` (`min_price` chưa t
 - **Không** làm ở phase này: circuit breaker/retry/bulkhead (Phase 5) · metric/dashboard/alert (Phase 6) · `TD-31` (refund) ·
   `TD-32`/`TD-19` (extract shared lib) · `TD-33`/`TD-34` — ghi rõ để không phải quyết lại.
 
-**Debt sẽ trả trong phase**: `TD-6` (`4.9`) · `TD-21` + `TD-22` (`4.3`/`4.2`) · `TD-23` + `TD-36` (`4.11`) · `TD-24` (`4.10`).
+**Debt sẽ trả trong phase**: `TD-6` (`4.9`) · ~~`TD-21` + `TD-22`~~ (**✅ đã trả ở `4.3`/`4.2`**) · `TD-23` + `TD-36` (`4.11`) · `TD-24` (`4.10`).
+**Debt phát sinh trong phase**: `TD-37` (load.sh chưa sample CPU từng container) · `TD-38` (k6 image chưa pin) · `TD-39`
+(invalidate trước commit) · `TD-40` (chi phí round-trip Redis của rate limit chưa tách được khỏi nhiễu).
 **Debt còn mở sau phase (dự kiến)**: `TD-1`, `TD-2`, `TD-5`, `TD-8`–`TD-11`, `TD-13`, `TD-16`–`TD-20`, `TD-26`, `TD-31`–`TD-34` — §7.
 
 ### SL-4.0 — Retention job cho `outbox` · `processed_events` · `notification_logs` (trả `TD-29` + `TD-30`)
@@ -786,7 +788,7 @@ Quyết định + trade-off: `docs/adr/0009-catalog-cache-aside.md` · số li�
 
 | Trường | Giá trị |
 |---|---|
-| **Trạng thái** | Todo |
+| **Trạng thái** | ✅ Done (2026-11-13) |
 | **Phase** | 4 — Scale & performance |
 | **Phụ thuộc** | `SL-4.1` (đo được tải mới chứng minh được tác dụng) |
 | **Ước lượng** | M |
@@ -838,9 +840,69 @@ chặn **ở biên** để service bên trong chỉ nhận phần tải nó ch�
   Đánh đổi này phải ghi trong runbook.
 - **Không log mỗi request bị chặn** ở INFO (500 VU sẽ ngập log); log WARN theo cửa sổ.
 
-**Kết quả verify** *(điền khi Done)*
+**Kết quả verify** *(2026-11-13)*
 
-**Learning note** *(điền khi Done)*
+```
+$ bash tools/rate-limit-drill.sh --with-overhead      → 10 PASS / 0 FAIL
+== D0  enabled=True · default per-ip burst=400 · per-user burst=200
+== D3  status=429 code=TOO_MANY_REQUESTS retry-after=1 limit=400 remaining=0 reset=1794538730
+       body={"code":"TOO_MANY_REQUESTS",…,"traceId":"9332ea72-…","path":"/v1/products"}
+  PASS [D3] 429 đủ 5 thông tin (status + Retry-After + 3 header X-RateLimit-*)
+  PASS [D3] body là ApiError với code=TOO_MANY_REQUESTS + traceId
+== D1  500 VU KHÔNG token dội /v1/products 30s
+   tổng request 735323 · bị chặn 728871 · lọt 6452 · tỉ lệ 429 99.1% · p99 70.8 ms
+  PASS [D1] tỉ lệ 429 = 99.1% (≥ 90%)                        ← AC1
+== D2  xact_commit: 5021226 → 5021823 (Δ 597) · request LỌT limiter: 6452
+  PASS [D2] Δ xact_commit 597 ≤ request lọt 6452 (+5)         ← AC1 (chặn Ở BIÊN, không ở DB)
+== D4  A: 297 × 200 · 303 × 429 | B: 200
+  PASS [D4] A bị chặn 303 lần, B vẫn 200                      ← AC5 (không chặn oan)
+== D5  Redis dừng · GET /v1/products = 200 · WARN 'fail-open' = 1
+  PASS [D5] fail-open đúng: 200 + WARN                       ← AC4
+   Redis trở lại · đốt bucket · GET tiếp theo = 429
+  PASS [D5] tự phục hồi: limiter chặn lại
+== D6  limiter TẮT: 4804 RPS · p99 64.8 ms | BẬT (ngưỡng cao): 4498 RPS · p99 62.2 ms
+  PASS [D6] Δp99 -2.6 ms · ΔRPS -306 (lần chạy trước: +16.4 ms / -643 RPS)
+```
+
+`mvn -B -ntp verify` (cả repo): **BUILD SUCCESS** — gateway **94 unit + 10 IT** (6 `RedisTokenBucketIT` trên Redis thật qua
+Testcontainers + 4 `RateLimitIT` HTTP thật), JaCoCo gate `ratelimit/*` đạt; commons 87. `e2e-smoke` **17/17**,
+`e2e-checkout` **27/27** (`RATE_LIMIT_ENABLED=true`, ngưỡng mặc định ⇒ **0 × 429**: không chặn oan luồng thật).
+
+**Hai lần đo D6 khác nhau** (+16,4 ms và −2,6 ms) ⇒ Δp99 **nằm trong nhiễu**, chỉ throughput giảm nhất quán (−6…−18 %) ⇒ ghi
+`TD-40` (lặp ≥ 5 lần) thay vì chọn số đẹp.
+
+**Learning note**
+
+1. **"Chặn ở biên" phải chứng minh bằng số của DB, không bằng status code.** 429 nhiều chưa nói gì: nếu chặn *sau* khi đã vào
+   service thì DB vẫn quay. Bằng chứng đúng là **`xact_commit` Δ 597 cho 735.323 request**, và phép so phải là
+   `Δcommit ≤ số request lọt limiter`, không phải "Δ nhỏ hơn tổng request".
+2. **Đặt key bằng `sub` CHƯA verify = tự vô hiệu hoá rate limit.** `JwtAuthFilter` không verify token ở path public, nên
+   filter rate limit **phải** chạy sau nó; nếu không, kẻ tấn công gửi `sub` ngẫu nhiên mỗi request là có vô hạn bucket. Thứ
+   tự filter ở đây là **ranh giới an ninh**, không phải chi tiết triển khai.
+3. **Một xô là không đủ, và hai xô rẻ hơn tưởng.** Per-user ⇒ xoay account vượt trần; per-IP ⇒ NAT chặn oan. Kiểm cả hai
+   trong **cùng một `EVAL`** ⇒ có cả hai tính chất, **không** thêm round-trip. Hệ quả vận hành thật: **load test đi từ 1 IP
+   nên bị chính limiter chặn** ⇒ phải có `RATE_LIMIT_ENABLED` và harness phải **đếm 429**, nếu không "điểm vỡ" ghi được là
+   điểm vỡ của limiter — một con số sai mà không ai nghi ngờ.
+4. **Kiểm hết rồi mới trừ** (trong Lua): trừ xô user trước rồi mới phát hiện xô IP cạn ⇒ user mất token cho request **không
+   được phục vụ**. Có test riêng (`RedisTokenBucketIT.rejectedRequestShouldNotConsumeOtherBucket`).
+5. **Fail-open phải fail ĐÚNG NHANH**: bắt `RuntimeException` (không chỉ lỗi Redis) + timeout 100 ms + Redis **không** trong
+   readiness + gateway **không** `depends_on` Redis. Redis mà vào readiness thì orchestrator đánh gateway unready ⇒ fail-open
+   thành vô nghĩa (bài học `SL-4.2`, lặp lại ở tầng khác).
+6. **Rate limit làm hỏng công cụ của chính mình — đó là thông tin, không phải phiền.** `tools/load/seed.sh` (400 buyer qua
+   `POST /v1/auth/register`) và e2e chạy từ 1 IP bị 429 giữa đường. Sửa đúng là **chờ `Retry-After`** (seed) và **tắt
+   limiter khi đo tải**, **không** nới ngưỡng toàn cục — nới rồi thì không ai nhớ trả lại.
+7. **Script đo cũng có bug, và bug của script trông y như bug của hệ.** Ba lần drill đỏ liên tiếp đều do script: đốt bucket
+   đúng bằng `burst` (400) rồi kiểm ngay ⇒ xô đã nạp lại 50 token (`remaining=50`) ⇒ đọc thành "limiter không chặn";
+   `curl -o /dev/null` chỉ áp cho URL **đầu** khi dùng `--parallel` ⇒ log ngập JSON; và cửa sổ lấy mẫu phải nằm **trong lúc**
+   đang dội (nạp 200 token/giây ⇒ 5 ms sau khi dừng là đã có token). Sửa bằng `burn_forever` (dội liên tục tới khi kill),
+   không nới ngưỡng, không tăng sleep.
+8. **Test của chính rate limit cũng flaky vì thời gian — CI bắt được, local không.** `RateLimitIT` bản đầu gửi 3 request
+   *tuần tự* với hạn mức `2 rps / burst 2` rồi kỳ vọng request thứ 3 là 429; trên runner CI mỗi request ~350 ms ⇒ xô nạp lại
+   0,7 token ⇒ **200** thay vì 429 (đỏ ở run `43357368722`, xanh ở máy dev). Sửa đúng: hạn mức **1/1** + bắn **6 request
+   đồng thời** ⇒ đúng 1 lọt, 5 bị chặn, **không phụ thuộc tốc độ máy** — và tiện thể kiểm luôn tính **nguyên tử** của `EVAL`
+   (nếu không nguyên tử thì nhiều request cùng lọt). Chạy lặp 3 lần: 3/3 xanh. Bài học: với limiter, **thời gian là biến số
+   ẩn**; test phải hoặc cố định đồng hồ, hoặc bắn song song — đừng "gửi N request rồi tin thứ tự".
+
 
 ### SL-4.4 — Read replica cho `catalog` + `order` (streaming thật) + đo lag
 
@@ -1424,12 +1486,12 @@ Mục tiêu: các pattern nâng cao, chỉ làm khi đã vững nền.
 | `TD-18` | Webhook dùng **một** HMAC secret tĩnh, không key id/rotation; không lưu raw body (chỉ sha256) nên điều tra tranh chấp phải xin lại provider | SL-2.7 | Khi nối provider thật (Stripe/VNPay) — họ có key id + rotation riêng | thấp |
 | `TD-19` | Idempotency store (`idempotency_keys` + `IdempotencyService`) **copy lần 2** (order, payment) chưa có module chung ở `packages/` | SL-2.7 | Khi có service thứ 3 cần idempotency (dự kiến không có ở Phase 2 ⇒ quyết ở `SL-2.12` hoặc Phase 3) | thấp |
 | `TD-20` | Cart **không** lưu `price_snapshot` và không gọi catalog (quyết định `SL-2.1`) ⇒ hiển thị giá trong giỏ phải gọi catalog riêng; giỏ không phát hiện được SKU đã archive/đổi giá | SL-2.1 | **`SL-2.13` đã có `GET /v1/skus?ids=` (batch)** ⇒ phần còn lại chỉ là UI/gateway gọi endpoint đó (làm ở `SL-2.8`) | trung bình |
-| `TD-22` | `GET /v1/skus?ids=` là **public**, nhận tới 100 id, **chưa rate limit** và ~~chưa cache~~ ⇒ 1 client có thể dội tải catalog (100 id/request) hoặc dùng làm đòn bộc phát | SL-2.13 | **Phần cache ✅ đã trả (`SL-4.2`)** — `skus?ids=` cache theo từng SKU + single-flight (ADR-0009). **Phần rate limit còn mở** → `SL-4.3` (token bucket ở gateway) | thấp |
+| `TD-22` | `GET /v1/skus?ids=` là **public**, nhận tới 100 id, ~~chưa rate limit~~ và ~~chưa cache~~ ⇒ 1 client có thể dội tải catalog (100 id/request) hoặc dùng làm đòn bộc phát | SL-2.13 | ✅ **đã trả hết** — cache theo từng SKU + single-flight (`SL-4.2`, ADR-0009) và rate limit ở biên (`SL-4.3`, ADR-0010: mặc định `100/200` per-user + `200/400` per-IP, đổi bằng `RATE_LIMIT_DEFAULT_*`) | ✅ đã trả (SL-4.2 + SL-4.3) |
 | `TD-23` | IT `inventory`: `commitAfterExpiryReturnsGone` **flaky** — test đẩy `expires_at` về quá khứ rồi `commit`, nhưng sweeper trong IT chạy mỗi **300 ms** nên có lúc nó expire trước ⇒ `commit` trả **409** thay vì **410** (đỏ trên CI chậm, xanh ở máy local) | SL-2.13 (CI run `42444551383`) | Lần tới khi sửa test của inventory: tắt sweeper (`sweep-interval-ms` rất lớn) cho test lazy-expire, hoặc assert `status ∈ {410, 409}` + kiểm `reserved = 0` (điều thực sự quan trọng) | trung bình |
 | `TD-24` | `checkout_saga_steps` + `checkout_sagas` **không có job dọn** — 1 dòng/bước/lần checkout ⇒ phình mãi (audit nhưng không ai đọc sau 30 ngày) | SL-2.6a | Khi bảng > 10⁶ row hoặc khi `SL-2.6b` thêm sweeper (gộp 1 `@Scheduled` dọn saga `COMPLETED_START`/`FAILED_*` cũ > 30 ngày) | thấp |
 | `TD-25` | Checkout sweeper **không gọi được `release`** (không có token user) ⇒ đơn `EXPIRED` nhưng hàng/voucher chỉ được trả khi **TTL sweeper** của inventory/promotion chạy (trễ tối đa ~1 nhịp, 60 s) | SL-2.6b | Khi Phase 3 có **service-to-service auth** (hoặc API internal riêng) ⇒ sweeper gọi `release` ngay trong cùng nhịp | ✅ đã trả (SL-3.5) |
 | `TD-26` | `build-image` (CI) **flaky** khi Maven Central tạm thời không trả artifact: mỗi image `mvn package` từ đầu KHÔNG cache Maven ⇒ gặp hiccup là đỏ oan (gặp thật ở `SL-2.8`: `spring-boot-dependencies:4.1.2 … absent in central`, rerun thì xanh) | SL-2.8 (run `42451712993`) | Phase 7: registry + **cache layer Maven** (`--mount=type=cache` hoặc image builder có `.m2` ấm) ⇒ build nhanh và bớt phụ thuộc Central | thấp |
-| `TD-21` | `/v1/carts/**` là public ở gateway và **chưa có rate limit** ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | Khi bật rate limit ở gateway (Phase 5) **hoặc** khi thấy số key Redis tăng bất thường | trung bình |
+| `TD-21` | `/v1/carts/**` là public ở gateway và ~~chưa có rate limit~~ ⇒ có thể spam tạo guest token/giỏ (mỗi token = 2 key Redis, TTL 30 ngày) | SL-2.1 | ✅ **đã trả (`SL-4.3`)** — gateway rate limit theo **IP** cho `/v1/carts` (`50 rps / burst 100`, đổi bằng `RATE_LIMIT_CART_IP_*`); drill D1 chứng minh 99,1 % bị chặn ở biên, `xact_commit` không tăng theo | ✅ đã trả (SL-4.3) |
 | `TD-29` | Bảng `outbox` ở **3 service** (`order` · `payment` · `catalog`) phình 1 row/event (sau 1 buổi đo `SL-3.8`: 715 / 380 / 359 row) — index `PENDING` vẫn nhanh, nhưng backup/disk lớn lên | SL-3.3 | **✅ đã trả (`SL-4.0`)** — job retention xoá row `SENT` > 7d theo batch (`SHOPLAB_OUTBOX_RETENTION`), chỉ `SENT`; thêm index partial `idx_outbox_sent` | ✅ đã trả (SL-4.0) |
 | `TD-28` | *(đã trả)* **CI từng TẮT tạm thời** (`vars.CI_ENABLED=false`, từ `SL-3.10`) để tăng tốc merge Phase 3 ⇒ mất 3 hàng rào tự động: `test` + JaCoCo gate độc lập, `lint` trong môi trường sạch, và **`build-image` matrix** (chốt duy nhất bắt lỗi Dockerfile/COPY pom khi thêm module/service). Verify chuyển sang **local** (`mvn verify` + e2e) do người/AI tự khai | SL-3.10 | ✅ **đã trả (`SL-3.9`)** — `gh variable delete CI_ENABLED` (2026-11-11), CI chạy lại bình thường; gỡ ngoại lệ ở `AGENTS.md` §9 + `.clinerules/10-git-workflow.md` + `README.md` | — |
 | `TD-30` | `notification_logs` + `processed_events` phình: `processed_events` 1 row/event/consumer **vĩnh viễn** (không xoá được vì dedupe cần), `notification_logs` 1 row/đơn đã confirm | SL-3.4 | **✅ đã trả (`SL-4.0`)** — `processed_events` 7d (`SHOPLAB_EVENTS_DEDUP_RETENTION`), `notification_logs` 90d (`SHOPLAB_NOTIFICATION_LOG_RETENTION`); **bất biến**: dedup retention ≥ outbox retention | ✅ đã trả (SL-4.0) |
@@ -1442,3 +1504,4 @@ Mục tiêu: các pattern nâng cao, chỉ làm khi đã vững nền.
 | `TD-37` | `tools/load.sh` chỉ sample CPU của **k6**; muốn biết nghẽn ở service nào phải probe tay bằng `docker stats` trong một lần chạy riêng (đã làm ở `SL-4.1` §5 để tìm nghẽn đầu tiên) | SL-4.1 | Ngay ở `SL-4.2` (cache): cần so CPU **catalog-service/redis** trước–sau trên cùng bậc, làm tay 2 lần là đủ thấy phải tự động hoá | thấp |
 | `TD-38` | Harness dùng `grafana/k6:latest` (không pin tag/digest) ⇒ image đổi hành vi giữa 2 lần đo thì số before/after không còn so sánh được (đã dính 1 lần: k6 v2 chuyển số liệu vào `metrics[x].values` làm parser ra toàn 0) | SL-4.1 | Khi pin version cho cả stack (Phase 7) hoặc khi 2 lần chạy cùng điều kiện lệch > 20% không giải thích được | thấp |
 | `TD-39` | Cache catalog **invalidate trong transaction, trước commit**: một request đọc chen giữa có thể cache lại giá trị cũ (đọc bản đã commit trước đó) và nó sống tới hết TTL (≤ 66 s). Xảy ra khi có traffic đọc **đồng thời** với lúc update | SL-4.2 | Khi có ghi product đồng thời với tải đọc lớn (flash sale `SL-4.7`/`4.8`) hoặc khi phát hiện dữ liệu cũ > 1 s: chuyển invalidate sang **sau commit** (`TransactionSynchronization.afterCommit`) hoặc invalidate theo event outbox | trung bình |
+| `TD-40` | Rate limit ở gateway thêm **1 round-trip Redis cho mỗi request** ở cửa vào: đo được **−6,4 % RPS** (4.804 → 4.498) nhưng Δp99 **không kết luận được** (2 lần chạy ra −2,6 ms và +16,4 ms) | SL-4.3 | Lặp `bash tools/rate-limit-drill.sh --with-overhead` **≥ 5 lần** ở trạng thái máy ổn định để tách nhiễu; nếu ΔRPS > 10 % đều đặn ⇒ làm **local pre-check** (xô token trong JVM, chỉ gọi Redis khi gần cạn — chấp nhận hạn mức xấp xỉ) | trung bình |

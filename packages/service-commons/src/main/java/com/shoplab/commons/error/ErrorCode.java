@@ -30,6 +30,14 @@ public enum ErrorCode {
   /** Đã xác thực nhưng không đủ quyền với tài nguyên này. */
   FORBIDDEN(HttpStatus.FORBIDDEN, "Không có quyền truy cập"),
 
+  /**
+   * Vượt giới hạn tần suất (rate limit ở gateway — SL-4.3).
+   *
+   * <p>Phân biệt với {@link #FORBIDDEN}: 403 = "đừng làm thế nữa", 429 = "làm chậm lại rồi thử lại"
+   * — client <b>nên</b> retry theo header {@code Retry-After}, đừng đổi request.
+   */
+  TOO_MANY_REQUESTS(HttpStatus.TOO_MANY_REQUESTS, "Quá nhiều request"),
+
   /** Không tìm thấy tài nguyên. */
   NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy tài nguyên"),
 
@@ -96,6 +104,9 @@ public enum ErrorCode {
     }
     if (status == HttpStatus.FORBIDDEN.value()) {
       return FORBIDDEN;
+    }
+    if (status == HttpStatus.TOO_MANY_REQUESTS.value()) {
+      return TOO_MANY_REQUESTS;
     }
     if (status == HttpStatus.NOT_FOUND.value()) {
       return NOT_FOUND;

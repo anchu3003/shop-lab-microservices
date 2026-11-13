@@ -11,6 +11,19 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 30s
 
+  # SL-4.3: Redis dùng để đếm token rate limit (KHÔNG lưu dữ liệu nghiệp vụ).
+  # Cố ý KHÔNG khai `redis` trong `shoplab.readiness` bên dưới: Redis chết thì limiter fail-open và
+  # gateway vẫn phục vụ — đưa Redis vào readiness sẽ khiến orchestrator đánh gateway unready, tức là
+  # biến "mất lớp bảo vệ" thành "mất cả hệ thống", ngược lại hoàn toàn ý đồ fail-open.
+  # Timeout ngắn: Redis treo phải fail nhanh rồi cho request đi, không giữ thread của gateway.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${GATEWAY_REDIS_TIMEOUT:100ms}
+      connect-timeout: ${GATEWAY_REDIS_CONNECT_TIMEOUT:100ms}
+
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
@@ -79,6 +92,60 @@ shoplab:
     timeouts:
       connect: ${GATEWAY_CONNECT_TIMEOUT:2s}
       read: ${GATEWAY_READ_TIMEOUT:5s}
+
+    # --------------------------------------------------------------------------
+    # SL-4.3 — rate limit ở biên (token bucket trong Redis, ADR-0010).
+    #
+    # Bật/tắt bằng `RATE_LIMIT_ENABLED`:
+    #   - load test đo ĐIỂM VỠ phải chạy `RATE_LIMIT_ENABLED=false` (k6 đi từ 1 IP nên bucket IP
+    #     sẽ chặn chính phép đo — `tools/load.sh` sẽ cảnh báo nếu thấy 429),
+    #   - ca sự cố (Redis chập chờn, cần nhận hết tải) cũng dùng cờ này — xem docs/runbook.
+    #
+    # Hai xô cho request CÓ danh tính: per-user + per-ip, kiểm trong CÙNG một EVAL. Chỉ per-user thì
+    # xoay account là vượt trần; chỉ per-IP thì cả văn phòng sau NAT bị chặn oan.
+    # --------------------------------------------------------------------------
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:true}
+      # Redis chết ⇒ cho qua + WARN. Đổi thành `false` chỉ khi muốn "thà sập còn hơn nhận tải".
+      fail-open: ${RATE_LIMIT_FAIL_OPEN:true}
+      key-prefix: ${RATE_LIMIT_KEY_PREFIX:rl}
+
+      default-per-user:
+        rps: ${RATE_LIMIT_DEFAULT_USER_RPS:100}
+        burst: ${RATE_LIMIT_DEFAULT_USER_BURST:200}
+      default-per-ip:
+        rps: ${RATE_LIMIT_DEFAULT_IP_RPS:200}
+        burst: ${RATE_LIMIT_DEFAULT_IP_BURST:400}
+
+      # KHÔNG khai `trusted-proxies` ở đây: mặc định là RỖNG = không tin `X-Forwarded-For` (đổi header
+      # là đổi bucket ⇒ rate limit vô nghĩa). Có LB/proxy thật thì khai IP của nó (so khớp chính xác,
+      # chưa hỗ trợ CIDR) qua `shoplab.gateway.rate-limit.trusted-proxies` / env tương ứng.
+
+      # Bypass mặc định (health/ready/version/api-docs/mock-provider/debug) nằm trong
+      # RateLimitProperties.DEFAULT_BYPASS — chỉ khai ở đây khi muốn THÊM path.
+      bypass: []
+
+      routes:
+        # Đặt hàng: đắt nhất hệ (1 request = saga + DB + message) ⇒ chặn chặt nhất.
+        - path-prefix: /v1/checkout
+          method: POST
+          per-user:
+            rps: ${RATE_LIMIT_CHECKOUT_USER_RPS:10}
+            burst: ${RATE_LIMIT_CHECKOUT_USER_BURST:20}
+          per-ip:
+            rps: ${RATE_LIMIT_CHECKOUT_IP_RPS:100}
+            burst: ${RATE_LIMIT_CHECKOUT_IP_BURST:200}
+        # Đăng nhập: chống dò mật khẩu. Chưa có token ⇒ thực chất chỉ xô IP có tác dụng.
+        - path-prefix: /v1/auth/login
+          method: POST
+          per-ip:
+            rps: ${RATE_LIMIT_LOGIN_IP_RPS:5}
+            burst: ${RATE_LIMIT_LOGIN_IP_BURST:10}
+        # Giỏ hàng là path public (guest) và mỗi guest token = 2 key Redis TTL 30 ngày (TD-21).
+        - path-prefix: /v1/carts
+          per-ip:
+            rps: ${RATE_LIMIT_CART_IP_RPS:50}
+            burst: ${RATE_LIMIT_CART_IP_BURST:100}
 
     # Bảng route: prefix dài nhất thắng. Thêm service mới = thêm 1 dòng ở đây, không sửa code.
     routes:
