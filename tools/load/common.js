@@ -6,10 +6,25 @@
 // không so sánh được" mà Phase 4 muốn tránh.
 // ==============================================================================
 import { sleep } from 'k6';
+import { Counter } from 'k6/metrics';
 
 // k6 chạy trong network `shoplab-net` (Docker) chứ không phải trên host ⇒ gọi tên container,
 // KHÔNG dùng localhost. Đổi khi chạy k6 trực tiếp trên host: `-e BASE_URL=http://localhost:8080`.
 export const BASE = __ENV.BASE_URL || 'http://api-gateway:8080';
+
+// SL-4.3: đếm 429 của MỌI scenario.
+//
+// Vì sao phải đếm: từ khi gateway có rate limit, một bậc VU có thể "vỡ" vì bị **chặn ở biên**
+// (k6 đi từ 1 IP nên bucket IP coi cả bài đo là một client) — hoàn toàn khác "hệ không chịu nổi tải".
+// Không đếm riêng thì hai hiện tượng này trông giống nhau trong summary (chỉ thấy error cao), và
+// báo cáo sẽ ghi sai bản chất. `tools/load.sh` đọc `rl_429` để cảnh báo bậc không hợp lệ.
+export const RL_429 = new Counter('rl_429');
+
+export function track429(res) {
+  if (res && res.status === 429) {
+    RL_429.add(1);
+  }
+}
 
 // seed.json do `tools/load/seed.sh` sinh ra, được mount vào container ở `/seed`.
 // `open()` chỉ gọi được ở init context (ngoài default function) — đây đúng chỗ.

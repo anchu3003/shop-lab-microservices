@@ -921,6 +921,38 @@ docker compose -f infra/docker-compose.yml up -d catalog-service     # bật l�
   list; tạo category xoá `categories`. Quyết định + trade-off: [`docs/adr/0009-catalog-cache-aside.md`](docs/adr/0009-catalog-cache-aside.md).
 - Cấu hình: `SHOPLAB_CATALOG_CACHE_*` trong `.env.example` (TTL, jitter, lock, prefix).
 
+### Rate limit ở gateway — `SL-4.3` (ADR-0010)
+
+Gateway chặn tải **trước khi** request vào service: **token bucket trong Redis + Lua**, khoá theo **user** (JWT đã verify)
+**và** theo **IP**, kiểm trong **cùng một `EVAL`**.
+
+```bash
+# 1 lệnh chứng minh 5 tính chất (chặn thật · chặn ở biên · 429 đúng chuẩn · không chặn oan · fail-open)
+bash tools/rate-limit-drill.sh               # D1–D5
+bash tools/rate-limit-drill.sh --with-overhead   # thêm D6: p99 tăng bao nhiêu vì thêm hop Redis
+
+# limiter đang bật? ngưỡng đang là bao nhiêu? (cần token: /debug/** không public)
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8080/debug/rate-limit
+```
+
+- **Số đo** (drill `--with-overhead`, **10 PASS**): 500 VU **không token** ⇒ **728.871/735.323 = 99,1 % là 429**, trong khi
+  `xact_commit` chỉ tăng **597** ⇒ tải bị chặn **ở biên**, không chạm DB. User A cạn hạn mức: B vẫn `200`. `docker stop
+  shoplab-redis` ⇒ request vẫn `200` + WARN `fail-open`; Redis trở lại ⇒ chặn lại.
+- **Chi phí thật** (D6, 100 VU `read-catalog`): limiter tắt **4.804 RPS · p99 64,8 ms** → limiter bật **4.498 RPS · p99
+  62,2 ms** (**−6,4 % throughput**). Lần chạy trước ra **+16,4 ms p99 / −643 RPS** ⇒ Δp99 **nằm trong nhiễu**; kết luận trung
+  thực là chi phí chủ yếu ở **throughput**, chưa nói được gì chắc về p99 — ghi `TD-40` (lặp D6 ≥ 5 lần).
+- **Ngưỡng** (đổi bằng env, không build lại): mặc định `100 rps/burst 200` (user) và `200/400` (IP) · `POST /v1/checkout`
+  `10/20` · `POST /v1/auth/login` `5/10` (theo IP) · `/v1/carts` `50/100` (theo IP).
+- **Fail-open**: Redis lỗi ⇒ vẫn phục vụ + WARN 1 dòng/5 s. Redis **không** nằm trong readiness và gateway **không**
+  `depends_on` Redis. Muốn "thà chặn còn hơn nhận tải" thì `RATE_LIMIT_FAIL_OPEN=false`.
+- **Tắt hẳn khi đo tải** (k6 đi từ 1 IP nên xô IP sẽ chặn chính phép đo):
+  ```bash
+  RATE_LIMIT_ENABLED=false docker compose -f infra/docker-compose.yml up -d --no-deps api-gateway
+  bash tools/load.sh --scenario read-catalog        # load.sh cảnh báo nếu bậc đo có 429
+  docker compose -f infra/docker-compose.yml up -d --no-deps api-gateway
+  ```
+  `tools/load/seed.sh` cũng chờ `Retry-After` khi gặp 429 (seed dồn request qua biên) — không nới ngưỡng.
+
 
 ### E2E smoke — `SL-1.3` → `SL-1.7`
 

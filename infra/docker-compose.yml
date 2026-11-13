@@ -770,6 +770,10 @@ services:
   #
   # `IDENTITY_SERVICE_*` trỏ tới SERVICE NAME trong network của compose (không phải localhost —
   # localhost trong container là chính nó).
+  #
+  # SL-4.3: gateway dùng Redis để đếm token rate limit (KHÔNG lưu dữ liệu). Cố ý KHÔNG khai
+  # `depends_on: redis` và KHÔNG đưa Redis vào readiness: Redis chết thì limiter fail-open và
+  # gateway vẫn phục vụ — bắt gateway chờ Redis mới lên là biến "mất lớp bảo vệ" thành "mất cửa vào".
   # ---------------------------------------------------------------------------
   api-gateway:
     build:
@@ -803,6 +807,23 @@ services:
       SEARCH_SERVICE_URL: ${SEARCH_SERVICE_URL:-http://search-service:8091}
       GATEWAY_CONNECT_TIMEOUT: ${GATEWAY_CONNECT_TIMEOUT:-2s}
       GATEWAY_READ_TIMEOUT: ${GATEWAY_READ_TIMEOUT:-5s}
+      # SL-4.3 — rate limit (token bucket Redis). `RATE_LIMIT_ENABLED=false` là công tắc cho
+      # load test đo điểm vỡ (k6 đi từ 1 IP nên bucket IP sẽ chặn chính phép đo) và cho ca sự cố.
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_FAIL_OPEN: ${RATE_LIMIT_FAIL_OPEN:-true}
+      RATE_LIMIT_DEFAULT_USER_RPS: ${RATE_LIMIT_DEFAULT_USER_RPS:-100}
+      RATE_LIMIT_DEFAULT_USER_BURST: ${RATE_LIMIT_DEFAULT_USER_BURST:-200}
+      RATE_LIMIT_DEFAULT_IP_RPS: ${RATE_LIMIT_DEFAULT_IP_RPS:-200}
+      RATE_LIMIT_DEFAULT_IP_BURST: ${RATE_LIMIT_DEFAULT_IP_BURST:-400}
+      RATE_LIMIT_CHECKOUT_USER_RPS: ${RATE_LIMIT_CHECKOUT_USER_RPS:-10}
+      RATE_LIMIT_CHECKOUT_USER_BURST: ${RATE_LIMIT_CHECKOUT_USER_BURST:-20}
+      RATE_LIMIT_LOGIN_IP_RPS: ${RATE_LIMIT_LOGIN_IP_RPS:-5}
+      RATE_LIMIT_LOGIN_IP_BURST: ${RATE_LIMIT_LOGIN_IP_BURST:-10}
+      RATE_LIMIT_CART_IP_RPS: ${RATE_LIMIT_CART_IP_RPS:-50}
+      RATE_LIMIT_CART_IP_BURST: ${RATE_LIMIT_CART_IP_BURST:-100}
     ports:
       - "${API_GATEWAY_PORT:-8080}:${API_GATEWAY_PORT:-8080}"
     depends_on:

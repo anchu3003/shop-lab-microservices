@@ -219,6 +219,12 @@ Ví dụ Phase 4: cho `catalog-service` chạy **không cache**, load test bằn
 **Trade-off**: gateway là **single point of failure** và có thể thành **bottleneck**. Giảm thiểu bằng
 cách chạy nhiều instance + giữ logic gateway **mỏng** (chỉ cross-cutting, không chứa business logic).
 
+**Từ `SL-4.3`** gateway làm thêm một việc cross-cutting: **rate limit** (token bucket Redis, ADR-0010). Điều này đi ngược
+một chút với "mỏng" — nên có hai ràng buộc đi kèm: (a) **fail-open** khi Redis lỗi và Redis **không** nằm trong readiness
+(mất lớp bảo vệ ≠ mất cửa vào); (b) 429 được trả **trước** khi gọi service đích, và có công tắc `RATE_LIMIT_ENABLED` để
+tắt hẳn khi cần nhận đủ tải (đo điểm vỡ, ca sự cố). Cái giá phải trả là **+1 round-trip Redis trên mỗi request** — đo ở
+`tools/rate-limit-drill.sh` D6.
+
 ---
 
 ## 5. Service catalog & data ownership
@@ -475,6 +481,22 @@ Key schema, TTL/jitter, single-flight và quy tắc fail-open: xem **ADR-0009**.
 
 Số đo (cùng máy, cùng seed, bật/tắt bằng `SHOPLAB_CATALOG_CACHE_ENABLED`): p99 ở 100 VU **101,2 → 70,0 ms (−31 %)**, điểm vỡ
 **200 → 400 VU**, `xact_commit` của cả lần đo **−97 %**. Chi tiết: `docs/reports/scale-phase-4-baseline.md` §9.
+
+### 7.2. Rate limit ở biên — trạng thái sau `SL-4.3` (ADR-0010)
+
+Gateway chặn tải **trước khi** request vào service, bằng **token bucket trên Redis + Lua** (`EVAL` nguyên tử). Quyết định
+đầy đủ ở **ADR-0010**; ba điểm phải nhớ khi đọc code:
+
+| Điều | Vì sao |
+|---|---|
+| **Hai xô**: `rl:<route>:u:<sub>` **và** `rl:<route>:ip:<ip>`, kiểm trong **một** `EVAL` | per-user một mình ⇒ xoay account là vượt trần; per-IP một mình ⇒ cả văn phòng sau NAT bị chặn oan. Hai xô ⇒ có cả hai, không thêm round-trip |
+| Filter chạy **sau** `JwtAuthFilter` | chỉ khi đó `x-user-id` mới **đã verify**; đặt key bằng `sub` chưa verify = mỗi request một bucket (tự vô hiệu hoá rate limit) |
+| **Fail-open** + Redis **không** trong readiness + `RATE_LIMIT_ENABLED` | rate limit là lớp bảo vệ, không phải chức năng: Redis lỗi ⇒ nhận tải kém hơn, không phải sập cửa vào. Tắt hẳn khi đo điểm vỡ (k6 đi từ 1 IP) |
+
+Số đo (`tools/rate-limit-drill.sh --with-overhead`, **10 PASS**): 500 VU không token ⇒ **99,1 % là 429** (735.323 request)
+trong khi `xact_commit` chỉ tăng **597** — tải bị chặn **ở biên**, không chạm DB; user A cạn hạn mức nhưng user B vẫn 200;
+`docker stop redis` ⇒ vẫn 200 + WARN, Redis trở lại ⇒ chặn lại. **Chi phí** (D6, 100 VU): **−6,4 % RPS**, Δp99 trong khoảng
+nhiễu giữa 2 lần chạy (−2,6 ms và +16,4 ms) ⇒ chưa kết luận được về p99, ghi `TD-40` để lặp phép đo.
 
 ---
 

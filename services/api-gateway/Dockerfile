@@ -11,8 +11,9 @@
 #   docker build -f services/api-gateway/Dockerfile \
 #     --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) -t shoplab-api-gateway .
 #
-# Gateway không có DB và không có integration test cần Testcontainers → `mvn verify` ở đây
-# chạy unit test bình thường (không cần `-DskipITs`).
+# Gateway không có DB; từ SL-4.3 có integration test cần Testcontainers (Redis) → build trong image
+# KHÔNG có Docker socket nên phải `-DskipITs` (giống catalog-service). IT chạy ở CI job `test` và ở
+# máy dev (`mvn verify`).
 #
 # Vì sao alpine: image nhỏ; có sẵn `wget` (busybox) để dùng cho healthcheck.
 # ==============================================================================
@@ -50,7 +51,7 @@ COPY config/ config/
 # `SKIP_TESTS` (SL-1.12): CI truyền `true` vì job `test` đã chạy test cho **cả reactor** — chạy lại
 # test trong image chỉ tốn thời gian. Mặc định `false` để `docker build` tay vẫn test như trước.
 ARG SKIP_TESTS=false
-RUN mvn -B -pl services/api-gateway -am verify -DskipTests=${SKIP_TESTS}
+RUN mvn -B -pl services/api-gateway -am verify -DskipTests=${SKIP_TESTS} -DskipITs -Djacoco.skip=true
 
 # ------------------------------ stage 2: runtime ------------------------------
 FROM eclipse-temurin:21-jre-alpine AS runtime

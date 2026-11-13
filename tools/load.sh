@@ -260,7 +260,9 @@ if err_kind == "http_req_failed":
 else:
     reqs = vals("checkout_requests").get("count", 0) or 1
     err = (vals(err_kind).get("count", 0) / reqs) * 100
-print(f"{rps:.1f}\t{p50:.1f}\t{p95:.1f}\t{p99:.1f}\t{err:.2f}")
+# SL-4.3: số request bị gateway chặn. > 0 nghĩa là bậc này đo RATE LIMIT, không đo hệ.
+rl429 = int(vals("rl_429").get("count", 0) or 0)
+print(f"{rps:.1f}\t{p50:.1f}\t{p95:.1f}\t{p99:.1f}\t{err:.2f}\t{rl429}")
 PY
 }
 
@@ -297,7 +299,7 @@ fi
 ROWS=()
 RESULT_TSV="$OUT/result.tsv"
 printf 'vu\trps\tp50_ms\tp95_ms\tp99_ms\terr_pct\tk6_cpu_max\n' > "$RESULT_TSV"
-KNEE_VU=""; KNEE_REASON=""; CPU_HOT_NOTE=""
+KNEE_VU=""; KNEE_REASON=""; CPU_HOT_NOTE=""; RL_NOTE=""
 LAST_OK_VU=""; LAST_OK_RPS=""; LAST_OK_P99=""; LAST_OK_ERR=""; LAST_OK_CPU=""
 
 IFS=',' read -r -a VUS_ARR <<< "$VUS_LIST"
@@ -312,10 +314,18 @@ for vu in "${VUS_ARR[@]}"; do
     exit 1
   fi
 
-  read -r rps p50 p95 p99 err <<< "$(parse_summary "$dir/summary.json")"
+  read -r rps p50 p95 p99 err rl429 <<< "$(parse_summary "$dir/summary.json")"
   cpu="$(cpu_max "$dir/cpu.txt")"
   echo "   RPS ${rps} · p50 ${p50} · p95 ${p95} · p99 ${p99} · error ${err}% · k6 CPU ${cpu}%"
   [ "$SCENARIO" != "checkout" ] && echo "   p99 theo endpoint: $(endpoint_p99 "$dir/summary.json")"
+
+  # SL-4.3: 429 ở đây KHÔNG phải "hệ không chịu nổi tải" mà là "bị chặn ở biên" — k6 đi từ 1 IP nên
+  # bucket IP của gateway coi cả bài đo là một client. Ghi rõ để không ai đọc thành điểm vỡ.
+  if [ "${rl429:-0}" -gt 0 ] 2>/dev/null; then
+    echo "   ⚠ ${rl429} request bị 429 ⇒ RATE LIMIT đang bật: bậc này đo LIMITER, không đo hệ."
+    echo "     Đo lại điểm vỡ với: RATE_LIMIT_ENABLED=false (rồi 'docker compose up -d api-gateway')"
+    RL_NOTE="${RL_NOTE}${RL_NOTE:+ · }bậc ${vu} VU: ${rl429} × 429"
+  fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$vu" "$rps" "$p50" "$p95" "$p99" "$err" "$cpu" >> "$RESULT_TSV"
   ROWS+=("| $vu | $rps | $p50 | $p95 | $p99 | $err | $cpu |")
 
@@ -372,6 +382,7 @@ $(printf '%s\n' "${ROWS[@]}")"
   echo "- **Bậc cuối ĐẠT ngưỡng**: ${BASE_LINE}"
   echo "- **Hệ số quy đổi NFR**: 50.000 ÷ ${BASE_RPS} = **1/${FACTOR}** mục tiêu (máy dev ${CPUS} thread)"
   echo "- **k6 CPU max**: ${LAST_OK_CPU:-n/a}% (ngưỡng cảnh báo ${K6_CPU_WARN}%)${CPU_HOT_NOTE:+ — ⚠ $CPU_HOT_NOTE}"
+  [ -n "$RL_NOTE" ] && echo "- **⚠ Rate limit đang bật**: $RL_NOTE ⇒ các bậc đó đo LIMITER, không đo hệ. Đo lại với RATE_LIMIT_ENABLED=false."
   echo "- **PG**: xact_commit $(delta_of "$PG_BEFORE" "$PG_AFTER" 1) · blks_read $(delta_of "$PG_BEFORE" "$PG_AFTER" 2) · blks_hit $(delta_of "$PG_BEFORE" "$PG_AFTER" 3) · buffer hit ratio $(ratio_of "$PG_BEFORE" "$PG_AFTER")%"
   echo "- **PG activity đỉnh (trong bậc cuối)**: active $(col_max "$dir/pg.txt" 1) · lock-wait $(col_max "$dir/pg.txt" 2) · idle-in-tx $(col_max "$dir/pg.txt" 3) · conn $(col_max "$dir/pg.txt" 4)"
   echo "- **Redis**: total_commands_processed +$(awk -v a="$REDIS_BEFORE" -v b="$REDIS_AFTER" 'BEGIN{print (b-a<0)?0:b-a}')"
