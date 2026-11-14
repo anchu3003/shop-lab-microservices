@@ -1,6 +1,24 @@
 # ShopLab — microservices learning lab
 
 [![CI](https://github.com/anchu3003/shop-lab-microservices/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/anchu3003/shop-lab-microservices/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+**English TL;DR** — A multi-vendor e-commerce backend rebuilt from scratch as a **microservices
+learning lab**: the point is architecture and system design at high-traffic scale, **not** shipping a
+product. Stack: **Java 21 + Spring Boot 4**, Maven multi-module, PostgreSQL 16, Redis 7, RabbitMQ,
+Docker Compose, and GitHub Actions (Checkstyle + Spotless + JaCoCo coverage gate).
+
+Working today: `api-gateway`, `identity-service` (JWT RS256, RBAC, refresh rotation),
+`catalog-service`, `cart-service`, `inventory-service` (oversell-safe reservations via conditional
+`UPDATE`, 15-min TTL + sweeper — proven by a 100-concurrent-request test), `promotion-service`
+(voucher lock/commit/release), `order-service` (idempotent orders, state machine, price snapshots),
+`payment-service` (idempotent intents, HMAC-signed webhooks), plus `notification-service` and
+`search-service`. Each phase ships with a tag, a GitHub Release and a written snapshot, and every
+non-trivial decision has an ADR that states the trade-off.
+
+Docs are written in Vietnamese (technical terms kept in English):
+[`architecture.md`](architecture.md) · [`docs/adr/`](docs/adr/) · [`Backlog.md`](Backlog.md) ·
+[`AGENTS.md`](AGENTS.md) (working agreement).
 
 > Sàn thương mại điện tử multi-seller dựng lại từ đầu theo **microservices**, mục đích **học
 > architecture & system design** ở quy mô high traffic. **Không phải sản phẩm thật.**
